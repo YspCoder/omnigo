@@ -162,7 +162,7 @@ func (a *AliAdaptor) GetRequestURL(mode string, config *ProviderConfig) (string,
 
 	switch mode {
 	case ModeChat:
-		return base + "/v1/chat/completions", nil
+		return base + "/compatible-mode/v1/chat/completions", nil
 	case ModeVideo:
 		return base + aliVideoEndpointForModel(config.Model), nil
 	case ModeImage:
