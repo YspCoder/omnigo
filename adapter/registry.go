@@ -103,6 +103,19 @@ func NewRegistry(providerNames ...string) *Registry {
 			SupportsSchema:    true,
 			SupportsStreaming: true,
 		},
+		"ali": {
+			Name:              "ali",
+			Type:              TypeCustom,
+			Endpoint:          "https://dashscope.aliyuncs.com",
+			AuthHeader:        "Authorization",
+			AuthPrefix:        "Bearer ",
+			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
+			SupportsSchema:    false,
+			SupportsStreaming: false,
+			AdaptorFactory: func() Adaptor {
+				return &AliAdaptor{}
+			},
+		},
 		"google-openai": {
 			Name:              "google-openai",
 			Type:              TypeOpenAI,
