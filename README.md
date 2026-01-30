@@ -159,6 +159,110 @@ for {
 }
 ```
 
+补充说明：
+1. 流式响应统一按 OpenAI 的事件格式解析（适用于兼容 OpenAI stream 的服务）。
+2. `omnigo` 会在流式请求体中自动加入：
+   - `"stream": true`
+   - `"stream_options": { "include_usage": true }`
+3. 某些服务商需要额外的流式请求头（如 Ali 的 `X-DashScope-SSE: enable`），这些由 adaptor 自动注入。
+
+### 流式对话示例（OpenAI）
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+
+    "github.com/YspCoder/omnigo"
+)
+
+func main() {
+    apiKey := os.Getenv("OPENAI_API_KEY")
+    if apiKey == "" {
+        log.Fatal("OPENAI_API_KEY is not set")
+    }
+
+    llm, err := omnigo.NewLLM(
+        omnigo.SetProvider("openai"),
+        omnigo.SetModel("gpt-4o-mini"),
+        omnigo.SetAPIKey(apiKey),
+    )
+    if err != nil {
+        log.Fatalf("create LLM failed: %v", err)
+    }
+
+    ctx := context.Background()
+    prompt := omnigo.NewPrompt("用三句话解释递归")
+
+    stream, err := llm.Stream(ctx, prompt)
+    if err != nil {
+        log.Fatalf("stream failed: %v", err)
+    }
+    defer stream.Close()
+
+    for {
+        token, err := stream.Next(ctx)
+        if err != nil {
+            break
+        }
+        fmt.Print(token.Text)
+    }
+}
+```
+
+### 流式对话示例（Ali / DashScope）
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+
+    "github.com/YspCoder/omnigo"
+)
+
+func main() {
+    apiKey := os.Getenv("DASHSCOPE_API_KEY")
+    if apiKey == "" {
+        log.Fatal("DASHSCOPE_API_KEY is not set")
+    }
+
+    llm, err := omnigo.NewLLM(
+        omnigo.SetProvider("ali"),
+        omnigo.SetModel("qwen-plus"),
+        omnigo.SetAPIKey(apiKey),
+        omnigo.SetEndpoint("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    )
+    if err != nil {
+        log.Fatalf("create LLM failed: %v", err)
+    }
+
+    ctx := context.Background()
+    prompt := omnigo.NewPrompt("用三句话解释递归")
+
+    stream, err := llm.Stream(ctx, prompt)
+    if err != nil {
+        log.Fatalf("stream failed: %v", err)
+    }
+    defer stream.Close()
+
+    for {
+        token, err := stream.Next(ctx)
+        if err != nil {
+            break
+        }
+        fmt.Print(token.Text)
+    }
+}
+```
+
 ## 高级用法
 
 ### 环境变量配置
@@ -224,6 +328,162 @@ resp, err := llm.Media(context.Background(), &dto.MediaRequest{
 
     if len(resp.Data) > 0 {
         log.Println("image url:", resp.Data[0].URL)
+    }
+}
+```
+
+### 视频生成示例（Ali / DashScope）
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "os"
+
+    "github.com/YspCoder/omnigo"
+    "github.com/YspCoder/omnigo/dto"
+)
+
+func main() {
+    apiKey := os.Getenv("DASHSCOPE_API_KEY")
+    if apiKey == "" {
+        log.Fatal("DASHSCOPE_API_KEY is not set")
+    }
+
+    llm, err := omnigo.NewLLM(
+        omnigo.SetProvider("ali"),
+        omnigo.SetModel("wan2.2-kf2v-flash"),
+        omnigo.SetAPIKey(apiKey),
+    )
+    if err != nil {
+        log.Fatalf("create LLM failed: %v", err)
+    }
+
+    req := &dto.MediaRequest{
+        Type:   dto.MediaTypeVideo,
+        Model:  "wan2.2-kf2v-flash",
+        Prompt: "写实风格，一只黑色小猫好奇地看向天空",
+        Extra: map[string]interface{}{
+            "first_frame_url": "https://wanx.alicdn.com/material/20250318/first_frame.png",
+            "last_frame_url":  "https://wanx.alicdn.com/material/20250318/last_frame.png",
+            "resolution":      "480P",
+            "prompt_extend":   true,
+        },
+    }
+
+    resp, err := llm.Media(context.Background(), req)
+    if err != nil {
+        log.Fatalf("video failed: %v", err)
+    }
+
+    log.Println("task_id:", resp.TaskID)
+    log.Println("status:", resp.Status)
+}
+```
+
+### 任务状态查询示例（Ali / DashScope）
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "os"
+
+    "github.com/YspCoder/omnigo"
+)
+
+func main() {
+    apiKey := os.Getenv("DASHSCOPE_API_KEY")
+    if apiKey == "" {
+        log.Fatal("DASHSCOPE_API_KEY is not set")
+    }
+
+    llm, err := omnigo.NewLLM(
+        omnigo.SetProvider("ali"),
+        omnigo.SetModel("wan2.2-kf2v-flash"),
+        omnigo.SetAPIKey(apiKey),
+    )
+    if err != nil {
+        log.Fatalf("create LLM failed: %v", err)
+    }
+
+    resp, err := llm.TaskStatus(context.Background(), "your-task-id")
+    if err != nil {
+        log.Fatalf("task status failed: %v", err)
+    }
+
+    log.Println("status:", resp.Output.TaskStatus)
+    log.Println("video_url:", resp.Output.VideoURL)
+}
+```
+
+### 视频生成后轮询任务状态（Ali / DashScope）
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "os"
+    "time"
+
+    "github.com/YspCoder/omnigo"
+    "github.com/YspCoder/omnigo/dto"
+)
+
+func main() {
+    apiKey := os.Getenv("DASHSCOPE_API_KEY")
+    if apiKey == "" {
+        log.Fatal("DASHSCOPE_API_KEY is not set")
+    }
+
+    llm, err := omnigo.NewLLM(
+        omnigo.SetProvider("ali"),
+        omnigo.SetModel("wan2.2-kf2v-flash"),
+        omnigo.SetAPIKey(apiKey),
+    )
+    if err != nil {
+        log.Fatalf("create LLM failed: %v", err)
+    }
+
+    req := &dto.MediaRequest{
+        Type:   dto.MediaTypeVideo,
+        Model:  "wan2.2-kf2v-flash",
+        Prompt: "写实风格，一只黑色小猫好奇地看向天空",
+        Extra: map[string]interface{}{
+            "first_frame_url": "https://wanx.alicdn.com/material/20250318/first_frame.png",
+            "last_frame_url":  "https://wanx.alicdn.com/material/20250318/last_frame.png",
+            "resolution":      "480P",
+            "prompt_extend":   true,
+        },
+    }
+
+    resp, err := llm.Media(context.Background(), req)
+    if err != nil {
+        log.Fatalf("video failed: %v", err)
+    }
+    if resp.TaskID == "" {
+        log.Fatalf("empty task id")
+    }
+
+    for {
+        status, err := llm.TaskStatus(context.Background(), resp.TaskID)
+        if err != nil {
+            log.Fatalf("task status failed: %v", err)
+        }
+
+        log.Println("status:", status.Output.TaskStatus)
+        if status.Output.TaskStatus == "SUCCEEDED" || status.Output.TaskStatus == "FAILED" || status.Output.TaskStatus == "CANCELED" {
+            log.Println("video_url:", status.Output.VideoURL)
+            break
+        }
+
+        time.Sleep(5 * time.Second)
     }
 }
 ```
