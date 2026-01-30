@@ -108,6 +108,7 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 	if err != nil {
 		return nil, err
 	}
+	adp = adapter.WrapChatWithOpenAI(adp)
 
 	headers := make(map[string]string)
 	for key, value := range spec.RequiredHeaders {
@@ -554,6 +555,9 @@ func filterOptions(options map[string]interface{}, keys ...string) map[string]in
 }
 
 func isOpenAIAdaptor(adaptor adapter.Adaptor) bool {
+	if protocol, ok := adaptor.(adapter.OpenAIProtocolAdaptor); ok {
+		return protocol.IsOpenAIProtocol()
+	}
 	_, ok := adaptor.(*adapter.OpenAIAdaptor)
 	return ok
 }
