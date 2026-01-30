@@ -196,17 +196,18 @@ func (r *Registry) BuildAdaptor(name string) (Adaptor, ProviderSpec, error) {
 		return nil, ProviderSpec{}, fmt.Errorf("unknown provider: %s", name)
 	}
 	if spec.AdaptorFactory != nil {
-		return spec.AdaptorFactory(), spec, nil
+		adaptor := spec.AdaptorFactory()
+		return WrapChatWithOpenAI(adaptor), spec, nil
 	}
 	switch spec.Type {
 	case TypeOpenAI:
-		return &OpenAIAdaptor{}, spec, nil
+		return WrapChatWithOpenAI(&OpenAIAdaptor{}), spec, nil
 	case TypeAnthropic:
-		return &AnthropicAdaptor{}, spec, nil
+		return WrapChatWithOpenAI(&AnthropicAdaptor{}), spec, nil
 	case TypeCohere:
-		return &CohereAdaptor{}, spec, nil
+		return WrapChatWithOpenAI(&CohereAdaptor{}), spec, nil
 	case TypeOllama:
-		return &OllamaAdaptor{}, spec, nil
+		return WrapChatWithOpenAI(&OllamaAdaptor{}), spec, nil
 	default:
 		return nil, ProviderSpec{}, fmt.Errorf("provider %s requires a custom adaptor", name)
 	}
