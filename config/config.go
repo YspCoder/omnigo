@@ -19,7 +19,7 @@ import (
 //
 // Environment Variables:
 //   - LLM_PROVIDER: LLM provider name (default: "anthropic")
-//   - LLM_MODEL: Model name (default: "claude-3-opus-20240229")
+//   - LLM_MODEL: Model name (default: "claude-3-5-haiku-latest")
 //   - LLM_ENDPOINT: Override provider endpoint/base URL
 //   - LLM_TEMPERATURE: Generation temperature (default: 0.7)
 //   - LLM_MAX_TOKENS: Maximum tokens to generate (default: 100)
@@ -93,6 +93,7 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	cfg.Provider = strings.ToLower(cfg.Provider)
 	loadAPIKeys(cfg)
 	return cfg, nil
 }
@@ -110,7 +111,7 @@ func loadAPIKeys(cfg *Config) {
 	}
 
 	// Ensure the default provider has an API key
-	if apiKey, exists := cfg.APIKeys[strings.ToUpper(cfg.Provider)]; exists {
+	if apiKey, exists := cfg.APIKeys[strings.ToLower(cfg.Provider)]; exists {
 		cfg.APIKeys[cfg.Provider] = apiKey
 	}
 }
@@ -165,7 +166,7 @@ func SetEnableCaching(enableCaching bool) ConfigOption {
 // SetProvider sets the LLM provider.
 func SetProvider(provider string) ConfigOption {
 	return func(c *Config) {
-		c.Provider = provider
+		c.Provider = strings.ToLower(provider)
 	}
 }
 
