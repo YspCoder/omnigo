@@ -1,6 +1,6 @@
 # omnigo - Go 语言 LLM 集成工具包
 
-`omnigo` 是一个面向 Go 的 LLM 集成工具包，核心是统一的 adaptor/relay 架构：
+`omnigo` 是一个面向 Go 的 LLM 集成工具包，核心是统一的 adapter/relay 架构：
 - 对外提供稳定统一的调用接口
 - 对内隔离不同模型服务的差异
 - 支持流式输出、结构化输出、工具调用等常见能力
