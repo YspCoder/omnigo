@@ -38,11 +38,11 @@ type LLM interface {
 	// Returns ErrorTypeUnsupported if the provider doesn't support streaming.
 	Stream(ctx context.Context, prompt *Prompt, opts ...StreamOption) (TokenStream, error)
 
-	// Image initiates an image generation request.
-	Image(ctx context.Context, request *dto.ImageRequest) (*dto.ImageResponse, error)
+	// Media initiates an image/video generation request.
+	Media(ctx context.Context, request *dto.MediaRequest) (*dto.MediaResponse, error)
 
-	// Video initiates a video generation request.
-	Video(ctx context.Context, request *dto.VideoRequest) (*dto.VideoResponse, error)
+	// TaskStatus queries a provider task status.
+	TaskStatus(ctx context.Context, taskID string) (*dto.TaskStatusResponse, error)
 
 	// SupportsStreaming checks if the provider supports streaming responses.
 	SupportsStreaming() bool
@@ -148,14 +148,14 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 
 	llmClient.adaptor = adp
 	llmClient.adaptorCfg = &adapter.ProviderConfig{
-		Name:       spec.Name,
-		APIKey:     apiKey,
-		BaseURL:    baseURL,
-		AuthHeader: spec.AuthHeader,
-		AuthPrefix: spec.AuthPrefix,
-		Headers:    headers,
-		HTTPClient: llmClient.client,
-		Timeout:    cfg.Timeout,
+		Name:         spec.Name,
+		APIKey:       apiKey,
+		BaseURL:      baseURL,
+		AuthHeader:   spec.AuthHeader,
+		AuthPrefix:   spec.AuthPrefix,
+		Headers:      headers,
+		HTTPClient:   llmClient.client,
+		Timeout:      cfg.Timeout,
 		ChatProtocol: llmClient.chatProtocol,
 	}
 	llmClient.relay = relay.NewRelay()
@@ -481,36 +481,31 @@ func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOpti
 }
 
 // Image initiates an image generation request.
-func (l *LLMImpl) Image(ctx context.Context, request *dto.ImageRequest) (*dto.ImageResponse, error) {
+// Media initiates an image/video generation request.
+func (l *LLMImpl) Media(ctx context.Context, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	if request == nil {
-		return nil, NewLLMError(ErrorTypeInvalidInput, "image request is nil", nil)
+		return nil, NewLLMError(ErrorTypeInvalidInput, "media request is nil", nil)
 	}
 	if request.Model == "" {
 		request.Model = l.config.Model
 	}
 
-	response, err := l.relay.Image(ctx, l.adaptor, l.adaptorCfg, request)
+	adaptorCfg := *l.adaptorCfg
+	adaptorCfg.Model = request.Model
+	response, err := l.relay.Media(ctx, l.adaptor, &adaptorCfg, request)
 	if err != nil {
-		return nil, NewLLMError(ErrorTypeAPI, "relay image request failed", err)
+		return nil, NewLLMError(ErrorTypeAPI, "relay media request failed", err)
 	}
 
 	return response, nil
 }
 
-// Video initiates a video generation request.
-func (l *LLMImpl) Video(ctx context.Context, request *dto.VideoRequest) (*dto.VideoResponse, error) {
-	if request == nil {
-		return nil, NewLLMError(ErrorTypeInvalidInput, "video request is nil", nil)
-	}
-	if request.Model == "" {
-		request.Model = l.config.Model
-	}
-
-	response, err := l.relay.Video(ctx, l.adaptor, l.adaptorCfg, request)
+// TaskStatus queries a provider task status.
+func (l *LLMImpl) TaskStatus(ctx context.Context, taskID string) (*dto.TaskStatusResponse, error) {
+	response, err := l.relay.TaskStatus(ctx, l.adaptor, l.adaptorCfg, taskID)
 	if err != nil {
-		return nil, NewLLMError(ErrorTypeAPI, "relay video request failed", err)
+		return nil, NewLLMError(ErrorTypeAPI, "relay task status request failed", err)
 	}
-
 	return response, nil
 }
 

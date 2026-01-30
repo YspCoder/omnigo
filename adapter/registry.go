@@ -10,11 +10,9 @@ import (
 type ProviderType string
 
 const (
-	TypeOpenAI    ProviderType = "openai"
-	TypeAnthropic ProviderType = "anthropic"
-	TypeCohere    ProviderType = "cohere"
-	TypeOllama    ProviderType = "ollama"
-	TypeCustom    ProviderType = "custom"
+	TypeOpenAI ProviderType = "openai"
+	TypeAliAI  ProviderType = "ali"
+	TypeCustom ProviderType = "custom"
 )
 
 // ProviderSpec describes a provider's defaults and adaptor mapping.
@@ -55,7 +53,7 @@ func NewRegistry(providerNames ...string) *Registry {
 		},
 		"ali": {
 			Name:              "ali",
-			Type:              TypeCustom,
+			Type:              TypeAliAI,
 			Endpoint:          "https://dashscope.aliyuncs.com",
 			AuthHeader:        "Authorization",
 			AuthPrefix:        "Bearer ",

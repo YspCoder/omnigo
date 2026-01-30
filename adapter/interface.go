@@ -13,12 +13,14 @@ const (
 	ModeChat  = "chat"
 	ModeImage = "image"
 	ModeVideo = "video"
+	ModeTask  = "task"
 )
 
 // ProviderConfig holds configuration for a specific provider.
 type ProviderConfig struct {
 	Name         string
 	APIKey       string
+	Model        string
 	BaseURL      string
 	Organization string
 	AuthHeader   string
@@ -41,17 +43,19 @@ type Adaptor interface {
 	ConvertChatRequest(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) ([]byte, error)
 	ConvertChatResponse(ctx context.Context, config *ProviderConfig, body []byte) (*dto.ChatResponse, error)
 
-	// Image conversions.
-	ConvertImageRequest(ctx context.Context, config *ProviderConfig, request *dto.ImageRequest) ([]byte, error)
-	ConvertImageResponse(ctx context.Context, config *ProviderConfig, body []byte) (*dto.ImageResponse, error)
-
-	// Video conversions.
-	ConvertVideoRequest(ctx context.Context, config *ProviderConfig, request *dto.VideoRequest) ([]byte, error)
-	ConvertVideoResponse(ctx context.Context, config *ProviderConfig, body []byte) (*dto.VideoResponse, error)
+	// Media conversions.
+	ConvertMediaRequest(ctx context.Context, config *ProviderConfig, mode string, request *dto.MediaRequest) ([]byte, error)
+	ConvertMediaResponse(ctx context.Context, config *ProviderConfig, mode string, body []byte) (*dto.MediaResponse, error)
 }
 
 // StreamAdaptor defines optional streaming capabilities for adaptors.
 type StreamAdaptor interface {
 	PrepareStreamRequest(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) ([]byte, error)
 	ParseStreamResponse(chunk []byte) (string, error)
+}
+
+// TaskAdaptor defines optional task status capabilities for adaptors.
+type TaskAdaptor interface {
+	GetTaskStatusURL(taskID string, config *ProviderConfig) (string, error)
+	ConvertTaskStatusResponse(ctx context.Context, config *ProviderConfig, body []byte) (*dto.TaskStatusResponse, error)
 }

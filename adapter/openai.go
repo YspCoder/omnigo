@@ -14,6 +14,60 @@ import (
 	"github.com/YspCoder/omnigo/dto"
 )
 
+type openAIImagePayload struct {
+	Model          string `json:"model"`
+	Prompt         string `json:"prompt,omitempty"`
+	N              int    `json:"n,omitempty"`
+	Size           string `json:"size,omitempty"`
+	ResponseFormat string `json:"response_format,omitempty"`
+}
+
+type openAIVideoPayload struct {
+	Model          string `json:"model"`
+	Prompt         string `json:"prompt,omitempty"`
+	Size           string `json:"size,omitempty"`
+	Duration       int    `json:"duration,omitempty"`
+	Fps            int    `json:"fps,omitempty"`
+	Seed           int    `json:"seed,omitempty"`
+	ResponseFormat string `json:"response_format,omitempty"`
+}
+
+func openAIPayloadToMap(payload interface{}) (map[string]interface{}, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func openAIExtractPayloadMap(extra map[string]interface{}) map[string]interface{} {
+	if extra == nil {
+		return nil
+	}
+	raw, ok := extra["payload"]
+	if !ok {
+		return nil
+	}
+	payload, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return payload
+}
+
+func openAIMarshalPayloadWithFallback(payload map[string]interface{}, fallback interface{}) ([]byte, error) {
+	if payload != nil {
+		if b, err := json.Marshal(payload); err == nil {
+			return b, nil
+		}
+	}
+	return json.Marshal(fallback)
+}
+
 // OpenAIAdaptor converts requests and responses to the OpenAI API format.
 type OpenAIAdaptor struct {
 	BaseURL string
@@ -186,32 +240,84 @@ func cleanSchemaForOpenAI(schema interface{}) interface{} {
 	return schema
 }
 
-// ConvertImageRequest marshals the OpenAI image request.
-func (a *OpenAIAdaptor) ConvertImageRequest(ctx context.Context, config *ProviderConfig, request *dto.ImageRequest) ([]byte, error) {
-	return json.Marshal(request)
-}
-
-// ConvertImageResponse unmarshals the OpenAI image response.
-func (a *OpenAIAdaptor) ConvertImageResponse(ctx context.Context, config *ProviderConfig, body []byte) (*dto.ImageResponse, error) {
-	var response dto.ImageResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, err
+// ConvertMediaRequest marshals the OpenAI media request.
+func (a *OpenAIAdaptor) ConvertMediaRequest(ctx context.Context, config *ProviderConfig, mode string, request *dto.MediaRequest) ([]byte, error) {
+	switch mode {
+	case ModeImage:
+		fallback := openAIImagePayload{
+			Model:          request.Model,
+			Prompt:         request.Prompt,
+			N:              request.N,
+			Size:           request.Size,
+			ResponseFormat: request.ResponseFormat,
+		}
+		mapped, err := openAIPayloadToMap(fallback)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range request.Extra {
+			mapped[k] = v
+		}
+		payloadMap := openAIExtractPayloadMap(request.Extra)
+		if payloadMap == nil {
+			payloadMap = mapped
+		}
+		return openAIMarshalPayloadWithFallback(payloadMap, fallback)
+	case ModeVideo:
+		fallback := openAIVideoPayload{
+			Model:          request.Model,
+			Prompt:         request.Prompt,
+			Size:           request.Size,
+			Duration:       request.Duration,
+			Fps:            request.Fps,
+			Seed:           request.Seed,
+			ResponseFormat: request.ResponseFormat,
+		}
+		mapped, err := openAIPayloadToMap(fallback)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range request.Extra {
+			mapped[k] = v
+		}
+		payloadMap := openAIExtractPayloadMap(request.Extra)
+		if payloadMap == nil {
+			payloadMap = mapped
+		}
+		return openAIMarshalPayloadWithFallback(payloadMap, fallback)
+	default:
+		return nil, fmt.Errorf("unsupported media mode: %s", mode)
 	}
-	return &response, nil
 }
 
-// ConvertVideoRequest marshals the OpenAI video request.
-func (a *OpenAIAdaptor) ConvertVideoRequest(ctx context.Context, config *ProviderConfig, request *dto.VideoRequest) ([]byte, error) {
-	return json.Marshal(request)
-}
-
-// ConvertVideoResponse unmarshals the OpenAI video response.
-func (a *OpenAIAdaptor) ConvertVideoResponse(ctx context.Context, config *ProviderConfig, body []byte) (*dto.VideoResponse, error) {
-	var response dto.VideoResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, err
+// ConvertMediaResponse unmarshals the OpenAI media response.
+func (a *OpenAIAdaptor) ConvertMediaResponse(ctx context.Context, config *ProviderConfig, mode string, body []byte) (*dto.MediaResponse, error) {
+	switch mode {
+	case ModeImage:
+		var response dto.MediaResponse
+		if err := json.Unmarshal(body, &response); err != nil {
+			return nil, err
+		}
+		if response.URL == "" && len(response.Data) > 0 {
+			if response.Data[0].URL != "" {
+				response.URL = response.Data[0].URL
+			} else if response.Data[0].B64JSON != "" {
+				response.URL = response.Data[0].B64JSON
+			}
+		}
+		return &response, nil
+	case ModeVideo:
+		var response dto.MediaResponse
+		if err := json.Unmarshal(body, &response); err != nil {
+			return nil, err
+		}
+		if response.URL == "" && response.Video.URL != "" {
+			response.URL = response.Video.URL
+		}
+		return &response, nil
+	default:
+		return nil, fmt.Errorf("unsupported media mode: %s", mode)
 	}
-	return &response, nil
 }
 
 // PrepareStreamRequest creates a streaming chat request body.

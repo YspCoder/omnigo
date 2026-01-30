@@ -210,13 +210,14 @@ func main() {
         log.Fatalf("create LLM failed: %v", err)
     }
 
-    resp, err := llm.Image(context.Background(), &dto.ImageRequest{
-        Model:          "your-image-model",
-        Prompt:         "一只戴着墨镜的猫在沙滩上",
-        N:              1,
-        Size:           "1024x1024",
-        ResponseFormat: "url",
-    })
+resp, err := llm.Media(context.Background(), &dto.MediaRequest{
+    Type:           dto.MediaTypeImage,
+    Model:          "your-image-model",
+    Prompt:         "一只戴着墨镜的猫在沙滩上",
+    N:              1,
+    Size:           "1024x1024",
+    ResponseFormat: "url",
+})
     if err != nil {
         log.Fatalf("image failed: %v", err)
     }
@@ -256,14 +257,15 @@ func main() {
         log.Fatalf("create LLM failed: %v", err)
     }
 
-    resp, err := llm.Video(context.Background(), &dto.VideoRequest{
-        Model:          "your-video-model",
-        Prompt:         "日落时分的城市航拍，暖色调",
-        Size:           "1024x1024",
-        Duration:       5,
-        Fps:            24,
-        ResponseFormat: "url",
-    })
+resp, err := llm.Media(context.Background(), &dto.MediaRequest{
+    Type:           dto.MediaTypeVideo,
+    Model:          "your-video-model",
+    Prompt:         "日落时分的城市航拍，暖色调",
+    Size:           "1024x1024",
+    Duration:       5,
+    Fps:            24,
+    ResponseFormat: "url",
+})
     if err != nil {
         log.Fatalf("video failed: %v", err)
     }
