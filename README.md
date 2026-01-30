@@ -285,7 +285,7 @@ API Key 会自动从 `*_API_KEY` 形式的环境变量中加载（如 `OPENAI_AP
 
 ### 图像生成（示例）
 
-> 注意：并非所有 Provider 都支持图像/视频。以下示例以 `openai` 为例。
+> 注意：Ali 的图片生成走 `multimodal-generation` 接口（结构体为 `AliMultimodalGenerationRequest`）。以下示例以 `openai` 与 `ali` 各给一个。
 
 ```go
 package main
@@ -332,6 +332,56 @@ resp, err := llm.Media(context.Background(), &dto.MediaRequest{
 }
 ```
 
+#### 图像生成示例（Ali / DashScope）
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "os"
+
+    "github.com/YspCoder/omnigo"
+    "github.com/YspCoder/omnigo/dto"
+)
+
+func main() {
+    apiKey := os.Getenv("DASHSCOPE_API_KEY")
+    if apiKey == "" {
+        log.Fatal("DASHSCOPE_API_KEY is not set")
+    }
+
+    llm, err := omnigo.NewLLM(
+        omnigo.SetProvider("ali"),
+        omnigo.SetModel("qwen-image-max"),
+        omnigo.SetAPIKey(apiKey),
+    )
+    if err != nil {
+        log.Fatalf("create LLM failed: %v", err)
+    }
+
+    req := &dto.MediaRequest{
+        Type:   dto.MediaTypeImage,
+        Model:  "qwen-image-max",
+        Prompt: "一只戴着墨镜的猫在沙滩上",
+        N:      1,
+        Size:   "1024x1024",
+        Extra: map[string]interface{}{
+            "negative_prompt": "低质量, 模糊",
+            "prompt_extend":   true,
+            "watermark":       false,
+        },
+    }
+
+    resp, err := llm.Media(context.Background(), req)
+    if err != nil {
+        log.Fatalf("image failed: %v", err)
+    }
+
+    log.Println("image url:", resp.URL)
+}
+```
 ### 视频生成示例（Ali / DashScope）
 
 ```go
