@@ -53,56 +53,6 @@ func NewRegistry(providerNames ...string) *Registry {
 			SupportsSchema:    true,
 			SupportsStreaming: true,
 		},
-		"azure-openai": {
-			Name:              "azure-openai",
-			Type:              TypeOpenAI,
-			Endpoint:          "",
-			AuthHeader:        "api-key",
-			AuthPrefix:        "",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    true,
-			SupportsStreaming: true,
-		},
-		"anthropic": {
-			Name:              "anthropic",
-			Type:              TypeAnthropic,
-			Endpoint:          "https://api.anthropic.com/v1/messages",
-			AuthHeader:        "x-api-key",
-			AuthPrefix:        "",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json", "anthropic-version": "2023-06-01"},
-			SupportsSchema:    true,
-			SupportsStreaming: true,
-		},
-		"groq": {
-			Name:              "groq",
-			Type:              TypeOpenAI,
-			Endpoint:          "https://api.groq.com/openai/v1/chat/completions",
-			AuthHeader:        "Authorization",
-			AuthPrefix:        "Bearer ",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    true,
-			SupportsStreaming: true,
-		},
-		"ollama": {
-			Name:              "ollama",
-			Type:              TypeOllama,
-			Endpoint:          "http://localhost:11434/api/generate",
-			AuthHeader:        "",
-			AuthPrefix:        "",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    false,
-			SupportsStreaming: true,
-		},
-		"deepseek": {
-			Name:              "deepseek",
-			Type:              TypeOpenAI,
-			Endpoint:          "https://api.deepseek.com/chat/completions",
-			AuthHeader:        "Authorization",
-			AuthPrefix:        "Bearer ",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    true,
-			SupportsStreaming: true,
-		},
 		"ali": {
 			Name:              "ali",
 			Type:              TypeCustom,
@@ -115,46 +65,6 @@ func NewRegistry(providerNames ...string) *Registry {
 			AdaptorFactory: func() Adaptor {
 				return &AliAdaptor{}
 			},
-		},
-		"google-openai": {
-			Name:              "google-openai",
-			Type:              TypeOpenAI,
-			Endpoint:          "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-			AuthHeader:        "Authorization",
-			AuthPrefix:        "Bearer ",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    true,
-			SupportsStreaming: true,
-		},
-		"mistral": {
-			Name:              "mistral",
-			Type:              TypeOpenAI,
-			Endpoint:          "https://api.mistral.ai/v1/chat/completions",
-			AuthHeader:        "Authorization",
-			AuthPrefix:        "Bearer ",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    true,
-			SupportsStreaming: true,
-		},
-		"cohere": {
-			Name:              "cohere",
-			Type:              TypeCohere,
-			Endpoint:          "https://api.cohere.ai/v2/chat",
-			AuthHeader:        "Authorization",
-			AuthPrefix:        "Bearer ",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    true,
-			SupportsStreaming: true,
-		},
-		"openrouter": {
-			Name:              "openrouter",
-			Type:              TypeOpenAI,
-			Endpoint:          "https://openrouter.ai/api/v1/chat/completions",
-			AuthHeader:        "Authorization",
-			AuthPrefix:        "Bearer ",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json", "HTTP-Referer": "https://github.com/YspCoder/omnigo", "X-Title": "Omnigo Integration"},
-			SupportsSchema:    true,
-			SupportsStreaming: true,
 		},
 	}
 
@@ -197,17 +107,11 @@ func (r *Registry) BuildAdaptor(name string) (Adaptor, ProviderSpec, error) {
 	}
 	if spec.AdaptorFactory != nil {
 		adaptor := spec.AdaptorFactory()
-		return WrapChatWithOpenAI(adaptor), spec, nil
+		return adaptor, spec, nil
 	}
 	switch spec.Type {
 	case TypeOpenAI:
-		return WrapChatWithOpenAI(&OpenAIAdaptor{}), spec, nil
-	case TypeAnthropic:
-		return WrapChatWithOpenAI(&AnthropicAdaptor{}), spec, nil
-	case TypeCohere:
-		return WrapChatWithOpenAI(&CohereAdaptor{}), spec, nil
-	case TypeOllama:
-		return WrapChatWithOpenAI(&OllamaAdaptor{}), spec, nil
+		return &OpenAIAdaptor{}, spec, nil
 	default:
 		return nil, ProviderSpec{}, fmt.Errorf("provider %s requires a custom adaptor", name)
 	}

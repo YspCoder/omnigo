@@ -23,7 +23,7 @@
 ## 特性
 
 - **统一调用 API**：屏蔽不同服务商的请求格式差异。
-- **可扩展的 Provider Registry**：内置多家服务商，支持自定义扩展。
+- **可扩展的 Provider Registry**：默认提供 OpenAI 与 Ali（DashScope），支持自定义扩展。
 - **流式与非流式统一处理**：一套接口支持 streaming 与非 streaming。
 - **结构化输出与校验**：支持 JSON Schema 校验与提示词结构化。
 - **可配置性强**：支持环境变量加载 + 代码选项式配置。
@@ -34,15 +34,7 @@
 当前内置 Provider Spec（可扩展）：
 
 - OpenAI (`openai`)
-- Azure OpenAI (`azure-openai`)
-- Anthropic (`anthropic`)
-- Groq (`groq`)
-- Ollama (`ollama`)
-- DeepSeek (`deepseek`)
-- Google OpenAI Compatible (`google-openai`)
-- Mistral (`mistral`)
-- Cohere (`cohere`)
-- OpenRouter (`openrouter`)
+- Ali / DashScope (`ali`)
 
 > 说明：以上名称为 `SetProvider(...)` 传入值。
 
@@ -279,22 +271,6 @@ func main() {
     log.Println("video status:", resp.Status)
     log.Println("video url:", resp.Video.URL)
 }
-```
-
-### 使用 OpenRouter 额外能力（示例）
-
-```go
-llm, err := omnigo.NewLLM(
-    omnigo.SetProvider("openrouter"),
-    omnigo.SetModel("anthropic/claude-3-5-sonnet"),
-    omnigo.SetAPIKey("your-openrouter-api-key"),
-)
-
-// 开启 fallback 模型
-llm.SetOption("fallback_models", []string{"openai/gpt-4o", "mistral/mistral-large"})
-
-// 自动路由
-llm.SetOption("auto_route", true)
 ```
 
 ## 最佳实践

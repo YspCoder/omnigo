@@ -70,6 +70,7 @@ type LLMImpl struct {
 	providerName      string                 // Provider identifier
 	supportsSchema    bool                   // Supports JSON schema validation
 	supportsStreaming bool                   // Supports streaming responses
+	chatProtocol      string                 // Chat protocol format (e.g., openai)
 	Options           map[string]interface{} // Provider-specific options
 	optionsMutex      sync.RWMutex           // Mutex to protect concurrent access to Options map
 	client            *http.Client           // HTTP client for API requests
@@ -108,7 +109,6 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 	if err != nil {
 		return nil, err
 	}
-	adp = adapter.WrapChatWithOpenAI(adp)
 
 	headers := make(map[string]string)
 	for key, value := range spec.RequiredHeaders {
@@ -137,6 +137,7 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 		providerName:      spec.Name,
 		supportsSchema:    spec.SupportsSchema,
 		supportsStreaming: spec.SupportsStreaming,
+		chatProtocol:      "openai",
 		client:            &http.Client{Timeout: cfg.Timeout},
 		logger:            logger,
 		config:            cfg,
@@ -155,6 +156,7 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 		Headers:    headers,
 		HTTPClient: llmClient.client,
 		Timeout:    cfg.Timeout,
+		ChatProtocol: llmClient.chatProtocol,
 	}
 	llmClient.relay = relay.NewRelay()
 
@@ -279,7 +281,7 @@ func (l *LLMImpl) attemptGenerate(ctx context.Context, prompt *Prompt) (string, 
 	options = applyDefaultOptions(options, l.config)
 
 	messages := toDTOMessages(prompt.Messages)
-	if isOpenAIAdaptor(l.adaptor) {
+	if l.useOpenAIProtocol() {
 		options = filterOptions(options, "structured_messages")
 	}
 
@@ -369,7 +371,7 @@ func (l *LLMImpl) attemptGenerateWithSchema(ctx context.Context, prompt string, 
 	}
 
 	options = applyDefaultOptions(options, l.config)
-	if isOpenAIAdaptor(l.adaptor) {
+	if l.useOpenAIProtocol() {
 		options = filterOptions(options, "structured_messages")
 	}
 
@@ -433,8 +435,12 @@ func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOpti
 		opt(config)
 	}
 
-	streamAdaptor, ok := l.adaptor.(adapter.StreamAdaptor)
-	if !ok {
+	var streamAdaptor adapter.StreamAdaptor
+	if l.useOpenAIProtocol() {
+		streamAdaptor = &adapter.OpenAIAdaptor{}
+	} else if adaptor, ok := l.adaptor.(adapter.StreamAdaptor); ok {
+		streamAdaptor = adaptor
+	} else {
 		return nil, NewLLMError(ErrorTypeUnsupported, "streaming not supported by adaptor", nil)
 	}
 
@@ -455,7 +461,7 @@ func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOpti
 	options["stream"] = true
 
 	messages := toDTOMessages(prompt.Messages)
-	if isOpenAIAdaptor(l.adaptor) {
+	if l.useOpenAIProtocol() {
 		options = filterOptions(options, "structured_messages")
 	}
 
@@ -466,10 +472,7 @@ func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOpti
 		Options:  options,
 	}
 
-	body, err := l.relay.Stream(ctx, struct {
-		adapter.Adaptor
-		adapter.StreamAdaptor
-	}{l.adaptor, streamAdaptor}, l.adaptorCfg, request)
+	body, err := l.relay.Stream(ctx, l.adaptor, streamAdaptor, l.adaptorCfg, request)
 	if err != nil {
 		return nil, NewLLMError(ErrorTypeAPI, "relay stream request failed", err)
 	}
@@ -554,12 +557,8 @@ func filterOptions(options map[string]interface{}, keys ...string) map[string]in
 	return filtered
 }
 
-func isOpenAIAdaptor(adaptor adapter.Adaptor) bool {
-	if protocol, ok := adaptor.(adapter.OpenAIProtocolAdaptor); ok {
-		return protocol.IsOpenAIProtocol()
-	}
-	_, ok := adaptor.(*adapter.OpenAIAdaptor)
-	return ok
+func (l *LLMImpl) useOpenAIProtocol() bool {
+	return l.chatProtocol == "openai"
 }
 
 func applyDefaultOptions(options map[string]interface{}, cfg *config.Config) map[string]interface{} {

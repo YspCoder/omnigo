@@ -26,6 +26,7 @@ type ProviderConfig struct {
 	Headers      map[string]string
 	HTTPClient   *http.Client
 	Timeout      time.Duration
+	ChatProtocol string
 }
 
 // Adaptor defines the interface for provider-specific conversions and routing.

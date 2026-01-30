@@ -28,7 +28,10 @@ func (a *AliAdaptor) GetRequestURL(mode string, config *ProviderConfig) (string,
 
 	switch mode {
 	case ModeChat:
-		return base + "/api/v1/services/aigc/text-generation/generation", nil
+		if strings.HasSuffix(base, "/chat/completions") {
+			return base, nil
+		}
+		return strings.TrimRight(base, "/") + "/chat/completions", nil
 	case ModeVideo:
 		return base + "/api/v1/services/aigc/video-generation/generation", nil
 	case ModeImage:

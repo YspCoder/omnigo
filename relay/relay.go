@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"time"
+	"strings"
 
 	"github.com/YspCoder/omnigo/adapter"
 	"github.com/YspCoder/omnigo/dto"
@@ -28,7 +29,13 @@ func (r *Relay) Chat(ctx context.Context, adp adapter.Adaptor, config *adapter.P
 	if config == nil {
 		return nil, fmt.Errorf("provider config is required")
 	}
-	body, err := adp.ConvertChatRequest(ctx, config, request)
+
+	convertAdaptor := adp
+	if strings.EqualFold(config.ChatProtocol, "openai") {
+		convertAdaptor = &adapter.OpenAIAdaptor{}
+	}
+
+	body, err := convertAdaptor.ConvertChatRequest(ctx, config, request)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +43,7 @@ func (r *Relay) Chat(ctx context.Context, adp adapter.Adaptor, config *adapter.P
 	if err != nil {
 		return nil, err
 	}
-	return adp.ConvertChatResponse(ctx, config, respBody)
+	return convertAdaptor.ConvertChatResponse(ctx, config, respBody)
 }
 
 // Image executes an image generation request.
@@ -72,14 +79,15 @@ func (r *Relay) Video(ctx context.Context, adp adapter.Adaptor, config *adapter.
 }
 
 // Stream executes a streaming chat request and returns the response body.
-func (r *Relay) Stream(ctx context.Context, adp interface {
-	adapter.Adaptor
-	adapter.StreamAdaptor
-}, config *adapter.ProviderConfig, request *dto.ChatRequest) (io.ReadCloser, error) {
+func (r *Relay) Stream(ctx context.Context, adp adapter.Adaptor, streamAdaptor adapter.StreamAdaptor, config *adapter.ProviderConfig, request *dto.ChatRequest) (io.ReadCloser, error) {
 	if config == nil {
 		return nil, fmt.Errorf("provider config is required")
 	}
-	body, err := adp.PrepareStreamRequest(ctx, config, request)
+	if streamAdaptor == nil {
+		return nil, fmt.Errorf("stream adaptor is required")
+	}
+
+	body, err := streamAdaptor.PrepareStreamRequest(ctx, config, request)
 	if err != nil {
 		return nil, err
 	}
