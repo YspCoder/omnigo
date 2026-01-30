@@ -351,7 +351,41 @@ func (a *AliAdaptor) ConvertChatResponse(ctx context.Context, config *ProviderCo
 // ConvertMediaRequest converts a media request to DashScope format.
 func (a *AliAdaptor) ConvertMediaRequest(ctx context.Context, config *ProviderConfig, mode string, request *dto.MediaRequest) ([]byte, error) {
 	if mode == ModeImage {
-		return nil, fmt.Errorf("image mode not supported for ali adaptor")
+		fallback := AliMultimodalGenerationRequest{
+			Model: request.Model,
+		}
+		fallback.Input.Messages = []struct {
+			Role    string `json:"role,omitempty"`
+			Content []struct {
+				Text string `json:"text,omitempty"`
+			} `json:"content,omitempty"`
+		}{
+			{
+				Role: "user",
+				Content: []struct {
+					Text string `json:"text,omitempty"`
+				}{
+					{Text: request.Prompt},
+				},
+			},
+		}
+		fallback.Parameters.Size = request.Size
+		fallback.Parameters.N = request.N
+		if request.Seed != 0 {
+			fallback.Parameters.Seed = request.Seed
+		}
+		if negative := getStringExtra(request.Extra, "negative_prompt"); negative != "" {
+			fallback.Parameters.NegativePrompt = negative
+		}
+		if promptExtend, ok := getBoolExtra(request.Extra, "prompt_extend"); ok {
+			fallback.Parameters.PromptExtend = promptExtend
+		}
+		if watermark, ok := getBoolExtra(request.Extra, "watermark"); ok {
+			fallback.Parameters.Watermark = watermark
+		}
+
+		payloadMap := aliExtractPayloadMap(request.Extra)
+		return aliMarshalPayloadWithFallback(payloadMap, fallback)
 	}
 	if mode != ModeVideo {
 		return nil, fmt.Errorf("unsupported media mode: %s", mode)
@@ -427,7 +461,34 @@ func (a *AliAdaptor) ConvertMediaRequest(ctx context.Context, config *ProviderCo
 // ConvertMediaResponse converts a DashScope media response to the standardized format.
 func (a *AliAdaptor) ConvertMediaResponse(ctx context.Context, config *ProviderConfig, mode string, body []byte) (*dto.MediaResponse, error) {
 	if mode == ModeImage {
-		return nil, fmt.Errorf("image mode not supported for ali adaptor")
+		var response AliMultimodalGenerationResponse
+		if err := json.Unmarshal(body, &response); err != nil {
+			return nil, err
+		}
+		if response.Code != "" {
+			return nil, &dto.LLMError{
+				Code:     http.StatusBadRequest,
+				Message:  response.Message,
+				Provider: config.Name,
+			}
+		}
+
+		result := &dto.MediaResponse{
+			RequestID: response.RequestID,
+			TaskID:    response.Output.TaskID,
+			Status:    strings.ToLower(response.Output.TaskStatus),
+		}
+		for _, choice := range response.Output.Choices {
+			for _, item := range choice.Message.Content {
+				if item.Image != "" {
+					result.Data = append(result.Data, dto.ImageData{URL: item.Image})
+				}
+			}
+		}
+		if result.URL == "" && len(result.Data) > 0 {
+			result.URL = result.Data[0].URL
+		}
+		return result, nil
 	}
 	if mode != ModeVideo {
 		return nil, fmt.Errorf("unsupported media mode: %s", mode)
