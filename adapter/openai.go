@@ -343,7 +343,7 @@ func (a *OpenAIAdaptor) ParseStreamResponse(chunk []byte) (string, error) {
 	var response struct {
 		Choices []struct {
 			Delta struct {
-				Role    string `json:"role"`
+				Role    string `json:"role,omitempty"`
 				Content string `json:"content"`
 			} `json:"delta"`
 			FinishReason string `json:"finish_reason"`

@@ -260,6 +260,22 @@ func (a *AliAdaptor) SetupHeaders(req *http.Request, config *ProviderConfig, mod
 	return nil
 }
 
+// PrepareStreamRequest creates a streaming chat request body.
+func (a *AliAdaptor) PrepareStreamRequest(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) ([]byte, error) {
+	streamRequest := *request
+	if streamRequest.Options == nil {
+		streamRequest.Options = make(map[string]interface{})
+	}
+	streamRequest.Stream = true
+	streamRequest.Options["stream"] = true
+	return a.ConvertChatRequest(ctx, config, &streamRequest)
+}
+
+// ParseStreamResponse processes a single streaming chunk.
+func (a *AliAdaptor) ParseStreamResponse(chunk []byte) (string, error) {
+	return (&OpenAIAdaptor{}).ParseStreamResponse(chunk)
+}
+
 // ConvertChatRequest converts a chat request to DashScope format.
 func (a *AliAdaptor) ConvertChatRequest(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) ([]byte, error) {
 	payload := struct {

@@ -54,6 +54,11 @@ type StreamAdaptor interface {
 	ParseStreamResponse(chunk []byte) (string, error)
 }
 
+// StreamHeadersProvider allows adaptors to inject extra headers for streaming requests.
+type StreamHeadersProvider interface {
+	StreamHeaders(config *ProviderConfig) map[string]string
+}
+
 // TaskAdaptor defines optional task status capabilities for adaptors.
 type TaskAdaptor interface {
 	GetTaskStatusURL(taskID string, config *ProviderConfig) (string, error)

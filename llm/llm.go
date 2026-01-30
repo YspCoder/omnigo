@@ -291,6 +291,12 @@ func (l *LLMImpl) attemptGenerate(ctx context.Context, prompt *Prompt) (string, 
 		Prompt:   prompt.String(),
 		Options:  options,
 	}
+	if request.Options == nil {
+		request.Options = make(map[string]interface{})
+	}
+	request.Options["stream_options"] = map[string]interface{}{
+		"include_usage": true,
+	}
 
 	response, err := l.relay.Chat(ctx, l.adaptor, l.adaptorCfg, request)
 	if err != nil {
@@ -472,7 +478,21 @@ func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOpti
 		Options:  options,
 	}
 
-	body, err := l.relay.Stream(ctx, l.adaptor, streamAdaptor, l.adaptorCfg, request)
+	adaptorCfg := *l.adaptorCfg
+	if headerProvider, ok := l.adaptor.(adapter.StreamHeadersProvider); ok {
+		extraHeaders := headerProvider.StreamHeaders(&adaptorCfg)
+		if len(extraHeaders) > 0 {
+			headers := make(map[string]string, len(adaptorCfg.Headers)+len(extraHeaders))
+			for k, v := range adaptorCfg.Headers {
+				headers[k] = v
+			}
+			for k, v := range extraHeaders {
+				headers[k] = v
+			}
+			adaptorCfg.Headers = headers
+		}
+	}
+	body, err := l.relay.Stream(ctx, l.adaptor, streamAdaptor, &adaptorCfg, request)
 	if err != nil {
 		return nil, NewLLMError(ErrorTypeAPI, "relay stream request failed", err)
 	}
