@@ -200,54 +200,6 @@ func aliVideoEndpointForModel(model string) string {
 	return aliVideoEndpointVideoGenerate
 }
 
-func getStringExtra(extra map[string]interface{}, key string) string {
-	if extra == nil {
-		return ""
-	}
-	if value, ok := extra[key]; ok {
-		if str, ok := value.(string); ok {
-			return str
-		}
-	}
-	return ""
-}
-
-func getBoolExtra(extra map[string]interface{}, key string) (bool, bool) {
-	if extra == nil {
-		return false, false
-	}
-	value, ok := extra[key]
-	if !ok {
-		return false, false
-	}
-	typed, ok := value.(bool)
-	return typed, ok
-}
-
-func aliExtractPayloadMap(extra map[string]interface{}) map[string]interface{} {
-	if extra == nil {
-		return nil
-	}
-	raw, ok := extra["payload"]
-	if !ok {
-		return nil
-	}
-	payload, ok := raw.(map[string]interface{})
-	if !ok {
-		return nil
-	}
-	return payload
-}
-
-func aliMarshalPayloadWithFallback(payload map[string]interface{}, fallback interface{}) ([]byte, error) {
-	if payload != nil {
-		if b, err := json.Marshal(payload); err == nil {
-			return b, nil
-		}
-	}
-	return json.Marshal(fallback)
-}
-
 // SetupHeaders sets DashScope headers.
 func (a *AliAdaptor) SetupHeaders(req *http.Request, config *ProviderConfig, mode string) error {
 	if config.APIKey != "" {
@@ -384,8 +336,8 @@ func (a *AliAdaptor) ConvertMediaRequest(ctx context.Context, config *ProviderCo
 			fallback.Parameters.Watermark = watermark
 		}
 
-		payloadMap := aliExtractPayloadMap(request.Extra)
-		return aliMarshalPayloadWithFallback(payloadMap, fallback)
+		payloadMap := extractPayloadMap(request.Extra)
+		return marshalPayloadWithFallback(payloadMap, fallback)
 	}
 	if mode != ModeVideo {
 		return nil, fmt.Errorf("unsupported media mode: %s", mode)
@@ -421,8 +373,8 @@ func (a *AliAdaptor) ConvertMediaRequest(ctx context.Context, config *ProviderCo
 			fallback.Parameters = params
 		}
 
-		payloadMap := aliExtractPayloadMap(request.Extra)
-		return aliMarshalPayloadWithFallback(payloadMap, fallback)
+		payloadMap := extractPayloadMap(request.Extra)
+		return marshalPayloadWithFallback(payloadMap, fallback)
 	}
 
 	fallback := aliVideoPayload{
@@ -454,8 +406,8 @@ func (a *AliAdaptor) ConvertMediaRequest(ctx context.Context, config *ProviderCo
 		fallback.Parameters = params
 	}
 
-	payloadMap := aliExtractPayloadMap(request.Extra)
-	return aliMarshalPayloadWithFallback(payloadMap, fallback)
+	payloadMap := extractPayloadMap(request.Extra)
+	return marshalPayloadWithFallback(payloadMap, fallback)
 }
 
 // ConvertMediaResponse converts a DashScope media response to the standardized format.

@@ -97,7 +97,18 @@ func (r *Relay) TaskStatus(ctx context.Context, adp adapter.Adaptor, config *ada
 		return nil, fmt.Errorf("request url is empty")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	method := http.MethodGet
+	var body []byte
+	if requestAdaptor, ok := adp.(adapter.TaskRequestAdaptor); ok {
+		m, b, err := requestAdaptor.PrepareTaskStatusRequest(ctx, config, taskID)
+		if err != nil {
+			return nil, err
+		}
+		method = m
+		body = b
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

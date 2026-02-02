@@ -44,30 +44,6 @@ func openAIPayloadToMap(payload interface{}) (map[string]interface{}, error) {
 	return result, nil
 }
 
-func openAIExtractPayloadMap(extra map[string]interface{}) map[string]interface{} {
-	if extra == nil {
-		return nil
-	}
-	raw, ok := extra["payload"]
-	if !ok {
-		return nil
-	}
-	payload, ok := raw.(map[string]interface{})
-	if !ok {
-		return nil
-	}
-	return payload
-}
-
-func openAIMarshalPayloadWithFallback(payload map[string]interface{}, fallback interface{}) ([]byte, error) {
-	if payload != nil {
-		if b, err := json.Marshal(payload); err == nil {
-			return b, nil
-		}
-	}
-	return json.Marshal(fallback)
-}
-
 // OpenAIAdaptor converts requests and responses to the OpenAI API format.
 type OpenAIAdaptor struct {
 	BaseURL string
@@ -258,11 +234,11 @@ func (a *OpenAIAdaptor) ConvertMediaRequest(ctx context.Context, config *Provide
 		for k, v := range request.Extra {
 			mapped[k] = v
 		}
-		payloadMap := openAIExtractPayloadMap(request.Extra)
+		payloadMap := extractPayloadMap(request.Extra)
 		if payloadMap == nil {
 			payloadMap = mapped
 		}
-		return openAIMarshalPayloadWithFallback(payloadMap, fallback)
+		return marshalPayloadWithFallback(payloadMap, fallback)
 	case ModeVideo:
 		fallback := openAIVideoPayload{
 			Model:          request.Model,
@@ -280,11 +256,11 @@ func (a *OpenAIAdaptor) ConvertMediaRequest(ctx context.Context, config *Provide
 		for k, v := range request.Extra {
 			mapped[k] = v
 		}
-		payloadMap := openAIExtractPayloadMap(request.Extra)
+		payloadMap := extractPayloadMap(request.Extra)
 		if payloadMap == nil {
 			payloadMap = mapped
 		}
-		return openAIMarshalPayloadWithFallback(payloadMap, fallback)
+		return marshalPayloadWithFallback(payloadMap, fallback)
 	default:
 		return nil, fmt.Errorf("unsupported media mode: %s", mode)
 	}

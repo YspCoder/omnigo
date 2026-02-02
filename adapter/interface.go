@@ -64,3 +64,8 @@ type TaskAdaptor interface {
 	GetTaskStatusURL(taskID string, config *ProviderConfig) (string, error)
 	ConvertTaskStatusResponse(ctx context.Context, config *ProviderConfig, body []byte) (*dto.TaskStatusResponse, error)
 }
+
+// TaskRequestAdaptor allows adaptors to customize the task status request.
+type TaskRequestAdaptor interface {
+	PrepareTaskStatusRequest(ctx context.Context, config *ProviderConfig, taskID string) (method string, body []byte, err error)
+}

@@ -64,6 +64,19 @@ func NewRegistry(providerNames ...string) *Registry {
 				return &AliAdaptor{}
 			},
 		},
+		"jimeng": {
+			Name:              "jimeng",
+			Type:              TypeCustom,
+			Endpoint:          "https://visual.volcengineapi.com",
+			AuthHeader:        "Authorization",
+			AuthPrefix:        "Bearer ",
+			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
+			SupportsSchema:    false,
+			SupportsStreaming: false,
+			AdaptorFactory: func() Adaptor {
+				return &JimengAdaptor{}
+			},
+		},
 	}
 
 	if len(providerNames) == 0 {
