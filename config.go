@@ -41,7 +41,7 @@ type (
 var (
 	// LoadConfig loads configuration from environment variables and returns a new Config instance.
 	// It automatically detects and loads API keys from environment variables matching the pattern
-	// *_API_KEY (e.g., OPENAI_API_KEY, ANTHROPIC_API_KEY).
+	// *_API_KEY (e.g., OPENAI_API_KEY, DASHSCOPE_API_KEY).
 	//
 	// Example usage:
 	//   cfg, err := LoadConfig()
@@ -64,7 +64,7 @@ var (
 // to modify configuration settings.
 var (
 	// Provider configuration
-	SetProvider = config.SetProvider // Sets the LLM provider (e.g., "openai", "anthropic")
+	SetProvider = config.SetProvider // Sets the LLM provider (e.g., "openai", "ali")
 	SetModel    = config.SetModel    // Sets the model name for the selected provider
 	SetEndpoint = config.SetEndpoint // Sets a custom endpoint for the selected provider
 	SetAPIKey   = config.SetAPIKey   // Sets the API key for the current provider
