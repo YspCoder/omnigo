@@ -15,11 +15,11 @@ import (
 // Config represents the complete configuration for LLM interactions.
 // It supports configuration through environment variables, with sensible defaults
 // for most settings. API keys are automatically loaded from environment variables
-// matching the pattern *_API_KEY (e.g., OPENAI_API_KEY, ANTHROPIC_API_KEY).
+// matching the pattern *_API_KEY (e.g., OPENAI_API_KEY, DASHSCOPE_API_KEY).
 //
 // Environment Variables:
-//   - LLM_PROVIDER: LLM provider name (default: "anthropic")
-//   - LLM_MODEL: Model name (default: "claude-3-5-haiku-latest")
+//   - LLM_PROVIDER: LLM provider name (default: "openai")
+//   - LLM_MODEL: Model name (default: "gpt-4o-mini")
 //   - LLM_ENDPOINT: Override provider endpoint/base URL
 //   - LLM_TEMPERATURE: Generation temperature (default: 0.7)
 //   - LLM_MAX_TOKENS: Maximum tokens to generate (default: 100)
@@ -43,8 +43,8 @@ import (
 //   - LLM_MIROSTAT_TAU: Mirostat target entropy
 //   - LLM_TFS_Z: Tail-free sampling parameter
 type Config struct {
-	Provider              string            `env:"LLM_PROVIDER" envDefault:"anthropic" validate:"required"`
-	Model                 string            `env:"LLM_MODEL" envDefault:"claude-3-5-haiku-latest" validate:"required"`
+	Provider              string            `env:"LLM_PROVIDER" envDefault:"openai" validate:"required"`
+	Model                 string            `env:"LLM_MODEL" envDefault:"gpt-4o-mini" validate:"required"`
 	Endpoint              string            `env:"LLM_ENDPOINT"`
 	Temperature           float64           `env:"LLM_TEMPERATURE" envDefault:"0.7" validate:"gte=0,lte=1"`
 	MaxTokens             int               `env:"LLM_MAX_TOKENS" envDefault:"100"`
@@ -341,7 +341,7 @@ func SetTfsZ(z float64) ConfigOption {
 //
 //	cfg := NewConfig()
 //	ApplyOptions(cfg,
-//	    SetProvider("anthropic"),
+//	    SetProvider("openai"),
 //	    SetModel("claude-3-opus-20240229"),
 //	    SetTemperature(0.7),
 //	    SetMaxTokens(2000),

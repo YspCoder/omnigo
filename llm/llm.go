@@ -291,13 +291,6 @@ func (l *LLMImpl) attemptGenerate(ctx context.Context, prompt *Prompt) (string, 
 		Prompt:   prompt.String(),
 		Options:  options,
 	}
-	if request.Options == nil {
-		request.Options = make(map[string]interface{})
-	}
-	request.Options["stream_options"] = map[string]interface{}{
-		"include_usage": true,
-	}
-
 	response, err := l.relay.Chat(ctx, l.adaptor, l.adaptorCfg, request)
 	if err != nil {
 		return "", NewLLMError(ErrorTypeAPI, "relay chat request failed", err)
@@ -465,6 +458,9 @@ func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOpti
 	}
 	options = applyDefaultOptions(options, l.config)
 	options["stream"] = true
+	options["stream_options"] = map[string]interface{}{
+		"include_usage": true,
+	}
 
 	messages := toDTOMessages(prompt.Messages)
 	if l.useOpenAIProtocol() {

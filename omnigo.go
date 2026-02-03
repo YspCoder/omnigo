@@ -1,5 +1,5 @@
 // Package omnigo provides a high-level interface for interacting with various Language Learning Models (LLMs).
-// It supports multiple providers including OpenAI, Anthropic, Ollama, and others, with features
+// It supports multiple providers including OpenAI, Ollama, and others, with features
 // like prompt optimization, caching, and structured output handling.
 package omnigo
 
@@ -21,7 +21,7 @@ type LLM interface {
 	// GetPromptJSONSchema returns the JSON schema for prompt validation in byte format.
 	// The schema can be customized using SchemaOption parameters.
 	GetPromptJSONSchema(opts ...SchemaOption) ([]byte, error)
-	// GetProvider returns the name of the current LLM provider (e.g., "openai", "anthropic").
+	// GetProvider returns the name of the current LLM provider (e.g., "openai").
 	GetProvider() string
 	// GetModel returns the name of the current model being used.
 	GetModel() string
@@ -125,7 +125,7 @@ func (l *llmImpl) Generate(ctx context.Context, prompt *llm.Prompt, opts ...llm.
 // The function performs the following setup:
 // 1. Loads and applies configuration from both default and provided options
 // 2. Initializes logging system with appropriate verbosity
-// 3. Sets up provider-specific optimizations (e.g., Anthropic caching headers)
+// 3. Sets up provider-specific optimizations
 // 4. Creates and configures the base LLM instance
 //
 // Returns an error if:
@@ -157,13 +157,6 @@ func NewLLM(opts ...ConfigOption) (LLM, error) {
 	}
 
 	logger := utils.NewLogger(cfg.LogLevel)
-
-	if cfg.Provider == "anthropic" && cfg.EnableCaching {
-		if cfg.ExtraHeaders == nil {
-			cfg.ExtraHeaders = make(map[string]string)
-		}
-		cfg.ExtraHeaders["anthropic-beta"] = "prompt-caching-2024-07-31"
-	}
 
 	baseLLM, err := llm.NewLLM(cfg, logger, adapter.NewRegistry())
 	if err != nil {

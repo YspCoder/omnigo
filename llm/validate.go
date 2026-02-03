@@ -4,7 +4,6 @@ package llm
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -40,18 +39,7 @@ func validateAPIKey(fl validator.FieldLevel) bool {
 
 	// For Ollama, we don't require an API key
 	if provider == "ollama" {
-		// For Ollama, check if the endpoint is accessible
-		endpoint := parent.FieldByName("Endpoint").String()
-		if endpoint == "" {
-			endpoint = "http://localhost:11434" // default endpoint
-		}
-		// Try to make a HEAD request to the Ollama endpoint
-		resp, err := http.Head(endpoint + "/api/tags")
-		if err != nil {
-			return false
-		}
-		defer resp.Body.Close()
-		return resp.StatusCode == http.StatusOK
+		return true
 	}
 
 	// For other providers, check if there's a key for the provider
@@ -63,11 +51,9 @@ func validateAPIKey(fl validator.FieldLevel) bool {
 	// Validate key format based on provider
 	switch provider {
 	case "openai":
-		return strings.HasPrefix(apiKey, "sk-") && len(apiKey) > 20
-	case "anthropic":
-		return strings.HasPrefix(apiKey, "sk-ant-") && len(apiKey) > 20
+		return len(apiKey) >= 10
 	default:
-		return len(apiKey) > 20 // Generic validation for unknown providers
+		return len(apiKey) >= 10 // Generic validation for unknown providers
 	}
 }
 
