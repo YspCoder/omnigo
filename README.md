@@ -631,6 +631,57 @@ func main() {
 }
 ```
 
+### 图像生成示例 (Google / Gemini)
+
+Google 适配器支持通过 `predict` 接口进行图像与视频生成。
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+
+    "github.com/YspCoder/omnigo"
+    "github.com/YspCoder/omnigo/dto"
+)
+
+func main() {
+    apiKey := os.Getenv("GOOGLE_API_KEY")
+    if apiKey == "" {
+        log.Fatal("GOOGLE_API_KEY is not set")
+    }
+
+    llm, err := omnigo.NewLLM(
+        omnigo.SetProvider("google"),
+        omnigo.SetModel("imagen-3.0-generate-001"), // 指定视觉模型
+        omnigo.SetAPIKey(apiKey),
+    )
+    if err != nil {
+        log.Fatalf("failed to create llm: %v", err)
+    }
+
+    req := &dto.MediaRequest{
+        Type:   dto.MediaTypeImage,
+        Prompt: "A sophisticated white rabbit in a sharp navy suit, cinematic lighting",
+        Size:   "1:1", // 纵横比
+    }
+
+    resp, err := llm.Media(context.Background(), req)
+    if err != nil {
+        log.Fatalf("image failed: %v", err)
+    }
+
+    if resp.URL != "" {
+        fmt.Println("Image URL/Data:", resp.URL)
+    } else if resp.TaskID != "" {
+        fmt.Println("Async Task ID:", resp.TaskID)
+    }
+}
+```
+
 ### 视频生成（示例）
 
 ```go
