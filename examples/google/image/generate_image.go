@@ -44,4 +44,3 @@ func main() {
 		fmt.Printf("Async Task ID: %s (Status: %s)\n", resp.TaskID, resp.Status)
 	}
 }
-EOF
