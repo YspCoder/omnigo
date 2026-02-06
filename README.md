@@ -36,6 +36,7 @@
 - OpenAI (`openai`)
 - Ali / DashScope (`ali`)
 - Jimeng / Volcengine (`jimeng`)
+- Google / Gemini (`google`)
 
 > 说明：以上名称为 `SetProvider(...)` 传入值。
 
@@ -584,6 +585,49 @@ func main() {
     }
 
     log.Printf("Task Submitted. ID: %s, Status: %s", resp.TaskID, resp.Status)
+}
+```
+
+### 文本生成示例 (Google / Gemini)
+
+Google 适配器支持 Gemini 全系列模型。它采用了与 `google.golang.org/genai` (BackendGeminiAPI) 兼容的 REST 协议。
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+
+    "github.com/YspCoder/omnigo"
+)
+
+func main() {
+    apiKey := os.Getenv("GOOGLE_API_KEY")
+    if apiKey == "" {
+        log.Fatal("GOOGLE_API_KEY is not set")
+    }
+
+    llm, err := omnigo.NewLLM(
+        omnigo.SetProvider("google"),
+        omnigo.SetModel("gemini-2.0-flash-exp"), // 指定模型名称
+        omnigo.SetAPIKey(apiKey),
+    )
+    if err != nil {
+        log.Fatalf("failed to create llm: %v", err)
+    }
+
+    ctx := context.Background()
+    prompt := omnigo.NewPrompt("你好，请介绍一下你自己")
+
+    resp, err := llm.Generate(ctx, prompt)
+    if err != nil {
+        log.Fatalf("generate failed: %v", err)
+    }
+
+    fmt.Println("Response:", resp)
 }
 ```
 
