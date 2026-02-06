@@ -77,6 +77,19 @@ func NewRegistry(providerNames ...string) *Registry {
 				return &JimengAdaptor{}
 			},
 		},
+		"google": {
+			Name:              "google",
+			Type:              TypeCustom,
+			Endpoint:          "https://generativelanguage.googleapis.com/v1beta",
+			AuthHeader:        "",
+			AuthPrefix:        "",
+			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
+			SupportsSchema:    false,
+			SupportsStreaming: true,
+			AdaptorFactory: func() Adaptor {
+				return &GoogleAdaptor{}
+			},
+		},
 	}
 
 	if len(providerNames) == 0 {
