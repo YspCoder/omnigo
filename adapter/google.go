@@ -69,6 +69,10 @@ func (a *GoogleAdaptor) GetRequestURL(mode string, config *ProviderConfig) (stri
 	if mode == ModeChat && config.Headers["X-Stream"] == "true" {
 		action = "streamGenerateContent"
 	}
+	if mode == ModeImage || mode == ModeVideo {
+		// Image and Video generation often use the predict endpoint for Imagen/Veo
+		action = "predict"
+	}
 
 	// Format: models/{model}:{action}?key={api_key}
 	url := fmt.Sprintf("%s/models/%s:%s", base, config.Model, action)
@@ -169,14 +173,138 @@ func (a *GoogleAdaptor) ConvertChatResponse(ctx context.Context, config *Provide
 	return resp, nil
 }
 
-// ConvertMediaRequest is not yet implemented for Google.
+// ConvertMediaRequest marshals the Google Media request (Imagen/Video).
 func (a *GoogleAdaptor) ConvertMediaRequest(ctx context.Context, config *ProviderConfig, mode string, request *dto.MediaRequest) ([]byte, error) {
-	return nil, fmt.Errorf("media mode not supported for Google")
+	// For Imagen 3 / Veo via predict
+	payload := map[string]interface{}{
+		"instances": []map[string]interface{}{
+			{
+				"prompt": request.Prompt,
+			},
+		},
+		"parameters": map[string]interface{}{
+			"sampleCount": request.N,
+		},
+	}
+
+	if request.Size != "" {
+		payload["parameters"].(map[string]interface{})["aspectRatio"] = request.Size
+	}
+
+	// For Video
+	if mode == ModeVideo {
+		if request.Duration > 0 {
+			payload["parameters"].(map[string]interface{})["durationSeconds"] = request.Duration
+		}
+	}
+
+	return json.Marshal(payload)
 }
 
-// ConvertMediaResponse is not yet implemented for Google.
+// ConvertMediaResponse unmarshals the Google Media response.
 func (a *GoogleAdaptor) ConvertMediaResponse(ctx context.Context, config *ProviderConfig, mode string, body []byte) (*dto.MediaResponse, error) {
-	return nil, fmt.Errorf("media mode not supported for Google")
+	// Initial response for async tasks might be an Operation object
+	var op struct {
+		Name string `json:"name"`
+		Done bool   `json:"done"`
+	}
+	if err := json.Unmarshal(body, &op); err == nil && op.Name != "" {
+		return &dto.MediaResponse{
+			TaskID: op.Name,
+			Status: "processing",
+		}, nil
+	}
+
+	// Direct response
+	var gResp struct {
+		Predictions []struct {
+			BytesBase64Encoded string `json:"bytesBase64Encoded"`
+			MimeType           string `json:"mimeType"`
+			URL                string `json:"url"`
+		} `json:"predictions"`
+	}
+
+	if err := json.Unmarshal(body, &gResp); err != nil {
+		return nil, err
+	}
+
+	if len(gResp.Predictions) > 0 {
+		prediction := gResp.Predictions[0]
+		url := prediction.URL
+		if url == "" && prediction.BytesBase64Encoded != "" {
+			url = "data:" + prediction.MimeType + ";base64," + prediction.BytesBase64Encoded
+		}
+		return &dto.MediaResponse{
+			URL:    url,
+			Status: "completed",
+		}, nil
+	}
+
+	return nil, fmt.Errorf("empty google media response")
+}
+
+// GetTaskStatusURL returns the Google endpoint for operations.
+func (a *GoogleAdaptor) GetTaskStatusURL(taskID string, config *ProviderConfig) (string, error) {
+	base := strings.TrimRight(config.BaseURL, "/")
+	if base == "" {
+		base = strings.TrimRight(a.BaseURL, "/")
+	}
+	if base == "" {
+		base = "https://generativelanguage.googleapis.com/v1beta"
+	}
+	// taskID is usually the full operation name 'operations/xxx'
+	url := fmt.Sprintf("%s/%s", base, taskID)
+	if config.APIKey != "" {
+		url += "?key=" + config.APIKey
+	}
+	return url, nil
+}
+
+// ConvertTaskStatusResponse converts a Google operation response to TaskStatusResponse.
+func (a *GoogleAdaptor) ConvertTaskStatusResponse(ctx context.Context, config *ProviderConfig, body []byte) (*dto.TaskStatusResponse, error) {
+	var op struct {
+		Name     string `json:"name"`
+		Done     bool   `json:"done"`
+		Response struct {
+			Predictions []struct {
+				URL                string `json:"url"`
+				BytesBase64Encoded string `json:"bytesBase64Encoded"`
+				MimeType           string `json:"mimeType"`
+			} `json:"predictions"`
+		} `json:"response"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+
+	if err := json.Unmarshal(body, &op); err != nil {
+		return nil, err
+	}
+
+	status := "processing"
+	if op.Done {
+		status = "completed"
+	}
+	if op.Error.Message != "" {
+		status = "failed"
+	}
+
+	result := &dto.TaskStatusResponse{
+		Output: dto.TaskStatusOutput{
+			TaskStatus: status,
+		},
+	}
+
+	if len(op.Response.Predictions) > 0 {
+		pred := op.Response.Predictions[0]
+		url := pred.URL
+		if url == "" && pred.BytesBase64Encoded != "" {
+			url = "data:" + pred.MimeType + ";base64," + pred.BytesBase64Encoded
+		}
+		result.Output.VideoURL = url // maps both video and image results to this field for simplicity in DTO
+	}
+
+	return result, nil
 }
 
 // PrepareStreamRequest creates a streaming chat request body.
