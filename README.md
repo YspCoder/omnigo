@@ -35,6 +35,7 @@
 
 - OpenAI (`openai`)
 - Ali / DashScope (`ali`)
+- Jimeng / Volcengine (`jimeng`)
 
 > 说明：以上名称为 `SetProvider(...)` 传入值。
 
@@ -535,6 +536,54 @@ func main() {
 
         time.Sleep(5 * time.Second)
     }
+}
+```
+
+### 视频生成示例 (Jimeng / 即梦)
+
+即梦 (Jimeng) 适配器支持动态模型映射。您可以通过 `SetModel` 指定模型编号（如 `jimeng_ti2v_v30_pro`），或在 `Extra` 中通过 `req_key` 覆盖。
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "os"
+
+    "github.com/YspCoder/omnigo"
+    "github.com/YspCoder/omnigo/dto"
+)
+
+func main() {
+    apiKey := os.Getenv("JIMENG_API_KEY") // 火山引擎 API Key
+    if apiKey == "" {
+        log.Fatal("JIMENG_API_KEY is not set")
+    }
+
+    llm, err := omnigo.NewLLM(
+        omnigo.SetProvider("jimeng"),
+        omnigo.SetModel("jimeng_ti2v_v30_pro"), // 指定即梦模型编号
+        omnigo.SetAPIKey(apiKey),
+    )
+    if err != nil {
+        log.Fatalf("create LLM failed: %v", err)
+    }
+
+    req := &dto.MediaRequest{
+        Type:   dto.MediaTypeVideo,
+        Prompt: "赛博朋克风格的白兔执行官在指挥中心，全息屏闪烁",
+        Extra: map[string]interface{}{
+            "image_url": "https://example.com/character.png", // 可选的首帧图
+        },
+    }
+
+    resp, err := llm.Media(context.Background(), req)
+    if err != nil {
+        log.Fatalf("video generation failed: %v", err)
+    }
+
+    log.Printf("Task Submitted. ID: %s, Status: %s", resp.TaskID, resp.Status)
 }
 ```
 
