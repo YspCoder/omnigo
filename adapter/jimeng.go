@@ -103,6 +103,9 @@ func (a *JimengAdaptor) ConvertMediaRequest(ctx context.Context, config *Provide
 
 	reqKey := getStringExtra(request.Extra, "req_key")
 	if reqKey == "" {
+		reqKey = config.Model
+	}
+	if reqKey == "" {
 		reqKey = "jimeng_ti2v_v30_pro"
 	}
 
@@ -177,7 +180,10 @@ func (a *JimengAdaptor) GetTaskStatusURL(taskID string, config *ProviderConfig) 
 
 // PrepareTaskStatusRequest creates a POST request for Jimeng task status.
 func (a *JimengAdaptor) PrepareTaskStatusRequest(ctx context.Context, config *ProviderConfig, taskID string) (string, []byte, error) {
-	reqKey := "jimeng_ti2v_v30_pro" // Default for 3.0 Pro
+	reqKey := config.Model
+	if reqKey == "" {
+		reqKey = "jimeng_ti2v_v30_pro" // Default fallback
+	}
 	payload := JimengGetResultRequest{
 		ReqKey: reqKey,
 		TaskID: taskID,
