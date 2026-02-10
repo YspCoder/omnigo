@@ -212,8 +212,11 @@ func (a *JimengAdaptor) ConvertMediaRequest(ctx context.Context, config *Provide
 
 	if imgURL := getStringExtra(request.Extra, "image_url"); imgURL != "" {
 		payload.ImageURLs = []string{imgURL}
-	} else if len(request.Extra["image_urls"].([]string)) > 0 {
-		payload.ImageURLs = request.Extra["image_urls"].([]string)
+	} else if imageURLs := getStringSliceExtra(request.Extra, "image_urls"); len(imageURLs) > 0 {
+		payload.ImageURLs = imageURLs
+	}
+	if binaryData := getStringSliceExtra(request.Extra, "binary_data_base64"); len(binaryData) > 0 {
+		payload.BinaryDataBase64 = binaryData
 	}
 
 	// Override with raw payload if provided

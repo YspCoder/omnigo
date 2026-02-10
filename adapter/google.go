@@ -30,9 +30,9 @@ type googleGeminiGenerationConfig struct {
 }
 
 type googleGeminiChatRequest struct {
-	Contents         []googleGeminiContent        `json:"contents"`
-	SystemInstruction *googleGeminiContent        `json:"system_instruction,omitempty"`
-	GenerationConfig *googleGeminiGenerationConfig `json:"generationConfig,omitempty"`
+	Contents          []googleGeminiContent         `json:"contents"`
+	SystemInstruction *googleGeminiContent          `json:"system_instruction,omitempty"`
+	GenerationConfig  *googleGeminiGenerationConfig `json:"generationConfig,omitempty"`
 }
 
 type googleGeminiResponse struct {
@@ -185,25 +185,26 @@ func (a *GoogleAdaptor) ConvertChatResponse(ctx context.Context, config *Provide
 // ConvertMediaRequest marshals the Google Media request (Imagen/Video).
 func (a *GoogleAdaptor) ConvertMediaRequest(ctx context.Context, config *ProviderConfig, mode string, request *dto.MediaRequest) ([]byte, error) {
 	// For Imagen 3 / Veo via predict
+	parameters := map[string]interface{}{
+		"sampleCount": request.N,
+	}
 	payload := map[string]interface{}{
 		"instances": []map[string]interface{}{
 			{
 				"prompt": request.Prompt,
 			},
 		},
-		"parameters": map[string]interface{}{
-			"sampleCount": request.N,
-		},
+		"parameters": parameters,
 	}
 
 	if request.Size != "" {
-		payload["parameters"].(map[string]interface{})["aspectRatio"] = request.Size
+		parameters["aspectRatio"] = request.Size
 	}
 
 	// For Video
 	if mode == ModeVideo {
 		if request.Duration > 0 {
-			payload["parameters"].(map[string]interface{})["durationSeconds"] = request.Duration
+			parameters["durationSeconds"] = request.Duration
 		}
 	}
 

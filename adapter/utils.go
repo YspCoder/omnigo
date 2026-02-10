@@ -28,6 +28,39 @@ func getBoolExtra(extra map[string]interface{}, key string) (bool, bool) {
 	return typed, ok
 }
 
+func getStringSliceExtra(extra map[string]interface{}, key string) []string {
+	if extra == nil {
+		return nil
+	}
+	value, ok := extra[key]
+	if !ok || value == nil {
+		return nil
+	}
+
+	switch typed := value.(type) {
+	case []string:
+		if len(typed) == 0 {
+			return nil
+		}
+		return typed
+	case []interface{}:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			s, ok := item.(string)
+			if !ok || s == "" {
+				continue
+			}
+			result = append(result, s)
+		}
+		if len(result) == 0 {
+			return nil
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
 func extractPayloadMap(extra map[string]interface{}) map[string]interface{} {
 	if extra == nil {
 		return nil
