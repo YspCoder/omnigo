@@ -17,15 +17,10 @@ const (
 
 // ProviderSpec describes a provider's defaults and adaptor mapping.
 type ProviderSpec struct {
-	Name              string
-	Type              ProviderType
-	Endpoint          string
-	AuthHeader        string
-	AuthPrefix        string
-	RequiredHeaders   map[string]string
-	SupportsSchema    bool
-	SupportsStreaming bool
-	AdaptorFactory    func() Adaptor
+	Name           string
+	Type           ProviderType
+	Endpoint       string
+	AdaptorFactory func() Adaptor
 }
 
 // Registry manages adaptor registration.
@@ -42,116 +37,65 @@ func NewRegistry(providerNames ...string) *Registry {
 
 	known := map[string]ProviderSpec{
 		"openai": {
-			Name:              "openai",
-			Type:              TypeOpenAI,
-			Endpoint:          "https://api.openai.com/v1/chat/completions",
-			AuthHeader:        "Authorization",
-			AuthPrefix:        "Bearer ",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    true,
-			SupportsStreaming: true,
+			Name:     "openai",
+			Type:     TypeOpenAI,
+			Endpoint: "https://api.openai.com/v1",
+			AdaptorFactory: func() Adaptor {
+				return &OpenAIAdaptor{}
+			},
 		},
 		"groq": {
-			Name:              "groq",
-			Type:              TypeOpenAI,
-			Endpoint:          "https://api.groq.com/openai/v1/chat/completions",
-			AuthHeader:        "Authorization",
-			AuthPrefix:        "Bearer ",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    true,
-			SupportsStreaming: true,
+			Name:     "groq",
+			Type:     TypeOpenAI,
+			Endpoint: "https://api.groq.com/openai/v1",
+			AdaptorFactory: func() Adaptor {
+				return &OpenAIAdaptor{}
+			},
 		},
 		"moonshot": {
-			Name:              "moonshot",
-			Type:              TypeOpenAI,
-			Endpoint:          "https://api.moonshot.cn/v1/chat/completions",
-			AuthHeader:        "Authorization",
-			AuthPrefix:        "Bearer ",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    true,
-			SupportsStreaming: true,
-		},
-		"azure-openai": {
-			Name:              "azure-openai",
-			Type:              TypeOpenAI,
-			Endpoint:          "",
-			AuthHeader:        "api-key",
-			AuthPrefix:        "",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    true,
-			SupportsStreaming: true,
-		},
-		"custom-openai": {
-			Name:              "custom-openai",
-			Type:              TypeOpenAI,
-			Endpoint:          "",
-			AuthHeader:        "Authorization",
-			AuthPrefix:        "Bearer ",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    true,
-			SupportsStreaming: true,
+			Name:     "moonshot",
+			Type:     TypeOpenAI,
+			Endpoint: "https://api.moonshot.cn/v1",
+			AdaptorFactory: func() Adaptor {
+				return &OpenAIAdaptor{}
+			},
 		},
 		"anthropic": {
-			Name:              "anthropic",
-			Type:              TypeCustom,
-			Endpoint:          "https://api.anthropic.com/v1/messages",
-			AuthHeader:        "x-api-key",
-			AuthPrefix:        "",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json", "anthropic-version": "2023-06-01"},
-			SupportsSchema:    false,
-			SupportsStreaming: true,
+			Name:     "anthropic",
+			Type:     TypeCustom,
+			Endpoint: "https://api.anthropic.com/v1",
 			AdaptorFactory: func() Adaptor {
 				return &AnthropicAdaptor{}
 			},
 		},
 		"ali": {
-			Name:              "ali",
-			Type:              TypeAliAI,
-			Endpoint:          "https://dashscope.aliyuncs.com",
-			AuthHeader:        "Authorization",
-			AuthPrefix:        "Bearer ",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    false,
-			SupportsStreaming: false,
+			Name:     "ali",
+			Type:     TypeAliAI,
+			Endpoint: "https://dashscope.aliyuncs.com",
 			AdaptorFactory: func() Adaptor {
 				return &AliAdaptor{}
 			},
 		},
 		"jimeng": {
-			Name:              "jimeng",
-			Type:              TypeCustom,
-			Endpoint:          "https://visual.volcengineapi.com",
-			AuthHeader:        "Authorization",
-			AuthPrefix:        "Bearer ",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    false,
-			SupportsStreaming: false,
+			Name:     "jimeng",
+			Type:     TypeCustom,
+			Endpoint: "https://visual.volcengineapi.com",
 			AdaptorFactory: func() Adaptor {
 				return &JimengAdaptor{}
 			},
 		},
 		"google": {
-			Name:              "google",
-			Type:              TypeCustom,
-			Endpoint:          "https://generativelanguage.googleapis.com/v1beta",
-			AuthHeader:        "",
-			AuthPrefix:        "",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    false,
-			SupportsStreaming: true,
+			Name:     "google",
+			Type:     TypeCustom,
+			Endpoint: "https://generativelanguage.googleapis.com",
 			AdaptorFactory: func() Adaptor {
 				return &GoogleAdaptor{}
 			},
 		},
 		"ark": {
-			Name:              "ark",
-			Type:              TypeOpenAI,
-			Endpoint:          "https://ark.cn-beijing.volces.com/api/v3",
-			AuthHeader:        "Authorization",
-			AuthPrefix:        "Bearer ",
-			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
-			SupportsSchema:    true,
-			SupportsStreaming: true,
+			Name:     "ark",
+			Type:     TypeCustom,
+			Endpoint: "https://ark.cn-beijing.volces.com/api/v3",
 			AdaptorFactory: func() Adaptor {
 				return &ArkAdaptor{}
 			},
@@ -199,12 +143,7 @@ func (r *Registry) BuildAdaptor(name string) (Adaptor, ProviderSpec, error) {
 		adaptor := spec.AdaptorFactory()
 		return adaptor, spec, nil
 	}
-	switch spec.Type {
-	case TypeOpenAI:
-		return &OpenAIAdaptor{}, spec, nil
-	default:
-		return nil, ProviderSpec{}, fmt.Errorf("provider %s requires a custom adaptor", name)
-	}
+	return nil, ProviderSpec{}, fmt.Errorf("no adaptor factory for %s", name)
 }
 
 var defaultRegistry *Registry
@@ -222,10 +161,4 @@ func GetDefaultRegistry() *Registry {
 func RegisterProvider(name string, spec ProviderSpec) {
 	r := GetDefaultRegistry()
 	r.RegisterProviderSpec(name, spec)
-}
-
-// RegisterAdaptor registers a provider with a custom adaptor factory in the default registry.
-func RegisterAdaptor(name string, spec ProviderSpec, factory func() Adaptor) {
-	spec.AdaptorFactory = factory
-	RegisterProvider(name, spec)
 }

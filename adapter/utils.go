@@ -1,6 +1,8 @@
 package adapter
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/json"
 )
 
@@ -83,4 +85,16 @@ func marshalPayloadWithFallback(payload map[string]interface{}, fallback interfa
 		}
 	}
 	return json.Marshal(fallback)
+}
+
+func hashSHA256(data []byte) []byte {
+	h := sha256.New()
+	h.Write(data)
+	return h.Sum(nil)
+}
+
+func hmacSign(key []byte, content string) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(content))
+	return mac.Sum(nil)
 }

@@ -24,6 +24,7 @@ type ProviderConfig struct {
 	SecretKey    string
 	Model        string
 	BaseURL      string
+	Region       string
 	Organization string
 	AuthHeader   string
 	AuthPrefix   string
@@ -33,40 +34,17 @@ type ProviderConfig struct {
 	ChatProtocol string
 }
 
-// Adaptor defines the interface for provider-specific conversions and routing.
+// Adaptor defines the interface for provider-specific implementations using their SDKs.
 type Adaptor interface {
-	// GetURL returns the provider endpoint for the given mode and optional taskID.
-	GetURL(mode string, config *ProviderConfig, taskID string) (string, error)
+	// Chat executes a chat completion request.
+	Chat(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (*dto.ChatResponse, error)
 
-	// SetupHeaders sets authentication and content headers for the request.
-	SetupHeaders(req *http.Request, config *ProviderConfig, mode string, body []byte) error
+	// Stream executes a streaming chat completion request.
+	Stream(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (dto.TokenStream, error)
 
-	// Chat conversions.
-	ConvertChatRequest(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) ([]byte, error)
-	ConvertChatResponse(ctx context.Context, config *ProviderConfig, body []byte) (*dto.ChatResponse, error)
+	// Media executes an image or video generation request.
+	Media(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error)
 
-	// Media conversions.
-	ConvertMediaRequest(ctx context.Context, config *ProviderConfig, mode string, request *dto.MediaRequest) ([]byte, error)
-	ConvertMediaResponse(ctx context.Context, config *ProviderConfig, mode string, body []byte) (*dto.MediaResponse, error)
-}
-
-// StreamAdaptor defines optional streaming capabilities for adaptors.
-type StreamAdaptor interface {
-	PrepareStreamRequest(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) ([]byte, error)
-	ParseStreamResponse(chunk []byte) (string, error)
-}
-
-// StreamHeadersProvider allows adaptors to inject extra headers for streaming requests.
-type StreamHeadersProvider interface {
-	StreamHeaders(config *ProviderConfig) map[string]string
-}
-
-// TaskAdaptor defines optional task status capabilities for adaptors.
-type TaskAdaptor interface {
-	ConvertTaskStatusResponse(ctx context.Context, config *ProviderConfig, body []byte) (*dto.TaskStatusResponse, error)
-}
-
-// TaskRequestAdaptor allows adaptors to customize the task status request.
-type TaskRequestAdaptor interface {
-	PrepareTaskStatusRequest(ctx context.Context, config *ProviderConfig, taskID string) (method string, body []byte, err error)
+	// TaskStatus queries a background task status (mostly for video).
+	TaskStatus(ctx context.Context, config *ProviderConfig, taskID string) (*dto.TaskStatusResponse, error)
 }
