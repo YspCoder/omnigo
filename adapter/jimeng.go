@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -99,17 +100,15 @@ func (a *JimengAdaptor) signV4(req *http.Request, ak, sk string, body []byte) er
 		Region  = "cn-north-1"
 	)
 
-	now := time.Now().UTC()
-	date := now.Format("20060102T150405Z")
+	now := time.Now()
+	date := now.UTC().Format("20060102T150405Z")
 	authDate := date[:8]
 
 	req.Header.Set("X-Date", date)
 
 	// Hash body
-	h := sha256.New()
-	h.Write(body)
-	payloadHash := hex.EncodeToString(h.Sum(nil))
-	req.Header.Set("X-Content-Sha256", payloadHash)
+	payload := hex.EncodeToString(hashSHA256(body))
+	req.Header.Set("X-Content-Sha256", payload)
 
 	// Canonical Query String
 	queryString := strings.ReplaceAll(req.URL.Query().Encode(), "+", "%20")
@@ -121,10 +120,11 @@ func (a *JimengAdaptor) signV4(req *http.Request, ak, sk string, body []byte) er
 		if hdr == "host" {
 			headerList = append(headerList, hdr+":"+req.Host)
 		} else {
-			headerList = append(headerList, hdr+":"+strings.TrimSpace(req.Header.Get(hdr)))
+			v := req.Header.Get(hdr)
+			headerList = append(headerList, hdr+":"+strings.TrimSpace(v))
 		}
 	}
-	headerString := strings.Join(headerList, " ")
+	headerString := strings.Join(headerList, "\n")
 
 	canonicalString := strings.Join([]string{
 		req.Method,
@@ -132,12 +132,10 @@ func (a *JimengAdaptor) signV4(req *http.Request, ak, sk string, body []byte) er
 		queryString,
 		headerString + "\n",
 		strings.Join(signedHeaders, ";"),
-		payloadHash,
+		payload,
 	}, "\n")
 
-	hc := sha256.New()
-	hc.Write([]byte(canonicalString))
-	hashedCanonicalString := hex.EncodeToString(hc.Sum(nil))
+	hashedCanonicalString := hex.EncodeToString(hashSHA256([]byte(canonicalString)))
 
 	credentialScope := authDate + "/" + Region + "/" + Service + "/request"
 
@@ -148,19 +146,31 @@ func (a *JimengAdaptor) signV4(req *http.Request, ak, sk string, body []byte) er
 		hashedCanonicalString,
 	}, "\n")
 
-	// Signing Key
-	kDate := hmacSign([]byte(sk), authDate)
-	kRegion := hmacSign(kDate, Region)
-	kService := hmacSign(kRegion, Service)
-	kSigning := hmacSign(kService, "request")
-
+	signedKey := getSignedKey(sk, authDate, Region, Service)
 	// Final Signature
-	signature := hex.EncodeToString(hmacSign(kSigning, signString))
+	signature := hex.EncodeToString(hmacSign(signedKey, signString))
 
 	authorization := "HMAC-SHA256" + " Credential=" + ak + "/" + credentialScope + ", SignedHeaders=" + strings.Join(signedHeaders, ";") + ", Signature=" + signature
 	req.Header.Set("Authorization", authorization)
 
 	return nil
+}
+
+func hashSHA256(data []byte) []byte {
+	hash := sha256.New()
+	if _, err := hash.Write(data); err != nil {
+		log.Printf("input hash err:%s", err.Error())
+	}
+
+	return hash.Sum(nil)
+}
+
+func getSignedKey(secretKey string, date string, region string, service string) []byte {
+	kDate := hmacSign([]byte(secretKey), date)
+	kRegion := hmacSign(kDate, region)
+	kService := hmacSign(kRegion, service)
+	kSigning := hmacSign(kService, "request")
+	return kSigning
 }
 
 func hmacSign(key []byte, content string) []byte {
