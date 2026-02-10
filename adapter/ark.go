@@ -3,18 +3,24 @@ package adapter
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/YspCoder/omnigo/dto"
 )
 
 // ArkAdaptor converts requests and responses for Volcengine Ark APIs.
+// It follows the patterns seen in github.com/volcengine/volcengine-go-sdk/service/arkruntime.
 type ArkAdaptor struct {
 	BaseURL string
+	Region  string
 }
 
 // GetURL returns the Ark endpoint for the given mode and optional taskID.
@@ -45,13 +51,107 @@ func (a *ArkAdaptor) GetURL(mode string, config *ProviderConfig, taskID string) 
 	}
 }
 
-// SetupHeaders sets Ark headers.
+// SetupHeaders sets Ark headers with Bearer token or V4 signing.
 func (a *ArkAdaptor) SetupHeaders(req *http.Request, config *ProviderConfig, mode string, body []byte) error {
-	if config.APIKey != "" {
+	req.Header.Set("Content-Type", "application/json")
+
+	if config.AccessKey != "" && config.SecretKey != "" {
+		region := a.Region
+		if region == "" {
+			region = "cn-beijing" // default
+		}
+		// Attempt to extract region from BaseURL if possible
+		if config.BaseURL != "" {
+			if strings.Contains(config.BaseURL, "ark.cn-") {
+				parts := strings.Split(config.BaseURL, ".")
+				for _, p := range parts {
+					if strings.HasPrefix(p, "cn-") {
+						region = p
+						break
+					}
+				}
+			}
+		}
+
+		return a.signV4(req, config.AccessKey, config.SecretKey, region, "air", body)
+	} else if config.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+config.APIKey)
 	}
-	req.Header.Set("Content-Type", "application/json")
+
 	return nil
+}
+
+func (a *ArkAdaptor) signV4(req *http.Request, ak, sk, region, service string, body []byte) error {
+	now := time.Now().UTC()
+	date := now.Format("20060102T150405Z")
+	authDate := date[:8]
+
+	req.Header.Set("X-Date", date)
+
+	// Hash body
+	payloadHash := hex.EncodeToString(arkHashSHA256(body))
+	req.Header.Set("X-Content-Sha256", payloadHash)
+
+	// Canonical Query String
+	queryString := strings.ReplaceAll(req.URL.Query().Encode(), "+", "%20")
+
+	// Signed Headers
+	signedHeaders := []string{"content-type", "host", "x-content-sha256", "x-date"}
+	var headerList []string
+	for _, hdr := range signedHeaders {
+		if hdr == "host" {
+			headerList = append(headerList, hdr+":"+req.Host)
+		} else {
+			headerList = append(headerList, hdr+":"+strings.TrimSpace(req.Header.Get(hdr)))
+		}
+	}
+	headerString := strings.Join(headerList, "\n")
+
+	canonicalString := strings.Join([]string{
+		req.Method,
+		req.URL.Path,
+		queryString,
+		headerString + "\n",
+		strings.Join(signedHeaders, ";"),
+		payloadHash,
+	}, "\n")
+
+	hashedCanonicalString := hex.EncodeToString(arkHashSHA256([]byte(canonicalString)))
+
+	credentialScope := authDate + "/" + region + "/" + service + "/request"
+
+	signString := strings.Join([]string{
+		"HMAC-SHA256",
+		date,
+		credentialScope,
+		hashedCanonicalString,
+	}, "\n")
+
+	// Signing Key
+	kDate := arkHMACSign([]byte(sk), authDate)
+	kRegion := arkHMACSign(kDate, region)
+	kService := arkHMACSign(kRegion, service)
+	kSigning := arkHMACSign(kService, "request")
+
+	// Final Signature
+	signature := hex.EncodeToString(arkHMACSign(kSigning, signString))
+
+	authorization := "HMAC-SHA256" + " Credential=" + ak + "/" + credentialScope + ", SignedHeaders=" + strings.Join(signedHeaders, ";") + ", Signature=" + signature
+	req.Header.Set("Authorization", authorization)
+
+	return nil
+}
+
+func arkHashSHA256(data []byte) []byte {
+	h := sha256.New()
+	h.Write(data)
+	return h.Sum(nil)
+}
+
+func arkHMACSign(key []byte, content string) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(content))
+	return mac.Sum(nil)
 }
 
 // ConvertChatRequest handles chat completion requests (OpenAI compatible).
@@ -64,39 +164,9 @@ func (a *ArkAdaptor) ConvertChatResponse(ctx context.Context, config *ProviderCo
 	return (&OpenAIAdaptor{}).ConvertChatResponse(ctx, config, body)
 }
 
-// ConvertMediaRequest handles image/video generation requests.
+// ConvertMediaRequest handles image/video generation requests (OpenAI compatible style).
 func (a *ArkAdaptor) ConvertMediaRequest(ctx context.Context, config *ProviderConfig, mode string, request *dto.MediaRequest) ([]byte, error) {
-	switch mode {
-	case ModeImage:
-		payload := map[string]interface{}{
-			"model":  request.Model,
-			"prompt": request.Prompt,
-		}
-		if request.Size != "" {
-			payload["size"] = request.Size
-		}
-		if request.N > 0 {
-			payload["n"] = request.N
-		}
-		for k, v := range request.Extra {
-			payload[k] = v
-		}
-		return json.Marshal(payload)
-	case ModeVideo:
-		payload := map[string]interface{}{
-			"model":  request.Model,
-			"prompt": request.Prompt,
-		}
-		if request.Size != "" {
-			payload["size"] = request.Size
-		}
-		for k, v := range request.Extra {
-			payload[k] = v
-		}
-		return json.Marshal(payload)
-	default:
-		return nil, fmt.Errorf("unsupported media mode for Ark: %s", mode)
-	}
+	return (&OpenAIAdaptor{}).ConvertMediaRequest(ctx, config, mode, request)
 }
 
 // ConvertMediaResponse handles image/video generation responses.
@@ -188,7 +258,6 @@ func (a *ArkAdaptor) ConvertTaskStatusResponse(ctx context.Context, config *Prov
 	if response.Result.Video.URL != "" {
 		res.Output.VideoURL = response.Result.Video.URL
 	} else if len(response.Result.Images) > 0 {
-		// Just take the first image URL if it's an image task
 		res.Output.VideoURL = response.Result.Images[0].URL
 	}
 
