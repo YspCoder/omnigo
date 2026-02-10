@@ -143,6 +143,19 @@ func NewRegistry(providerNames ...string) *Registry {
 				return &GoogleAdaptor{}
 			},
 		},
+		"ark": {
+			Name:              "ark",
+			Type:              TypeOpenAI,
+			Endpoint:          "https://ark.cn-beijing.volces.com/api/v3",
+			AuthHeader:        "Authorization",
+			AuthPrefix:        "Bearer ",
+			RequiredHeaders:   map[string]string{"Content-Type": "application/json"},
+			SupportsSchema:    true,
+			SupportsStreaming: true,
+			AdaptorFactory: func() Adaptor {
+				return &ArkAdaptor{}
+			},
+		},
 	}
 
 	if len(providerNames) == 0 {

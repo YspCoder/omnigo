@@ -58,7 +58,7 @@ func validateAPIKey(fl validator.FieldLevel) bool {
 
 	// Validate key format based on provider
 	switch provider {
-	case "openai":
+	case "openai", "ark":
 		return len(apiKey) >= 10
 	default:
 		return len(apiKey) >= 10 // Generic validation for unknown providers
