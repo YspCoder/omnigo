@@ -5,9 +5,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 
 	"github.com/YspCoder/omnigo/dto"
-	"github.com/sashabaranov/go-openai"
+	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/packages/ssestream"
+	"github.com/openai/openai-go/shared"
 )
 
 type OpenAIAdaptor struct {
@@ -18,57 +23,78 @@ func (a *OpenAIAdaptor) getClient(config *ProviderConfig) *openai.Client {
 	if a.client != nil {
 		return a.client
 	}
-	
-	c := openai.DefaultConfig(config.APIKey)
+
+	opts := []option.RequestOption{
+		option.WithAPIKey(config.APIKey),
+	}
 	if config.BaseURL != "" {
-		c.BaseURL = config.BaseURL
+		opts = append(opts, option.WithBaseURL(config.BaseURL))
 	}
 	if config.Organization != "" {
-		c.OrgID = config.Organization
+		opts = append(opts, option.WithOrganization(config.Organization))
 	}
-	if config.HTTPClient != nil {
-		c.HTTPClient = config.HTTPClient
+
+	httpClient := config.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{}
+	}
+
+	if config.Proxy != "" {
+		proxyURL, err := url.Parse(config.Proxy)
+		if err == nil {
+			transport := &http.Transport{
+				Proxy: http.ProxyURL(proxyURL),
+			}
+			httpClient = &http.Client{
+				Transport: transport,
+			}
+		}
 	}
 	
-	a.client = openai.NewClientWithConfig(c)
+	if httpClient != nil {
+		opts = append(opts, option.WithHTTPClient(httpClient))
+	}
+
+	client := openai.NewClient(opts...)
+	a.client = &client
 	return a.client
 }
 
 func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (*dto.ChatResponse, error) {
 	client := a.getClient(config)
 
-	req := openai.ChatCompletionRequest{
-		Model:       request.Model,
-		Temperature: float32(request.Temperature),
-		MaxTokens:   request.MaxTokens,
-		Messages:    make([]openai.ChatCompletionMessage, len(request.Messages)),
+	params := openai.ChatCompletionNewParams{
+		Model:    shared.ChatModel(request.Model),
+		Messages: toOpenAIMessages(request.Messages),
+	}
+	if request.Temperature != 0 {
+		params.Temperature = openai.Float(request.Temperature)
+	}
+	if request.MaxTokens != 0 {
+		params.MaxTokens = openai.Int(int64(request.MaxTokens))
 	}
 
-	for i, m := range request.Messages {
-		req.Messages[i] = openai.ChatCompletionMessage{
-			Role:    m.Role,
-			Content: fmt.Sprint(m.Content),
-		}
-	}
-
-	resp, err := client.CreateChatCompletion(ctx, req)
+	resp, err := client.Chat.Completions.New(ctx, params)
 	if err != nil {
 		return nil, err
 	}
 
 	res := &dto.ChatResponse{
+		ID:      resp.ID,
+		Created: resp.Created,
+		Model:   resp.Model,
 		Choices: make([]dto.ChatChoice, len(resp.Choices)),
 		Usage: dto.Usage{
-			PromptTokens:     resp.Usage.PromptTokens,
-			CompletionTokens: resp.Usage.CompletionTokens,
-			TotalTokens:      resp.Usage.TotalTokens,
+			PromptTokens:     int(resp.Usage.PromptTokens),
+			CompletionTokens: int(resp.Usage.CompletionTokens),
+			TotalTokens:      int(resp.Usage.TotalTokens),
 		},
 	}
 	for i, c := range resp.Choices {
 		res.Choices[i] = dto.ChatChoice{
-			Index: c.Index,
+			Index: i,
 			Message: dto.Message{
-				Role:    c.Message.Role,
+				Role:    string(c.Message.Role),
 				Content: c.Message.Content,
 			},
 			FinishReason: string(c.FinishReason),
@@ -77,24 +103,45 @@ func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, reques
 	return res, nil
 }
 
+func toOpenAIMessages(messages []dto.Message) []openai.ChatCompletionMessageParamUnion {
+	res := make([]openai.ChatCompletionMessageParamUnion, len(messages))
+	for i, m := range messages {
+		content := fmt.Sprint(m.Content)
+		switch m.Role {
+		case "system":
+			res[i] = openai.SystemMessage(content)
+		case "user":
+			res[i] = openai.UserMessage(content)
+		case "assistant":
+			res[i] = openai.AssistantMessage(content)
+		default:
+			res[i] = openai.UserMessage(content)
+		}
+	}
+	return res
+}
+
 type openAIStreamWrapper struct {
-	stream *openai.ChatCompletionStream
+	stream *ssestream.Stream[openai.ChatCompletionChunk]
 }
 
 func (w *openAIStreamWrapper) Next(ctx context.Context) (*dto.StreamToken, error) {
-	resp, err := w.stream.Recv()
-	if err != nil {
-		return nil, err
+	if !w.stream.Next() {
+		if err := w.stream.Err(); err != nil {
+			return nil, err
+		}
+		return nil, io.EOF
 	}
 
+	resp := w.stream.Current()
 	if len(resp.Choices) == 0 {
-		return nil, io.EOF
+		return &dto.StreamToken{Text: ""}, nil
 	}
 
 	return &dto.StreamToken{
 		Text:  resp.Choices[0].Delta.Content,
 		Type:  "text",
-		Index: resp.Choices[0].Index,
+		Index: int(resp.Choices[0].Index),
 	}, nil
 }
 
@@ -105,26 +152,18 @@ func (w *openAIStreamWrapper) Close() error {
 func (a *OpenAIAdaptor) Stream(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (dto.TokenStream, error) {
 	client := a.getClient(config)
 
-	req := openai.ChatCompletionRequest{
-		Model:       request.Model,
-		Temperature: float32(request.Temperature),
-		MaxTokens:   request.MaxTokens,
-		Messages:    make([]openai.ChatCompletionMessage, len(request.Messages)),
-		Stream:      true,
+	params := openai.ChatCompletionNewParams{
+		Model:    shared.ChatModel(request.Model),
+		Messages: toOpenAIMessages(request.Messages),
+	}
+	if request.Temperature != 0 {
+		params.Temperature = openai.Float(request.Temperature)
+	}
+	if request.MaxTokens != 0 {
+		params.MaxTokens = openai.Int(int64(request.MaxTokens))
 	}
 
-	for i, m := range request.Messages {
-		req.Messages[i] = openai.ChatCompletionMessage{
-			Role:    m.Role,
-			Content: fmt.Sprint(m.Content),
-		}
-	}
-
-	stream, err := client.CreateChatCompletionStream(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
+	stream := client.Chat.Completions.NewStreaming(ctx, params)
 	return &openAIStreamWrapper{stream: stream}, nil
 }
 
@@ -133,21 +172,26 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 
 	switch request.Type {
 	case dto.MediaTypeImage:
-		req := openai.ImageRequest{
-			Prompt:         request.Prompt,
-			Model:          request.Model,
-			N:              request.N,
-			Size:           request.Size,
-			ResponseFormat: request.ResponseFormat,
+		params := openai.ImageGenerateParams{
+			Prompt: request.Prompt,
+			Model:  openai.ImageModel(request.Model),
 		}
-		resp, err := client.CreateImage(ctx, req)
+		if request.N > 0 {
+			params.N = openai.Int(int64(request.N))
+		}
+		if request.Size != "" {
+			params.Size = openai.ImageGenerateParamsSize(request.Size)
+		}
+		if request.ResponseFormat != "" {
+			params.ResponseFormat = openai.ImageGenerateParamsResponseFormat(request.ResponseFormat)
+		}
+		
+		resp, err := client.Images.Generate(ctx, params)
 		if err != nil {
 			return nil, err
 		}
-		
-		res := &dto.MediaResponse{
-			Created: resp.Created,
-		}
+
+		res := &dto.MediaResponse{}
 		for _, img := range resp.Data {
 			res.Data = append(res.Data, dto.ImageData{
 				URL:     img.URL,

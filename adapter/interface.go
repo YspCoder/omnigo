@@ -26,6 +26,7 @@ type ProviderConfig struct {
 	BaseURL      string
 	Region       string
 	Organization string
+	Proxy        string // Proxy URL
 	AuthHeader   string
 	AuthPrefix   string
 	Headers      map[string]string
