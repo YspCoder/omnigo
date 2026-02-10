@@ -124,17 +124,7 @@ func (a *JimengAdaptor) signV4(req *http.Request, ak, sk string, body []byte) er
 			headerList = append(headerList, hdr+":"+strings.TrimSpace(req.Header.Get(hdr)))
 		}
 	}
-	headerString := strings.Join(headerList, "\n") + "\n"
-
-	// Canonical Request (Standard V4 normally uses \n, but snippet showed space. 
-	// Re-checking standard Volcengine V4: it uses \n. 
-	// The snippet used spaces in strings.Join but standard says \n.
-	// Actually, let's look at the snippet again:
-	// canonicalString := strings.Join([]string{ method, Path, queryString, headerString + " ", strings.Join(signedHeaders, ";"), payload, }, " ")
-	// This looks like a specific internal example or slightly modified.
-	// I'll stick closer to the snippet's structure but use \n where standard V4 expects it if it makes sense.
-	// Wait, snippet used " " as separator: `strings.Join(..., " ")`. 
-	// I will follow the snippet EXACTLY.
+	headerString := strings.Join(headerList, " ")
 
 	canonicalString := strings.Join([]string{
 		req.Method,
