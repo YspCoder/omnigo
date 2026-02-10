@@ -36,9 +36,17 @@ func validateAPIKey(fl validator.FieldLevel) bool {
 	// Get the parent struct (Config)
 	parent := fl.Parent()
 	provider := parent.FieldByName("Provider").String()
+	accessKeyField := parent.FieldByName("AccessKey")
+	secretKeyField := parent.FieldByName("SecretKey")
+	hasAccessKey := accessKeyField.IsValid() && accessKeyField.Kind() == reflect.String && accessKeyField.String() != ""
+	hasSecretKey := secretKeyField.IsValid() && secretKeyField.Kind() == reflect.String && secretKeyField.String() != ""
 
 	// For Ollama, we don't require an API key
 	if provider == "ollama" {
+		return true
+	}
+	// Some providers support AK/SK authentication (for example, Jimeng).
+	if hasAccessKey && hasSecretKey {
 		return true
 	}
 

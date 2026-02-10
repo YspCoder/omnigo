@@ -101,7 +101,8 @@ type GenerateConfig struct {
 func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry) (LLM, error) {
 	// Check if API key is empty for providers that need it
 	apiKey := cfg.APIKeys[cfg.Provider]
-	if apiKey == "" && cfg.Provider != "ollama" {
+	hasAKSK := cfg.AccessKey != "" && cfg.SecretKey != ""
+	if apiKey == "" && cfg.Provider != "ollama" && !hasAKSK {
 		return nil, NewLLMError(ErrorTypeAuthentication, "empty API key", nil)
 	}
 
