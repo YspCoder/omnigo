@@ -73,9 +73,9 @@ func (a *JimengAdaptor) GetURL(mode string, config *ProviderConfig, taskID strin
 
 	switch mode {
 	case ModeVideo:
-		return base + "?Action=CVProcess&Version=2022-08-31", nil
+		return base + "/?Action=CVSync2AsyncSubmitTask&Version=2022-08-31", nil
 	case ModeTask:
-		return base + "?Action=CVGetResult&Version=2022-08-31", nil
+		return base + "/?Action=CVSync2AsyncGetResult&Version=2022-08-31", nil
 	default:
 		return "", fmt.Errorf("unsupported mode for Jimeng: %s", mode)
 	}
@@ -128,7 +128,7 @@ func (a *JimengAdaptor) signV4(req *http.Request, ak, sk string, body []byte) er
 
 	canonicalString := strings.Join([]string{
 		req.Method,
-		req.URL.Path,
+		jimengCanonicalPath(req.URL.Path),
 		queryString,
 		headerString + "\n",
 		strings.Join(signedHeaders, ";"),
@@ -154,6 +154,13 @@ func (a *JimengAdaptor) signV4(req *http.Request, ak, sk string, body []byte) er
 	req.Header.Set("Authorization", authorization)
 
 	return nil
+}
+
+func jimengCanonicalPath(path string) string {
+	if path == "" {
+		return "/"
+	}
+	return path
 }
 
 func hashSHA256(data []byte) []byte {
