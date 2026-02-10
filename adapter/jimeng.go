@@ -214,11 +214,20 @@ func (a *JimengAdaptor) ConvertMediaRequest(ctx context.Context, config *Provide
 		ReqKey:      reqKey,
 		Prompt:      request.Prompt,
 		Seed:        request.Seed,
-		AspectRatio: request.Size, // Map size to aspect_ratio if it fits Jimeng's options
+		AspectRatio: request.AspectRatio,
+	}
+
+	if payload.AspectRatio == "" {
+		payload.AspectRatio = request.Size
 	}
 
 	if payload.Seed == 0 {
 		payload.Seed = -1
+	}
+
+	// Calculate frames based on duration: 24 * n + 1
+	if request.Duration > 0 {
+		payload.Frames = 24*request.Duration + 1
 	}
 
 	if frames, ok := request.Extra["frames"].(float64); ok {
