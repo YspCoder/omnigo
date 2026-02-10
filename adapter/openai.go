@@ -49,8 +49,8 @@ type OpenAIAdaptor struct {
 	BaseURL string
 }
 
-// GetRequestURL returns the OpenAI endpoint for the given mode.
-func (a *OpenAIAdaptor) GetRequestURL(mode string, config *ProviderConfig) (string, error) {
+// GetURL returns the OpenAI endpoint for the given mode and optional taskID.
+func (a *OpenAIAdaptor) GetURL(mode string, config *ProviderConfig, taskID string) (string, error) {
 	base := strings.TrimRight(config.BaseURL, "/")
 	if base == "" {
 		base = strings.TrimRight(a.BaseURL, "/")

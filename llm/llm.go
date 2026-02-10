@@ -150,6 +150,8 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 	llmClient.adaptorCfg = &adapter.ProviderConfig{
 		Name:         spec.Name,
 		APIKey:       apiKey,
+		AccessKey:    cfg.AccessKey,
+		SecretKey:    cfg.SecretKey,
 		Model:        cfg.Model,
 		BaseURL:      baseURL,
 		AuthHeader:   spec.AuthHeader,

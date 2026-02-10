@@ -20,6 +20,8 @@ const (
 type ProviderConfig struct {
 	Name         string
 	APIKey       string
+	AccessKey    string
+	SecretKey    string
 	Model        string
 	BaseURL      string
 	Organization string
@@ -33,8 +35,8 @@ type ProviderConfig struct {
 
 // Adaptor defines the interface for provider-specific conversions and routing.
 type Adaptor interface {
-	// GetRequestURL returns the provider endpoint for the given mode.
-	GetRequestURL(mode string, config *ProviderConfig) (string, error)
+	// GetURL returns the provider endpoint for the given mode and optional taskID.
+	GetURL(mode string, config *ProviderConfig, taskID string) (string, error)
 
 	// SetupHeaders sets authentication and content headers for the request.
 	SetupHeaders(req *http.Request, config *ProviderConfig, mode string) error
@@ -61,7 +63,6 @@ type StreamHeadersProvider interface {
 
 // TaskAdaptor defines optional task status capabilities for adaptors.
 type TaskAdaptor interface {
-	GetTaskStatusURL(taskID string, config *ProviderConfig) (string, error)
 	ConvertTaskStatusResponse(ctx context.Context, config *ProviderConfig, body []byte) (*dto.TaskStatusResponse, error)
 }
 

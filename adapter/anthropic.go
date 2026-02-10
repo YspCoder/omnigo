@@ -57,8 +57,8 @@ type AnthropicAdaptor struct {
 	BaseURL string
 }
 
-// GetRequestURL returns the Anthropic endpoint for the given mode.
-func (a *AnthropicAdaptor) GetRequestURL(mode string, config *ProviderConfig) (string, error) {
+// GetURL returns the Anthropic endpoint for the given mode and optional taskID.
+func (a *AnthropicAdaptor) GetURL(mode string, config *ProviderConfig, taskID string) (string, error) {
 	if mode != ModeChat {
 		return "", fmt.Errorf("unsupported mode for anthropic: %s", mode)
 	}

@@ -89,7 +89,7 @@ func (r *Relay) TaskStatus(ctx context.Context, adp adapter.Adaptor, config *ada
 		return nil, fmt.Errorf("task id is required")
 	}
 
-	url, err := taskAdaptor.GetTaskStatusURL(taskID, config)
+	url, err := adp.GetURL(adapter.ModeTask, config, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +164,7 @@ func (r *Relay) Stream(ctx context.Context, adp adapter.Adaptor, streamAdaptor a
 		return nil, err
 	}
 
-	url, err := adp.GetRequestURL(adapter.ModeChat, config)
+	url, err := adp.GetURL(adapter.ModeChat, config, "")
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func (r *Relay) Stream(ctx context.Context, adp adapter.Adaptor, streamAdaptor a
 }
 
 func (r *Relay) doRequest(ctx context.Context, adp adapter.Adaptor, config *adapter.ProviderConfig, mode string, body []byte) ([]byte, error) {
-	url, err := adp.GetRequestURL(mode, config)
+	url, err := adp.GetURL(mode, config, "")
 	if err != nil {
 		return nil, err
 	}

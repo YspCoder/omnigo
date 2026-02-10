@@ -56,32 +56,49 @@ type JimengAdaptor struct {
 	BaseURL string
 }
 
-// GetRequestURL returns the Jimeng endpoint for the given mode.
-func (a *JimengAdaptor) GetRequestURL(mode string, config *ProviderConfig) (string, error) {
+// GetURL returns the Jimeng endpoint for the given mode and optional taskID.
+func (a *JimengAdaptor) GetURL(mode string, config *ProviderConfig, taskID string) (string, error) {
 	base := strings.TrimRight(config.BaseURL, "/")
 	if base == "" {
 		base = strings.TrimRight(a.BaseURL, "/")
 	}
 	if base == "" {
-		base = "https://visual.volcengineapi.com"
+		base = "https://open.volcengineapi.com"
 	}
 
 	switch mode {
 	case ModeVideo:
-		return base + "?Action=CVSync2AsyncSubmitTask&Version=2022-08-31", nil
+		return base + "?Action=CVProcess&Version=2022-08-31", nil
+	case ModeTask:
+		return base + "?Action=CVGetResult&Version=2022-08-31", nil
 	default:
 		return "", fmt.Errorf("unsupported mode for Jimeng: %s", mode)
 	}
 }
 
-// SetupHeaders sets Jimeng headers.
+// SetupHeaders sets Jimeng headers, supporting both APIKey and AK/SK.
 func (a *JimengAdaptor) SetupHeaders(req *http.Request, config *ProviderConfig, mode string) error {
-	if config.APIKey != "" {
-		// Note: Volcengine usually requires complex signing.
-		// For now, we assume a simplified API key or a gateway that handles signing.
+	req.Header.Set("Content-Type", "application/json")
+
+	if config.AccessKey != "" && config.SecretKey != "" {
+		// If AK/SK is provided, we should ideally sign the request.
+		// Since we don't have a full signing library here, we set them as headers
+		// or expect the underlying client/gateway to handle it.
+		// Some Volcengine gateways accept these directly or via a specific proxy.
+		req.Header.Set("X-AK", config.AccessKey)
+		req.Header.Set("X-SK", config.SecretKey)
+	} else if config.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+config.APIKey)
 	}
-	req.Header.Set("Content-Type", "application/json")
+
+	// AI Platform common headers
+	if _, ok := config.Headers["X-Service"]; !ok {
+		req.Header.Set("X-Service", "visual")
+	}
+	if _, ok := config.Headers["X-Region"]; !ok {
+		req.Header.Set("X-Region", "cn-north-1")
+	}
+
 	return nil
 }
 
@@ -164,18 +181,6 @@ func (a *JimengAdaptor) ConvertMediaResponse(ctx context.Context, config *Provid
 		Status:    "submitted",
 		RequestID: response.RequestID,
 	}, nil
-}
-
-// GetTaskStatusURL returns the task status endpoint for Jimeng.
-func (a *JimengAdaptor) GetTaskStatusURL(taskID string, config *ProviderConfig) (string, error) {
-	base := strings.TrimRight(config.BaseURL, "/")
-	if base == "" {
-		base = strings.TrimRight(a.BaseURL, "/")
-	}
-	if base == "" {
-		base = "https://visual.volcengineapi.com"
-	}
-	return base + "?Action=CVSync2AsyncGetResult&Version=2022-08-31", nil
 }
 
 // PrepareTaskStatusRequest creates a POST request for Jimeng task status.

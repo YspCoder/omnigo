@@ -67,6 +67,8 @@ type Config struct {
 	SystemPrompt          string
 	SystemPromptCacheType string
 	ExtraHeaders          map[string]string
+	AccessKey             string `env:"LLM_ACCESS_KEY"`
+	SecretKey             string `env:"LLM_SECRET_KEY"`
 	EnableCaching         bool `env:"LLM_ENABLE_CACHING" envDefault:"false"`
 	EnableStreaming       bool `env:"LLM_ENABLE_STREAMING" envDefault:"false"`
 }
@@ -153,6 +155,20 @@ func NewConfig() *Config {
 func SetEndpoint(endpoint string) ConfigOption {
 	return func(c *Config) {
 		c.Endpoint = endpoint
+	}
+}
+
+// SetAccessKey sets the access key for providers that require it.
+func SetAccessKey(accessKey string) ConfigOption {
+	return func(c *Config) {
+		c.AccessKey = accessKey
+	}
+}
+
+// SetSecretKey sets the secret key for providers that require it.
+func SetSecretKey(secretKey string) ConfigOption {
+	return func(c *Config) {
+		c.SecretKey = secretKey
 	}
 }
 

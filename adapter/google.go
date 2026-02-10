@@ -55,14 +55,23 @@ type GoogleAdaptor struct {
 	BaseURL string
 }
 
-// GetRequestURL returns the Google Gemini endpoint for the given mode.
-func (a *GoogleAdaptor) GetRequestURL(mode string, config *ProviderConfig) (string, error) {
+// GetURL returns the Google Gemini endpoint for the given mode and optional taskID.
+func (a *GoogleAdaptor) GetURL(mode string, config *ProviderConfig, taskID string) (string, error) {
 	base := strings.TrimRight(config.BaseURL, "/")
 	if base == "" {
 		base = strings.TrimRight(a.BaseURL, "/")
 	}
 	if base == "" {
 		base = "https://generativelanguage.googleapis.com/v1beta"
+	}
+
+	if mode == ModeTask {
+		// taskID is usually the full operation name 'operations/xxx'
+		url := fmt.Sprintf("%s/%s", base, taskID)
+		if config.APIKey != "" {
+			url += "?key=" + config.APIKey
+		}
+		return url, nil
 	}
 
 	action := "generateContent"
@@ -241,23 +250,6 @@ func (a *GoogleAdaptor) ConvertMediaResponse(ctx context.Context, config *Provid
 	}
 
 	return nil, fmt.Errorf("empty google media response")
-}
-
-// GetTaskStatusURL returns the Google endpoint for operations.
-func (a *GoogleAdaptor) GetTaskStatusURL(taskID string, config *ProviderConfig) (string, error) {
-	base := strings.TrimRight(config.BaseURL, "/")
-	if base == "" {
-		base = strings.TrimRight(a.BaseURL, "/")
-	}
-	if base == "" {
-		base = "https://generativelanguage.googleapis.com/v1beta"
-	}
-	// taskID is usually the full operation name 'operations/xxx'
-	url := fmt.Sprintf("%s/%s", base, taskID)
-	if config.APIKey != "" {
-		url += "?key=" + config.APIKey
-	}
-	return url, nil
 }
 
 // ConvertTaskStatusResponse converts a Google operation response to TaskStatusResponse.

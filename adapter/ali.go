@@ -150,8 +150,8 @@ type AliAdaptor struct {
 	BaseURL string
 }
 
-// GetRequestURL returns the DashScope endpoint for the given mode.
-func (a *AliAdaptor) GetRequestURL(mode string, config *ProviderConfig) (string, error) {
+// GetURL returns the DashScope endpoint for the given mode and optional taskID.
+func (a *AliAdaptor) GetURL(mode string, config *ProviderConfig, taskID string) (string, error) {
 	base := strings.TrimRight(config.BaseURL, "/")
 	if base == "" {
 		base = strings.TrimRight(a.BaseURL, "/")
@@ -167,6 +167,8 @@ func (a *AliAdaptor) GetRequestURL(mode string, config *ProviderConfig) (string,
 		return base + aliVideoEndpointForModel(config.Model), nil
 	case ModeImage:
 		return base + "/api/v1/services/aigc/multimodal-generation/generation", nil
+	case ModeTask:
+		return base + "/api/v1/tasks/" + taskID, nil
 	default:
 		return "", fmt.Errorf("unsupported mode: %s", mode)
 	}
@@ -478,18 +480,6 @@ func (a *AliAdaptor) ConvertMediaResponse(ctx context.Context, config *ProviderC
 		videoResponse.URL = response.Output.VideoURL
 	}
 	return videoResponse, nil
-}
-
-// GetTaskStatusURL returns the task status endpoint for DashScope.
-func (a *AliAdaptor) GetTaskStatusURL(taskID string, config *ProviderConfig) (string, error) {
-	base := strings.TrimRight(config.BaseURL, "/")
-	if base == "" {
-		base = strings.TrimRight(a.BaseURL, "/")
-	}
-	if base == "" {
-		base = "https://dashscope.aliyuncs.com"
-	}
-	return base + "/api/v1/tasks/" + taskID, nil
 }
 
 // ConvertTaskStatusResponse converts a DashScope task status response to the standardized format.
