@@ -92,7 +92,7 @@ func (a *GoogleAdaptor) GetURL(mode string, config *ProviderConfig, taskID strin
 }
 
 // SetupHeaders sets Google-specific headers.
-func (a *GoogleAdaptor) SetupHeaders(req *http.Request, config *ProviderConfig, mode string) error {
+func (a *GoogleAdaptor) SetupHeaders(req *http.Request, config *ProviderConfig, mode string, body []byte) error {
 	// API Key is usually passed in the URL for Gemini, but we can set content type.
 	req.Header.Set("Content-Type", "application/json")
 	return nil

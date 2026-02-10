@@ -113,7 +113,7 @@ func (r *Relay) TaskStatus(ctx context.Context, adp adapter.Adaptor, config *ada
 		return nil, err
 	}
 
-	if err := adp.SetupHeaders(req, config, adapter.ModeTask); err != nil {
+	if err := adp.SetupHeaders(req, config, adapter.ModeTask, body); err != nil {
 		return nil, err
 	}
 	for key, value := range config.Headers {
@@ -177,7 +177,7 @@ func (r *Relay) Stream(ctx context.Context, adp adapter.Adaptor, streamAdaptor a
 		return nil, err
 	}
 
-	if err := adp.SetupHeaders(req, config, adapter.ModeChat); err != nil {
+	if err := adp.SetupHeaders(req, config, adapter.ModeChat, body); err != nil {
 		return nil, err
 	}
 	for key, value := range config.Headers {
@@ -228,7 +228,7 @@ func (r *Relay) doRequest(ctx context.Context, adp adapter.Adaptor, config *adap
 		return nil, err
 	}
 
-	if err := adp.SetupHeaders(req, config, mode); err != nil {
+	if err := adp.SetupHeaders(req, config, mode, body); err != nil {
 		return nil, err
 	}
 	for key, value := range config.Headers {

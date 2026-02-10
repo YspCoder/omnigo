@@ -3,10 +3,14 @@ package adapter
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/YspCoder/omnigo/dto"
 )
@@ -63,43 +67,116 @@ func (a *JimengAdaptor) GetURL(mode string, config *ProviderConfig, taskID strin
 		base = strings.TrimRight(a.BaseURL, "/")
 	}
 	if base == "" {
-		base = "https://open.volcengineapi.com"
+		base = "https://visual.volcengineapi.com"
 	}
 
 	switch mode {
 	case ModeVideo:
-		return base + "?Action=CVProcess&Version=2022-08-31", nil
+		return base + "/?Action=CVProcess&Version=2022-08-31", nil
 	case ModeTask:
-		return base + "?Action=CVGetResult&Version=2022-08-31", nil
+		return base + "/?Action=CVGetResult&Version=2022-08-31", nil
 	default:
 		return "", fmt.Errorf("unsupported mode for Jimeng: %s", mode)
 	}
 }
 
-// SetupHeaders sets Jimeng headers, supporting both APIKey and AK/SK.
-func (a *JimengAdaptor) SetupHeaders(req *http.Request, config *ProviderConfig, mode string) error {
+// SetupHeaders sets Jimeng headers with V4 signing if AK/SK is provided.
+func (a *JimengAdaptor) SetupHeaders(req *http.Request, config *ProviderConfig, mode string, body []byte) error {
 	req.Header.Set("Content-Type", "application/json")
 
 	if config.AccessKey != "" && config.SecretKey != "" {
-		// If AK/SK is provided, we should ideally sign the request.
-		// Since we don't have a full signing library here, we set them as headers
-		// or expect the underlying client/gateway to handle it.
-		// Some Volcengine gateways accept these directly or via a specific proxy.
-		req.Header.Set("X-AK", config.AccessKey)
-		req.Header.Set("X-SK", config.SecretKey)
+		return a.signV4(req, config.AccessKey, config.SecretKey, body)
 	} else if config.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+config.APIKey)
 	}
 
-	// AI Platform common headers
-	if _, ok := config.Headers["X-Service"]; !ok {
-		req.Header.Set("X-Service", "visual")
+	return nil
+}
+
+func (a *JimengAdaptor) signV4(req *http.Request, ak, sk string, body []byte) error {
+	const (
+		Service = "cv"
+		Region  = "cn-north-1"
+	)
+
+	now := time.Now().UTC()
+	date := now.Format("20060102T150405Z")
+	authDate := date[:8]
+
+	req.Header.Set("X-Date", date)
+
+	// Hash body
+	h := sha256.New()
+	h.Write(body)
+	payloadHash := hex.EncodeToString(h.Sum(nil))
+	req.Header.Set("X-Content-Sha256", payloadHash)
+
+	// Canonical Query String
+	queryString := strings.ReplaceAll(req.URL.Query().Encode(), "+", "%20")
+
+	// Signed Headers
+	signedHeaders := []string{"content-type", "host", "x-content-sha256", "x-date"}
+	var headerList []string
+	for _, hdr := range signedHeaders {
+		if hdr == "host" {
+			headerList = append(headerList, hdr+":"+req.Host)
+		} else {
+			headerList = append(headerList, hdr+":"+strings.TrimSpace(req.Header.Get(hdr)))
+		}
 	}
-	if _, ok := config.Headers["X-Region"]; !ok {
-		req.Header.Set("X-Region", "cn-north-1")
-	}
+	headerString := strings.Join(headerList, "\n") + "\n"
+
+	// Canonical Request (Standard V4 normally uses \n, but snippet showed space. 
+	// Re-checking standard Volcengine V4: it uses \n. 
+	// The snippet used spaces in strings.Join but standard says \n.
+	// Actually, let's look at the snippet again:
+	// canonicalString := strings.Join([]string{ method, Path, queryString, headerString + " ", strings.Join(signedHeaders, ";"), payload, }, " ")
+	// This looks like a specific internal example or slightly modified.
+	// I'll stick closer to the snippet's structure but use \n where standard V4 expects it if it makes sense.
+	// Wait, snippet used " " as separator: `strings.Join(..., " ")`. 
+	// I will follow the snippet EXACTLY.
+
+	canonicalString := strings.Join([]string{
+		req.Method,
+		req.URL.Path,
+		queryString,
+		headerString + " ",
+		strings.Join(signedHeaders, ";"),
+		payloadHash,
+	}, " ")
+
+	hc := sha256.New()
+	hc.Write([]byte(canonicalString))
+	hashedCanonicalString := hex.EncodeToString(hc.Sum(nil))
+
+	credentialScope := authDate + "/" + Region + "/" + Service + "/request"
+
+	signString := strings.Join([]string{
+		"HMAC-SHA256",
+		date,
+		credentialScope,
+		hashedCanonicalString,
+	}, " ")
+
+	// Signing Key
+	kDate := hmacSign([]byte(sk), authDate)
+	kRegion := hmacSign(kDate, Region)
+	kService := hmacSign(kRegion, Service)
+	kSigning := hmacSign(kService, "request")
+
+	// Final Signature
+	signature := hex.EncodeToString(hmacSign(kSigning, signString))
+
+	authorization := "HMAC-SHA256" + " Credential=" + ak + "/" + credentialScope + ", SignedHeaders=" + strings.Join(signedHeaders, ";") + ", Signature=" + signature
+	req.Header.Set("Authorization", authorization)
 
 	return nil
+}
+
+func hmacSign(key []byte, content string) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(content))
+	return mac.Sum(nil)
 }
 
 // ConvertChatRequest is not supported for Jimeng video generation.

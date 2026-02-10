@@ -39,7 +39,7 @@ type Adaptor interface {
 	GetURL(mode string, config *ProviderConfig, taskID string) (string, error)
 
 	// SetupHeaders sets authentication and content headers for the request.
-	SetupHeaders(req *http.Request, config *ProviderConfig, mode string) error
+	SetupHeaders(req *http.Request, config *ProviderConfig, mode string, body []byte) error
 
 	// Chat conversions.
 	ConvertChatRequest(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) ([]byte, error)

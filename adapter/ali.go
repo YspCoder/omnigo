@@ -203,7 +203,7 @@ func aliVideoEndpointForModel(model string) string {
 }
 
 // SetupHeaders sets DashScope headers.
-func (a *AliAdaptor) SetupHeaders(req *http.Request, config *ProviderConfig, mode string) error {
+func (a *AliAdaptor) SetupHeaders(req *http.Request, config *ProviderConfig, mode string, body []byte) error {
 	if config.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+config.APIKey)
 	}

@@ -90,7 +90,7 @@ func (a *AnthropicAdaptor) GetURL(mode string, config *ProviderConfig, taskID st
 }
 
 // SetupHeaders sets Anthropic-specific headers.
-func (a *AnthropicAdaptor) SetupHeaders(req *http.Request, config *ProviderConfig, mode string) error {
+func (a *AnthropicAdaptor) SetupHeaders(req *http.Request, config *ProviderConfig, mode string, body []byte) error {
 	if config.AuthHeader != "" && config.APIKey != "" {
 		req.Header.Set(config.AuthHeader, config.AuthPrefix+config.APIKey)
 	} else if config.APIKey != "" {

@@ -63,7 +63,7 @@ func (a *OpenAIAdaptor) GetURL(mode string, config *ProviderConfig, taskID strin
 }
 
 // SetupHeaders sets OpenAI-specific headers.
-func (a *OpenAIAdaptor) SetupHeaders(req *http.Request, config *ProviderConfig, mode string) error {
+func (a *OpenAIAdaptor) SetupHeaders(req *http.Request, config *ProviderConfig, mode string, body []byte) error {
 	if config.AuthHeader != "" {
 		req.Header.Set(config.AuthHeader, config.AuthPrefix+config.APIKey)
 	} else if config.APIKey != "" {
