@@ -115,7 +115,7 @@ func (a *JimengAdaptor) signV4(req *http.Request, ak, sk string, body []byte) er
 	queryString := strings.ReplaceAll(req.URL.Query().Encode(), "+", "%20")
 
 	// Signed Headers
-	signedHeaders := []string{"content-type", "host", "x-content-sha256", "x-date"}
+	signedHeaders := []string{"host", "x-date", "x-content-sha256", "content-type"}
 	var headerList []string
 	for _, hdr := range signedHeaders {
 		if hdr == "host" {
@@ -130,10 +130,10 @@ func (a *JimengAdaptor) signV4(req *http.Request, ak, sk string, body []byte) er
 		req.Method,
 		req.URL.Path,
 		queryString,
-		headerString + " ",
+		headerString + "\n",
 		strings.Join(signedHeaders, ";"),
 		payloadHash,
-	}, " ")
+	}, "\n")
 
 	hc := sha256.New()
 	hc.Write([]byte(canonicalString))
@@ -146,7 +146,7 @@ func (a *JimengAdaptor) signV4(req *http.Request, ak, sk string, body []byte) er
 		date,
 		credentialScope,
 		hashedCanonicalString,
-	}, " ")
+	}, "\n")
 
 	// Signing Key
 	kDate := hmacSign([]byte(sk), authDate)
