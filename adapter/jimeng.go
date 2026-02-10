@@ -73,9 +73,9 @@ func (a *JimengAdaptor) GetURL(mode string, config *ProviderConfig, taskID strin
 
 	switch mode {
 	case ModeVideo:
-		return base + "/?Action=CVProcess&Version=2022-08-31", nil
+		return base + "?Action=CVProcess&Version=2022-08-31", nil
 	case ModeTask:
-		return base + "/?Action=CVGetResult&Version=2022-08-31", nil
+		return base + "?Action=CVGetResult&Version=2022-08-31", nil
 	default:
 		return "", fmt.Errorf("unsupported mode for Jimeng: %s", mode)
 	}
