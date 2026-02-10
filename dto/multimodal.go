@@ -17,7 +17,6 @@ type MediaRequest struct {
 	Prompt         string                 `json:"prompt"`
 	N              int                    `json:"n,omitempty"`
 	Size           string                 `json:"size,omitempty"`
-	AspectRatio    string                 `json:"aspect_ratio,omitempty"`
 	Duration       int                    `json:"duration,omitempty"`
 	Fps            int                    `json:"fps,omitempty"`
 	Seed           int                    `json:"seed,omitempty"`

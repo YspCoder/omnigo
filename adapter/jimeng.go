@@ -214,11 +214,7 @@ func (a *JimengAdaptor) ConvertMediaRequest(ctx context.Context, config *Provide
 		ReqKey:      reqKey,
 		Prompt:      request.Prompt,
 		Seed:        request.Seed,
-		AspectRatio: request.AspectRatio,
-	}
-
-	if payload.AspectRatio == "" {
-		payload.AspectRatio = request.Size
+		AspectRatio: request.Size,
 	}
 
 	if payload.Seed == 0 {
