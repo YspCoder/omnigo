@@ -1,4 +1,4 @@
-// Package adapter provides Google Gemini adaptor implementation using official SDK.
+// Package adapter provides Google Gemini adaptor implementation using the new official genai SDK.
 package adapter
 
 import (
@@ -6,8 +6,7 @@ import (
 	"fmt"
 
 	"github.com/YspCoder/omnigo/dto"
-	"github.com/google/generative-ai-go/genai"
-	"google.golang.org/api/option"
+	"google.golang.org/genai"
 )
 
 type GoogleAdaptor struct {
@@ -18,7 +17,11 @@ func (a *GoogleAdaptor) getClient(ctx context.Context, config *ProviderConfig) (
 	if a.client != nil {
 		return a.client, nil
 	}
-	client, err := genai.NewClient(ctx, option.WithAPIKey(config.APIKey))
+	
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  config.APIKey,
+		Backend: genai.BackendGeminiAPI,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -32,22 +35,26 @@ func (a *GoogleAdaptor) Chat(ctx context.Context, config *ProviderConfig, reques
 		return nil, err
 	}
 
-	model := client.GenerativeModel(request.Model)
+	cfg := &genai.GenerateContentConfig{}
 	if request.Temperature != 0 {
-		model.SetTemperature(float32(request.Temperature))
+		cfg.Temperature = genai.Ptr(float32(request.Temperature))
 	}
 	if request.MaxTokens != 0 {
-		model.SetMaxOutputTokens(int32(request.MaxTokens))
+		cfg.MaxOutputTokens = int32(request.MaxTokens)
 	}
-
-	cs := model.StartChat()
 	
-	msg := fmt.Sprint(request.Prompt)
-	if len(request.Messages) > 0 {
-		msg = fmt.Sprint(request.Messages[len(request.Messages)-1].Content)
+	// Convert messages to genai.Content
+	contents := make([]*genai.Content, 0, len(request.Messages))
+	for _, m := range request.Messages {
+		contents = append(contents, &genai.Content{
+			Role: m.Role,
+			Parts: []*genai.Part{{
+				Text: fmt.Sprint(m.Content),
+			}},
+		})
 	}
 
-	resp, err := cs.SendMessage(ctx, genai.Text(msg))
+	resp, err := client.Models.GenerateContent(ctx, request.Model, contents, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -57,9 +64,10 @@ func (a *GoogleAdaptor) Chat(ctx context.Context, config *ProviderConfig, reques
 		if cand.Content != nil && len(cand.Content.Parts) > 0 {
 			res.Choices = append(res.Choices, dto.ChatChoice{
 				Message: dto.Message{
-					Role:    "assistant",
-					Content: fmt.Sprint(cand.Content.Parts[0]),
+					Role:    cand.Content.Role,
+					Content: cand.Content.Parts[0].Text,
 				},
+				FinishReason: string(cand.FinishReason),
 			})
 		}
 	}
@@ -67,11 +75,11 @@ func (a *GoogleAdaptor) Chat(ctx context.Context, config *ProviderConfig, reques
 }
 
 func (a *GoogleAdaptor) Stream(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (dto.TokenStream, error) {
-	return nil, fmt.Errorf("stream not implemented for Google SDK yet")
+	return nil, fmt.Errorf("stream not implemented for Google genai SDK in this adaptor")
 }
 
 func (a *GoogleAdaptor) Media(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
-	return nil, fmt.Errorf("media generation not supported by Google Gemini SDK in this adaptor")
+	return nil, fmt.Errorf("media mode %s not supported by Google genai SDK adaptor", request.Type)
 }
 
 func (a *GoogleAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string) (*dto.TaskStatusResponse, error) {
