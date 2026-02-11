@@ -34,6 +34,8 @@ type LLM interface {
 	// SetSystemPrompt updates the system prompt with caching configuration.
 	// The cacheType parameter determines how the prompt should be cached.
 	SetSystemPrompt(prompt string, cacheType CacheType)
+	// StreamMedia executes a streaming media generation request.
+	StreamMedia(ctx context.Context, request *dto.MediaRequest) (dto.TokenStream, error)
 }
 
 // llmImpl is the concrete implementation of the LLM interface.
@@ -78,6 +80,10 @@ func (l *llmImpl) SetOption(key string, value interface{}) {
 	l.logger.Debug("Setting option", "key", key, "value", value)
 	l.LLM.SetOption(key, value)
 	l.logger.Debug("Option set successfully")
+}
+
+func (l *llmImpl) StreamMedia(ctx context.Context, request *dto.MediaRequest) (dto.TokenStream, error) {
+	return l.LLM.StreamMedia(ctx, request)
 }
 
 // GetPromptJSONSchema generates and returns the JSON schema for the Prompt.

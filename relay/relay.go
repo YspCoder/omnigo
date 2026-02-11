@@ -51,3 +51,10 @@ func (r *Relay) Stream(ctx context.Context, adp adapter.Adaptor, _ interface{}, 
 	}
 	return adp.Stream(ctx, config, request)
 }
+
+func (r *Relay) StreamMedia(ctx context.Context, adp adapter.Adaptor, config *adapter.ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
+	if adp == nil {
+		return nil, fmt.Errorf("adaptor is required")
+	}
+	return adp.StreamMedia(ctx, config, request)
+}

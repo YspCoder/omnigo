@@ -18,6 +18,7 @@ type LLM interface {
 	Generate(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (string, error)
 	Stream(ctx context.Context, prompt *Prompt, opts ...StreamOption) (dto.TokenStream, error)
 	Media(ctx context.Context, request *dto.MediaRequest) (*dto.MediaResponse, error)
+	StreamMedia(ctx context.Context, request *dto.MediaRequest) (dto.TokenStream, error)
 	TaskStatus(ctx context.Context, taskID string) (*dto.TaskStatusResponse, error)
 	SetOption(key string, value interface{})
 	SetLogLevel(level utils.LogLevel)
@@ -135,6 +136,10 @@ func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOpti
 // Media initiates an image/video generation request.
 func (l *LLMImpl) Media(ctx context.Context, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	return l.relay.Media(ctx, l.adaptor, l.adaptorCfg, request)
+}
+
+func (l *LLMImpl) StreamMedia(ctx context.Context, request *dto.MediaRequest) (dto.TokenStream, error) {
+	return l.relay.StreamMedia(ctx, l.adaptor, l.adaptorCfg, request)
 }
 
 // TaskStatus queries a provider task status.
