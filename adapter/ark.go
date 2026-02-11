@@ -15,126 +15,15 @@ import (
 	"github.com/volcengine/volcengine-go-sdk/volcengine"
 )
 
-// ArkAdaptor converts requests and responses for Volcengine Ark APIs using the official SDK.
 type ArkAdaptor struct {
 	client *arkruntime.Client
 }
 
-func buildArkChatRequest(request *dto.ChatRequest) model.CreateChatCompletionRequest {
-	req := model.CreateChatCompletionRequest{
-		Model:    request.Model,
-		Messages: make([]*model.ChatCompletionMessage, len(request.Messages)),
-	}
-	for i, m := range request.Messages {
-		req.Messages[i] = &model.ChatCompletionMessage{
-			Role:    m.Role,
-			Content: &model.ChatCompletionMessageContent{StringValue: volcengine.String(fmt.Sprint(m.Content))},
-		}
-	}
-	return req
-}
-
-func buildArkImageRequest(request *dto.MediaRequest, withExtra bool) model.GenerateImagesRequest {
-	req := model.GenerateImagesRequest{
-		Model:  request.Model,
-		Prompt: request.Prompt,
-	}
-	if request.Size != "" {
-		req.Size = &request.Size
-	}
-	if request.Seed != 0 {
-		seed := int64(request.Seed)
-		req.Seed = &seed
-	}
-	if request.ResponseFormat != "" {
-		req.ResponseFormat = &request.ResponseFormat
-	}
-	if withExtra && request.Extra != nil {
-		if gs, ok := request.Extra["guidance_scale"].(float64); ok {
-			req.GuidanceScale = &gs
-		}
-		if wm, ok := request.Extra["watermark"].(bool); ok {
-			req.Watermark = &wm
-		}
-		if opt, ok := request.Extra["optimize_prompt"].(bool); ok {
-			req.OptimizePrompt = &opt
-		}
-	}
-	return req
-}
-
-func applyArkVideoExtra(req *model.CreateContentGenerationTaskRequest, extra map[string]interface{}) {
-	for k, v := range extra {
-		switch k {
-		case "service_tier":
-			if s, ok := v.(string); ok {
-				req.ServiceTier = &s
-			}
-		case "watermark":
-			if b, ok := v.(bool); ok {
-				req.Watermark = &b
-			}
-		case "frames":
-			if f, ok := v.(float64); ok {
-				frames := int64(f)
-				req.Frames = &frames
-			}
-		default:
-			req.ExtraBody[k] = v
-		}
-	}
-}
-
-func buildArkVideoRequest(request *dto.MediaRequest, parseSizeAsResolution bool, applyExplicitResolution bool) model.CreateContentGenerationTaskRequest {
-	req := model.CreateContentGenerationTaskRequest{
-		Model: request.Model,
-		Content: []*model.CreateContentGenerationContentItem{
-			{
-				Type: model.ContentGenerationContentItemTypeText,
-				Text: &request.Prompt,
-			},
-		},
-		ExtraBody: make(model.ExtraBody),
-	}
-	if request.Duration > 0 {
-		duration := int64(request.Duration)
-		req.Duration = &duration
-	}
-	if request.Seed != 0 {
-		seed := int64(request.Seed)
-		req.Seed = &seed
-	}
-	if request.Size != "" {
-		if parseSizeAsResolution && (strings.Contains(request.Size, "p") || strings.Contains(request.Size, "x")) {
-			req.Resolution = &request.Size
-		} else {
-			req.Ratio = &request.Size
-		}
-	}
-	if applyExplicitResolution && request.Resolution != "" {
-		req.Resolution = &request.Resolution
-	}
-	if request.Extra != nil {
-		applyArkVideoExtra(&req, request.Extra)
-	}
-	return req
-}
-
 func (a *ArkAdaptor) getClient(config *ProviderConfig) *arkruntime.Client {
-	if a.client != nil {
-		return a.client
-	}
-
-	opts := []arkruntime.ConfigOption{
-		arkruntime.WithRegion(config.Region),
-	}
-	if config.BaseURL != "" {
-		opts = append(opts, arkruntime.WithBaseUrl(config.BaseURL))
-	}
-	if config.HTTPClient != nil {
-		opts = append(opts, arkruntime.WithHTTPClient(config.HTTPClient))
-	}
-
+	if a.client != nil { return a.client }
+	opts := []arkruntime.ConfigOption{arkruntime.WithRegion(config.Region)}
+	if config.BaseURL != "" { opts = append(opts, arkruntime.WithBaseUrl(config.BaseURL)) }
+	if config.HTTPClient != nil { opts = append(opts, arkruntime.WithHTTPClient(config.HTTPClient)) }
 	if config.APIKey != "" {
 		a.client = arkruntime.NewClientWithApiKey(config.APIKey, opts...)
 	} else {
@@ -143,200 +32,128 @@ func (a *ArkAdaptor) getClient(config *ProviderConfig) *arkruntime.Client {
 	return a.client
 }
 
-func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (*dto.ChatResponse, error) {
-	client := a.getClient(config)
-	req := buildArkChatRequest(request)
-
-	resp, err := client.CreateChatCompletion(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	res := &dto.ChatResponse{
-		Choices: make([]dto.ChatChoice, len(resp.Choices)),
-		Usage: dto.Usage{
-			PromptTokens:     resp.Usage.PromptTokens,
-			CompletionTokens: resp.Usage.CompletionTokens,
-			TotalTokens:      resp.Usage.TotalTokens,
-		},
-	}
-	for i, c := range resp.Choices {
-		content := ""
-		if c.Message.Content != nil && c.Message.Content.StringValue != nil {
-			content = *c.Message.Content.StringValue
-		}
-		res.Choices[i] = dto.ChatChoice{
-			Index: c.Index,
-			Message: dto.Message{
-				Role:    c.Message.Role,
-				Content: content,
-			},
-			FinishReason: string(c.FinishReason),
-		}
+func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, r *dto.ChatRequest) (*dto.ChatResponse, error) {
+	resp, err := a.getClient(config).CreateChatCompletion(ctx, a.toChatReq(r))
+	if err != nil { return nil, err }
+	res := &dto.ChatResponse{Usage: dto.Usage{PromptTokens: resp.Usage.PromptTokens, CompletionTokens: resp.Usage.CompletionTokens, TotalTokens: resp.Usage.TotalTokens}}
+	for _, c := range resp.Choices {
+		msg := ""
+		if c.Message.Content != nil && c.Message.Content.StringValue != nil { msg = *c.Message.Content.StringValue }
+		res.Choices = append(res.Choices, dto.ChatChoice{Index: c.Index, Message: dto.Message{Role: c.Message.Role, Content: msg}, FinishReason: string(c.FinishReason)})
 	}
 	return res, nil
 }
 
-type arkStreamWrapper struct {
-	reader *utils.ChatCompletionStreamReader
+func (a *ArkAdaptor) Stream(ctx context.Context, config *ProviderConfig, r *dto.ChatRequest) (dto.TokenStream, error) {
+	s, err := a.getClient(config).CreateChatCompletionStream(ctx, a.toChatReq(r))
+	if err != nil { return nil, err }
+	return &arkStream{s}, nil
 }
 
-func (w *arkStreamWrapper) Next(ctx context.Context) (*dto.StreamToken, error) {
-	resp, err := w.reader.Recv()
-	if err != nil {
-		return nil, err
-	}
-	if len(resp.Choices) == 0 {
-		return nil, io.EOF
-	}
-
-	return &dto.StreamToken{
-		Text:  resp.Choices[0].Delta.Content,
-		Type:  "text",
-		Index: resp.Choices[0].Index,
-	}, nil
-}
-
-func (w *arkStreamWrapper) Close() error {
-	return w.reader.Close()
-}
-
-func (a *ArkAdaptor) Stream(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (dto.TokenStream, error) {
-	client := a.getClient(config)
-	req := buildArkChatRequest(request)
-
-	stream, err := client.CreateChatCompletionStream(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	return &arkStreamWrapper{reader: stream}, nil
-}
-
-func (a *ArkAdaptor) Media(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
-	client := a.getClient(config)
-
-	if request.Type == dto.MediaTypeImage {
-		req := buildArkImageRequest(request, true)
-
-		resp, err := client.GenerateImages(ctx, req)
-		if err != nil {
-			return nil, err
-		}
-
-		mediaRes := &dto.MediaResponse{
-			Created: resp.Created,
-		}
+func (a *ArkAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (*dto.MediaResponse, error) {
+	c := a.getClient(cfg)
+	if r.Type == dto.MediaTypeImage {
+		resp, err := c.GenerateImages(ctx, a.toImgReq(r))
+		if err != nil { return nil, err }
+		res := &dto.MediaResponse{Created: resp.Created}
 		for _, d := range resp.Data {
-			data := dto.ImageData{}
-			if d.Url != nil {
-				data.URL = *d.Url
-			}
-			if d.B64Json != nil {
-				data.B64JSON = *d.B64Json
-			}
-			mediaRes.Data = append(mediaRes.Data, data)
+			res.Data = append(res.Data, dto.ImageData{URL: volcengine.StringValue(d.Url), B64JSON: volcengine.StringValue(d.B64Json)})
 		}
-		if len(mediaRes.Data) > 0 {
-			mediaRes.URL = mediaRes.Data[0].URL
+		if len(res.Data) > 0 { res.URL = res.Data[0].URL }
+		return res, nil
+	}
+	resp, err := c.CreateContentGenerationTask(ctx, a.toVidReq(r))
+	if err != nil { return nil, err }
+	return &dto.MediaResponse{TaskID: resp.ID}, nil
+}
+
+func (a *ArkAdaptor) StreamMedia(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (dto.TokenStream, error) {
+	c := a.getClient(cfg)
+	if r.Type == dto.MediaTypeImage {
+		s, err := c.GenerateImagesStreaming(ctx, a.toImgReq(r))
+		return &arkMediaStream{s}, err
+	}
+	resp, err := c.CreateContentGenerationTask(ctx, a.toVidReq(r))
+	if err != nil { return nil, err }
+	return &arkVidStream{c, resp.ID, ""}, nil
+}
+
+func (a *ArkAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, id string) (*dto.TaskStatusResponse, error) {
+	resp, err := a.getClient(cfg).GetContentGenerationTask(ctx, model.GetContentGenerationTaskRequest{ID: id})
+	if err != nil { return nil, err }
+	res := &dto.TaskStatusResponse{Output: dto.TaskStatusOutput{TaskID: resp.ID, TaskStatus: resp.Status, VideoURL: resp.Content.VideoURL}}
+	if res.Output.VideoURL == "" { res.Output.VideoURL = resp.Content.FileURL }
+	if resp.Error != nil { res.Output.Code, res.Output.Message = resp.Error.Code, resp.Error.Message }
+	return res, nil
+}
+
+func (a *ArkAdaptor) toChatReq(r *dto.ChatRequest) model.CreateChatCompletionRequest {
+	req := model.CreateChatCompletionRequest{Model: r.Model}
+	for _, m := range r.Messages {
+		req.Messages = append(req.Messages, &model.ChatCompletionMessage{Role: m.Role, Content: &model.ChatCompletionMessageContent{StringValue: volcengine.String(fmt.Sprint(m.Content))}})
+	}
+	return req
+}
+
+func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
+	req := model.GenerateImagesRequest{Model: r.Model, Prompt: r.Prompt}
+	if r.Size != "" { req.Size = &r.Size }
+	if r.Seed != 0 { req.Seed = volcengine.Int64(int64(r.Seed)) }
+	if r.ResponseFormat != "" { req.ResponseFormat = &r.ResponseFormat }
+	if r.Extra != nil {
+		if v, ok := r.Extra["guidance_scale"].(float64); ok { req.GuidanceScale = &v }
+		if v, ok := r.Extra["watermark"].(bool); ok { req.Watermark = &v }
+		if v, ok := r.Extra["optimize_prompt"].(bool); ok { req.OptimizePrompt = &v }
+	}
+	return req
+}
+
+func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGenerationTaskRequest {
+	req := model.CreateContentGenerationTaskRequest{Model: r.Model, Content: []*model.CreateContentGenerationContentItem{{Type: model.ContentGenerationContentItemTypeText, Text: &r.Prompt}}, ExtraBody: make(model.ExtraBody)}
+	if r.Duration > 0 { req.Duration = volcengine.Int64(int64(r.Duration)) }
+	if r.Seed != 0 { req.Seed = volcengine.Int64(int64(r.Seed)) }
+	if r.Size != "" {
+		if strings.Contains(r.Size, "p") || strings.Contains(r.Size, "x") { req.Resolution = &r.Size } else { req.Ratio = &r.Size }
+	}
+	if r.Resolution != "" { req.Resolution = &r.Resolution }
+	for k, v := range r.Extra {
+		switch k {
+		case "service_tier": if s, ok := v.(string); ok { req.ServiceTier = &s }
+		case "watermark": if b, ok := v.(bool); ok { req.Watermark = &b }
+		case "frames": if f, ok := v.(float64); ok { req.Frames = volcengine.Int64(int64(f)) }
+		default: req.ExtraBody[k] = v
 		}
-		return mediaRes, nil
 	}
-
-	// Video generation
-	req := buildArkVideoRequest(request, false, true)
-
-	resp, err := client.CreateContentGenerationTask(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	return &dto.MediaResponse{
-		TaskID: resp.ID,
-	}, nil
+	return req
 }
 
-func (a *ArkAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string) (*dto.TaskStatusResponse, error) {
-	client := a.getClient(config)
-
-	resp, err := client.GetContentGenerationTask(ctx, model.GetContentGenerationTaskRequest{
-		ID: taskID,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	statusRes := &dto.TaskStatusResponse{
-		Output: dto.TaskStatusOutput{
-			TaskID:     resp.ID,
-			TaskStatus: resp.Status,
-		},
-	}
-
-	if resp.Error != nil {
-		statusRes.Output.Code = resp.Error.Code
-		statusRes.Output.Message = resp.Error.Message
-	}
-
-	if resp.Content.VideoURL != "" {
-		statusRes.Output.VideoURL = resp.Content.VideoURL
-	} else if resp.Content.FileURL != "" {
-		statusRes.Output.VideoURL = resp.Content.FileURL
-	}
-
-	return statusRes, nil
+type arkStream struct{ r *utils.ChatCompletionStreamReader }
+func (w *arkStream) Next(ctx context.Context) (*dto.StreamToken, error) {
+	resp, err := w.r.Recv()
+	if err != nil { return nil, err }
+	if len(resp.Choices) == 0 { return nil, io.EOF }
+	return &dto.StreamToken{Text: resp.Choices[0].Delta.Content, Type: "text", Index: resp.Choices[0].Index}, nil
 }
+func (w *arkStream) Close() error { return w.r.Close() }
 
-type arkMediaStreamWrapper struct {
-	reader *utils.ImageGenerationStreamReader
+type arkMediaStream struct{ r *utils.ImageGenerationStreamReader }
+func (w *arkMediaStream) Next(ctx context.Context) (*dto.StreamToken, error) {
+	resp, err := w.r.Recv()
+	if err != nil { return nil, err }
+	return &dto.StreamToken{Type: resp.Type, Index: int(resp.ImageIndex), URL: volcengine.StringValue(resp.Url), Text: volcengine.StringValue(resp.B64Json)}, nil
 }
+func (w *arkMediaStream) Close() error { return w.r.Close() }
 
-func (w *arkMediaStreamWrapper) Next(ctx context.Context) (*dto.StreamToken, error) {
-	resp, err := w.reader.Recv()
-	if err != nil {
-		return nil, err
-	}
-
-	token := &dto.StreamToken{
-		Type:  resp.Type,
-		Index: int(resp.ImageIndex),
-	}
-	if resp.Url != nil {
-		token.URL = *resp.Url
-	}
-	if resp.B64Json != nil {
-		token.Text = *resp.B64Json
-	}
-	return token, nil
+type arkVidStream struct {
+	c  *arkruntime.Client
+	id string
+	last string
 }
-
-func (w *arkMediaStreamWrapper) Close() error {
-	return w.reader.Close()
-}
-
-type arkVideoProgressStreamWrapper struct {
-	client *arkruntime.Client
-	taskID string
-	ctx    context.Context
-	done   bool
-	last   string
-}
-
-func (w *arkVideoProgressStreamWrapper) Next(ctx context.Context) (*dto.StreamToken, error) {
-	if w.done {
-		return nil, io.EOF
-	}
-
+func (w *arkVidStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 	for {
-		resp, err := w.client.GetContentGenerationTask(ctx, model.GetContentGenerationTaskRequest{
-			ID: w.taskID,
-		})
-		if err != nil {
-			return nil, err
-		}
-
+		resp, err := w.c.GetContentGenerationTask(ctx, model.GetContentGenerationTaskRequest{ID: w.id})
+		if err != nil { return nil, err }
 		if resp.Status == w.last && resp.Status != model.StatusSucceeded && resp.Status != model.StatusFailed {
-			// No change, wait and retry
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -344,66 +161,17 @@ func (w *arkVideoProgressStreamWrapper) Next(ctx context.Context) (*dto.StreamTo
 				continue
 			}
 		}
-
 		w.last = resp.Status
-		token := &dto.StreamToken{
-			Type: "progress",
-			Text: resp.Status,
+		res := &dto.StreamToken{Type: "progress", Text: resp.Status}
+		if resp.Status == model.StatusSucceeded {
+			res.Type, res.URL = "url", resp.Content.VideoURL
+			if res.URL == "" { res.URL = resp.Content.FileURL }
+			return res, io.EOF
+		} else if resp.Status == model.StatusFailed {
+			if resp.Error != nil { res.Text = resp.Error.Message }
+			return res, fmt.Errorf("vid failed: %s", res.Text)
 		}
-
-		switch resp.Status {
-		case model.StatusSucceeded:
-			w.done = true
-			token.Type = "url"
-			if resp.Content.VideoURL != "" {
-				token.URL = resp.Content.VideoURL
-			} else {
-				token.URL = resp.Content.FileURL
-			}
-			return token, nil
-		case model.StatusFailed:
-			w.done = true
-			token.Type = "error"
-			if resp.Error != nil {
-				token.Text = resp.Error.Message
-			}
-			return token, nil
-		default:
-			// queued, running
-			return token, nil
-		}
+		return res, nil
 	}
 }
-
-func (w *arkVideoProgressStreamWrapper) Close() error {
-	return nil
-}
-
-func (a *ArkAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
-	client := a.getClient(config)
-
-	if request.Type == dto.MediaTypeImage {
-		req := buildArkImageRequest(request, false)
-
-		stream, err := client.GenerateImagesStreaming(ctx, req)
-		if err != nil {
-			return nil, err
-		}
-
-		return &arkMediaStreamWrapper{reader: stream}, nil
-	}
-
-	// Video generation streaming (Status polling)
-	req := buildArkVideoRequest(request, true, false)
-
-	resp, err := client.CreateContentGenerationTask(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	return &arkVideoProgressStreamWrapper{
-		client: client,
-		taskID: resp.ID,
-		ctx:    ctx,
-	}, nil
-}
+func (w *arkVidStream) Close() error { return nil }
