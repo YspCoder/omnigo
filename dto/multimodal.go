@@ -1,6 +1,8 @@
 // Package dto defines standardized request and response payloads.
 package dto
 
+import "encoding/json"
+
 // MediaType indicates the kind of media request.
 type MediaType string
 
@@ -38,6 +40,43 @@ type MediaResponse struct {
 	Video        struct {
 		URL string `json:"url,omitempty"`
 	} `json:"video,omitempty"`
+}
+
+// MarshalJSON removes duplicated URL fields and empty video object in JSON output.
+func (m MediaResponse) MarshalJSON() ([]byte, error) {
+	type mediaResponseJSON struct {
+		Created      int64       `json:"created,omitempty"`
+		Data         []ImageData `json:"data,omitempty"`
+		RequestID    string      `json:"request_id,omitempty"`
+		TaskID       string      `json:"task_id,omitempty"`
+		Status       string      `json:"status,omitempty"`
+		URL          string      `json:"url,omitempty"`
+		ErrorCode    string      `json:"code,omitempty"`
+		ErrorMessage string      `json:"message,omitempty"`
+		Video        *struct {
+			URL string `json:"url,omitempty"`
+		} `json:"video,omitempty"`
+	}
+
+	out := mediaResponseJSON{
+		Created:      m.Created,
+		Data:         m.Data,
+		RequestID:    m.RequestID,
+		TaskID:       m.TaskID,
+		Status:       m.Status,
+		URL:          m.URL,
+		ErrorCode:    m.ErrorCode,
+		ErrorMessage: m.ErrorMessage,
+	}
+	if len(m.Data) > 0 && out.URL == m.Data[0].URL {
+		out.URL = ""
+	}
+	if m.Video.URL != "" {
+		out.Video = &struct {
+			URL string `json:"url,omitempty"`
+		}{URL: m.Video.URL}
+	}
+	return json.Marshal(out)
 }
 
 // ImageData holds the image payload.
