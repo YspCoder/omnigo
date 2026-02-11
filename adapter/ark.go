@@ -45,7 +45,7 @@ func (a *ArkAdaptor) getClient(config *ProviderConfig) *arkruntime.Client {
 func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (*dto.ChatResponse, error) {
 	client := a.getClient(config)
 
-	req := model.ChatCompletionRequest{
+	req := model.CreateChatCompletionRequest{
 		Model:    request.Model,
 		Messages: make([]*model.ChatCompletionMessage, len(request.Messages)),
 	}
@@ -113,7 +113,7 @@ func (w *arkStreamWrapper) Close() error {
 func (a *ArkAdaptor) Stream(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (dto.TokenStream, error) {
 	client := a.getClient(config)
 
-	req := model.ChatCompletionRequest{
+	req := model.CreateChatCompletionRequest{
 		Model:    request.Model,
 		Messages: make([]*model.ChatCompletionMessage, len(request.Messages)),
 	}
@@ -252,11 +252,11 @@ func (w *arkMediaStreamWrapper) Close() error {
 }
 
 type arkVideoProgressStreamWrapper struct {
-	client  *arkruntime.Client
-	taskID  string
-	ctx     context.Context
-	done    bool
-	last    string
+	client *arkruntime.Client
+	taskID string
+	ctx    context.Context
+	done   bool
+	last   string
 }
 
 func (w *arkVideoProgressStreamWrapper) Next(ctx context.Context) (*dto.StreamToken, error) {
