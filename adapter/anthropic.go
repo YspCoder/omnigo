@@ -76,3 +76,7 @@ func (a *AnthropicAdaptor) Media(ctx context.Context, config *ProviderConfig, re
 func (a *AnthropicAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string) (*dto.TaskStatusResponse, error) {
 	return nil, fmt.Errorf("task status not supported by Anthropic")
 }
+
+func (a *AnthropicAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
+	return nil, fmt.Errorf("streaming media not supported by Anthropic adaptor")
+}

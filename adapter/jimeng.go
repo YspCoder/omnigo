@@ -130,6 +130,10 @@ func (a *JimengAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, 
 	}, nil
 }
 
+func (a *JimengAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
+	return nil, fmt.Errorf("streaming media not supported by Jimeng adaptor")
+}
+
 func (a *JimengAdaptor) signV4(req *http.Request, ak, sk, region, service string, body []byte) error {
 	now := time.Now().UTC()
 	date := now.Format("20060102T150405Z")
