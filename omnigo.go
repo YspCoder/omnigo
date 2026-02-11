@@ -9,6 +9,7 @@ import (
 
 	"github.com/YspCoder/omnigo/adapter"
 	"github.com/YspCoder/omnigo/config"
+	"github.com/YspCoder/omnigo/dto"
 	"github.com/YspCoder/omnigo/llm"
 	"github.com/YspCoder/omnigo/utils"
 )
@@ -34,8 +35,6 @@ type LLM interface {
 	// SetSystemPrompt updates the system prompt with caching configuration.
 	// The cacheType parameter determines how the prompt should be cached.
 	SetSystemPrompt(prompt string, cacheType CacheType)
-	// StreamMedia executes a streaming media generation request.
-	StreamMedia(ctx context.Context, request *dto.MediaRequest) (dto.TokenStream, error)
 }
 
 // llmImpl is the concrete implementation of the LLM interface.
