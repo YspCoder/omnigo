@@ -222,3 +222,53 @@ func (a *ArkAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, tas
 
 	return statusRes, nil
 }
+
+type arkMediaStreamWrapper struct {
+	reader *utils.ImageGenerationStreamReader
+}
+
+func (w *arkMediaStreamWrapper) Next(ctx context.Context) (*dto.StreamToken, error) {
+	resp, err := w.reader.Recv()
+	if err != nil {
+		return nil, err
+	}
+
+	token := &dto.StreamToken{
+		Type:  resp.Type,
+		Index: int(resp.ImageIndex),
+	}
+	if resp.Url != nil {
+		token.URL = *resp.Url
+	}
+	if resp.B64Json != nil {
+		token.Text = *resp.B64Json
+	}
+	return token, nil
+}
+
+func (w *arkMediaStreamWrapper) Close() error {
+	return w.reader.Close()
+}
+
+func (a *ArkAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
+	client := a.getClient(config)
+
+	if request.Type == dto.MediaTypeImage {
+		req := model.GenerateImagesRequest{
+			Model:  request.Model,
+			Prompt: request.Prompt,
+		}
+		if request.Size != "" {
+			req.Size = &request.Size
+		}
+
+		stream, err := client.GenerateImagesStreaming(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+
+		return &arkMediaStreamWrapper{reader: stream}, nil
+	}
+
+	return nil, fmt.Errorf("streaming not yet implemented for Ark video generation in SDK")
+}

@@ -48,4 +48,7 @@ type Adaptor interface {
 
 	// TaskStatus queries a background task status (mostly for video).
 	TaskStatus(ctx context.Context, config *ProviderConfig, taskID string) (*dto.TaskStatusResponse, error)
+
+	// StreamMedia executes a streaming media generation request.
+	StreamMedia(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error)
 }

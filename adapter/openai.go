@@ -210,3 +210,7 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 func (a *OpenAIAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string) (*dto.TaskStatusResponse, error) {
 	return nil, fmt.Errorf("task status not supported by OpenAI")
 }
+
+func (a *OpenAIAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
+	return nil, fmt.Errorf("streaming media not supported by OpenAI adaptor")
+}

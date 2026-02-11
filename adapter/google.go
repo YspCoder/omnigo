@@ -85,3 +85,7 @@ func (a *GoogleAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 func (a *GoogleAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string) (*dto.TaskStatusResponse, error) {
 	return nil, fmt.Errorf("task status not supported by Google")
 }
+
+func (a *GoogleAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
+	return nil, fmt.Errorf("streaming media not supported by Google adaptor")
+}

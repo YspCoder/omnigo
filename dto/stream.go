@@ -7,14 +7,20 @@ import (
 
 // StreamToken represents a single token from the streaming response.
 type StreamToken struct {
-	// Text is the actual token text
+	// Text is the actual token text or status message
 	Text string
 
-	// Type indicates the type of token (e.g., "text", "function_call", "error")
+	// Type indicates the type of token (e.g., "text", "function_call", "error", "progress", "url")
 	Type string
 
 	// Index is the position of this token in the sequence
 	Index int
+
+	// Progress is the percentage of completion (0-100)
+	Progress *int
+
+	// URL is the generated media URL (if available in stream)
+	URL string
 
 	// Metadata contains provider-specific metadata
 	Metadata map[string]interface{}
