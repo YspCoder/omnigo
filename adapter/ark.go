@@ -20,6 +20,106 @@ type ArkAdaptor struct {
 	client *arkruntime.Client
 }
 
+func buildArkChatRequest(request *dto.ChatRequest) model.CreateChatCompletionRequest {
+	req := model.CreateChatCompletionRequest{
+		Model:    request.Model,
+		Messages: make([]*model.ChatCompletionMessage, len(request.Messages)),
+	}
+	for i, m := range request.Messages {
+		req.Messages[i] = &model.ChatCompletionMessage{
+			Role:    m.Role,
+			Content: &model.ChatCompletionMessageContent{StringValue: volcengine.String(fmt.Sprint(m.Content))},
+		}
+	}
+	return req
+}
+
+func buildArkImageRequest(request *dto.MediaRequest, withExtra bool) model.GenerateImagesRequest {
+	req := model.GenerateImagesRequest{
+		Model:  request.Model,
+		Prompt: request.Prompt,
+	}
+	if request.Size != "" {
+		req.Size = &request.Size
+	}
+	if request.Seed != 0 {
+		seed := int64(request.Seed)
+		req.Seed = &seed
+	}
+	if request.ResponseFormat != "" {
+		req.ResponseFormat = &request.ResponseFormat
+	}
+	if withExtra && request.Extra != nil {
+		if gs, ok := request.Extra["guidance_scale"].(float64); ok {
+			req.GuidanceScale = &gs
+		}
+		if wm, ok := request.Extra["watermark"].(bool); ok {
+			req.Watermark = &wm
+		}
+		if opt, ok := request.Extra["optimize_prompt"].(bool); ok {
+			req.OptimizePrompt = &opt
+		}
+	}
+	return req
+}
+
+func applyArkVideoExtra(req *model.CreateContentGenerationTaskRequest, extra map[string]interface{}) {
+	for k, v := range extra {
+		switch k {
+		case "service_tier":
+			if s, ok := v.(string); ok {
+				req.ServiceTier = &s
+			}
+		case "watermark":
+			if b, ok := v.(bool); ok {
+				req.Watermark = &b
+			}
+		case "frames":
+			if f, ok := v.(float64); ok {
+				frames := int64(f)
+				req.Frames = &frames
+			}
+		default:
+			req.ExtraBody[k] = v
+		}
+	}
+}
+
+func buildArkVideoRequest(request *dto.MediaRequest, parseSizeAsResolution bool, applyExplicitResolution bool) model.CreateContentGenerationTaskRequest {
+	req := model.CreateContentGenerationTaskRequest{
+		Model: request.Model,
+		Content: []*model.CreateContentGenerationContentItem{
+			{
+				Type: model.ContentGenerationContentItemTypeText,
+				Text: &request.Prompt,
+			},
+		},
+		ExtraBody: make(model.ExtraBody),
+	}
+	if request.Duration > 0 {
+		duration := int64(request.Duration)
+		req.Duration = &duration
+	}
+	if request.Seed != 0 {
+		seed := int64(request.Seed)
+		req.Seed = &seed
+	}
+	if request.Size != "" {
+		if parseSizeAsResolution && (strings.Contains(request.Size, "p") || strings.Contains(request.Size, "x")) {
+			req.Resolution = &request.Size
+		} else {
+			req.Ratio = &request.Size
+		}
+	}
+	if applyExplicitResolution && request.Resolution != "" {
+		req.Resolution = &request.Resolution
+	}
+	if request.Extra != nil {
+		applyArkVideoExtra(&req, request.Extra)
+	}
+	return req
+}
+
 func (a *ArkAdaptor) getClient(config *ProviderConfig) *arkruntime.Client {
 	if a.client != nil {
 		return a.client
@@ -45,17 +145,7 @@ func (a *ArkAdaptor) getClient(config *ProviderConfig) *arkruntime.Client {
 
 func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (*dto.ChatResponse, error) {
 	client := a.getClient(config)
-
-	req := model.CreateChatCompletionRequest{
-		Model:    request.Model,
-		Messages: make([]*model.ChatCompletionMessage, len(request.Messages)),
-	}
-	for i, m := range request.Messages {
-		req.Messages[i] = &model.ChatCompletionMessage{
-			Role:    m.Role,
-			Content: &model.ChatCompletionMessageContent{StringValue: volcengine.String(fmt.Sprint(m.Content))},
-		}
-	}
+	req := buildArkChatRequest(request)
 
 	resp, err := client.CreateChatCompletion(ctx, req)
 	if err != nil {
@@ -113,17 +203,7 @@ func (w *arkStreamWrapper) Close() error {
 
 func (a *ArkAdaptor) Stream(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (dto.TokenStream, error) {
 	client := a.getClient(config)
-
-	req := model.CreateChatCompletionRequest{
-		Model:    request.Model,
-		Messages: make([]*model.ChatCompletionMessage, len(request.Messages)),
-	}
-	for i, m := range request.Messages {
-		req.Messages[i] = &model.ChatCompletionMessage{
-			Role:    m.Role,
-			Content: &model.ChatCompletionMessageContent{StringValue: volcengine.String(fmt.Sprint(m.Content))},
-		}
-	}
+	req := buildArkChatRequest(request)
 
 	stream, err := client.CreateChatCompletionStream(ctx, req)
 	if err != nil {
@@ -137,33 +217,7 @@ func (a *ArkAdaptor) Media(ctx context.Context, config *ProviderConfig, request 
 	client := a.getClient(config)
 
 	if request.Type == dto.MediaTypeImage {
-		req := model.GenerateImagesRequest{
-			Model:  request.Model,
-			Prompt: request.Prompt,
-		}
-		if request.Size != "" {
-			req.Size = &request.Size
-		}
-		if request.Seed != 0 {
-			seed := int64(request.Seed)
-			req.Seed = &seed
-		}
-		if request.ResponseFormat != "" {
-			req.ResponseFormat = &request.ResponseFormat
-		}
-
-		// Handle extra fields for Image
-		if request.Extra != nil {
-			if gs, ok := request.Extra["guidance_scale"].(float64); ok {
-				req.GuidanceScale = &gs
-			}
-			if wm, ok := request.Extra["watermark"].(bool); ok {
-				req.Watermark = &wm
-			}
-			if opt, ok := request.Extra["optimize_prompt"].(bool); ok {
-				req.OptimizePrompt = &opt
-			}
-		}
+		req := buildArkImageRequest(request, true)
 
 		resp, err := client.GenerateImages(ctx, req)
 		if err != nil {
@@ -190,53 +244,7 @@ func (a *ArkAdaptor) Media(ctx context.Context, config *ProviderConfig, request 
 	}
 
 	// Video generation
-	req := model.CreateContentGenerationTaskRequest{
-		Model: request.Model,
-		Content: []*model.CreateContentGenerationContentItem{
-			{
-				Type: model.ContentGenerationContentItemTypeText,
-				Text: &request.Prompt,
-			},
-		},
-		ExtraBody: make(model.ExtraBody),
-	}
-
-	if request.Duration > 0 {
-		duration := int64(request.Duration)
-		req.Duration = &duration
-	}
-	if request.Seed != 0 {
-		seed := int64(request.Seed)
-		req.Seed = &seed
-	}
-
-	// Map Size to Ratio/Resolution for video
-	if request.Size != "" {
-		if strings.Contains(request.Size, "p") || strings.Contains(request.Size, "x") {
-			req.Resolution = &request.Size
-		} else {
-			req.Ratio = &request.Size
-		}
-	}
-
-	// Handle extra fields for Video
-	if request.Extra != nil {
-		for k, v := range request.Extra {
-			switch k {
-			case "service_tier":
-				if s, ok := v.(string); ok { req.ServiceTier = &s }
-			case "watermark":
-				if b, ok := v.(bool); ok { req.Watermark = &b }
-			case "frames":
-				if f, ok := v.(float64); ok {
-					frames := int64(f)
-					req.Frames = &frames
-				}
-			default:
-				req.ExtraBody[k] = v
-			}
-		}
-	}
+	req := buildArkVideoRequest(request, false, true)
 
 	resp, err := client.CreateContentGenerationTask(ctx, req)
 	if err != nil {
@@ -375,20 +383,7 @@ func (a *ArkAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, re
 	client := a.getClient(config)
 
 	if request.Type == dto.MediaTypeImage {
-		req := model.GenerateImagesRequest{
-			Model:  request.Model,
-			Prompt: request.Prompt,
-		}
-		if request.Size != "" {
-			req.Size = &request.Size
-		}
-		if request.Seed != 0 {
-			seed := int64(request.Seed)
-			req.Seed = &seed
-		}
-		if request.ResponseFormat != "" {
-			req.ResponseFormat = &request.ResponseFormat
-		}
+		req := buildArkImageRequest(request, false)
 
 		stream, err := client.GenerateImagesStreaming(ctx, req)
 		if err != nil {
@@ -399,52 +394,7 @@ func (a *ArkAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, re
 	}
 
 	// Video generation streaming (Status polling)
-	req := model.CreateContentGenerationTaskRequest{
-		Model: request.Model,
-		Content: []*model.CreateContentGenerationContentItem{
-			{
-				Type: model.ContentGenerationContentItemTypeText,
-				Text: &request.Prompt,
-			},
-		},
-		ExtraBody: make(model.ExtraBody),
-	}
-
-	if request.Duration > 0 {
-		duration := int64(request.Duration)
-		req.Duration = &duration
-	}
-	if request.Seed != 0 {
-		seed := int64(request.Seed)
-		req.Seed = &seed
-	}
-
-	if request.Size != "" {
-		if strings.Contains(request.Size, "p") || strings.Contains(request.Size, "x") {
-			req.Resolution = &request.Size
-		} else {
-			req.Ratio = &request.Size
-		}
-	}
-
-	// Handle extra fields for Video
-	if request.Extra != nil {
-		for k, v := range request.Extra {
-			switch k {
-			case "service_tier":
-				if s, ok := v.(string); ok { req.ServiceTier = &s }
-			case "watermark":
-				if b, ok := v.(bool); ok { req.Watermark = &b }
-			case "frames":
-				if f, ok := v.(float64); ok {
-					frames := int64(f)
-					req.Frames = &frames
-				}
-			default:
-				req.ExtraBody[k] = v
-			}
-		}
-	}
+	req := buildArkVideoRequest(request, true, false)
 
 	resp, err := client.CreateContentGenerationTask(ctx, req)
 	if err != nil {
