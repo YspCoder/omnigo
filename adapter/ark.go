@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/YspCoder/omnigo/dto"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime"
@@ -250,6 +251,71 @@ func (w *arkMediaStreamWrapper) Close() error {
 	return w.reader.Close()
 }
 
+type arkVideoProgressStreamWrapper struct {
+	client  *arkruntime.Client
+	taskID  string
+	ctx     context.Context
+	done    bool
+	last    string
+}
+
+func (w *arkVideoProgressStreamWrapper) Next(ctx context.Context) (*dto.StreamToken, error) {
+	if w.done {
+		return nil, io.EOF
+	}
+
+	for {
+		resp, err := w.client.GetContentGenerationTask(ctx, model.GetContentGenerationTaskRequest{
+			ID: w.taskID,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.Status == w.last && resp.Status != model.StatusSucceeded && resp.Status != model.StatusFailed {
+			// No change, wait and retry
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(2 * time.Second):
+				continue
+			}
+		}
+
+		w.last = resp.Status
+		token := &dto.StreamToken{
+			Type: "progress",
+			Text: resp.Status,
+		}
+
+		switch resp.Status {
+		case model.StatusSucceeded:
+			w.done = true
+			token.Type = "url"
+			if resp.Content.VideoURL != "" {
+				token.URL = resp.Content.VideoURL
+			} else {
+				token.URL = resp.Content.FileURL
+			}
+			return token, nil
+		case model.StatusFailed:
+			w.done = true
+			token.Type = "error"
+			if resp.Error != nil {
+				token.Text = resp.Error.Message
+			}
+			return token, nil
+		default:
+			// queued, running
+			return token, nil
+		}
+	}
+}
+
+func (w *arkVideoProgressStreamWrapper) Close() error {
+	return nil
+}
+
 func (a *ArkAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
 	client := a.getClient(config)
 
@@ -270,5 +336,29 @@ func (a *ArkAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, re
 		return &arkMediaStreamWrapper{reader: stream}, nil
 	}
 
-	return nil, fmt.Errorf("streaming not yet implemented for Ark video generation in SDK")
+	// Video generation streaming (Status polling)
+	req := model.CreateContentGenerationTaskRequest{
+		Model: request.Model,
+		Content: []*model.CreateContentGenerationContentItem{
+			{
+				Type: model.ContentGenerationContentItemTypeText,
+				Text: &request.Prompt,
+			},
+		},
+	}
+	if request.Duration > 0 {
+		duration := int64(request.Duration)
+		req.Duration = &duration
+	}
+
+	resp, err := client.CreateContentGenerationTask(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	return &arkVideoProgressStreamWrapper{
+		client: client,
+		taskID: resp.ID,
+		ctx:    ctx,
+	}, nil
 }
