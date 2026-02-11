@@ -143,6 +143,26 @@ func (a *ArkAdaptor) Media(ctx context.Context, config *ProviderConfig, request 
 		if request.Size != "" {
 			req.Size = &request.Size
 		}
+		if request.Seed != 0 {
+			seed := int64(request.Seed)
+			req.Seed = &seed
+		}
+		if request.ResponseFormat != "" {
+			req.ResponseFormat = &request.ResponseFormat
+		}
+
+		// Handle extra fields for Image
+		if request.Extra != nil {
+			if gs, ok := request.Extra["guidance_scale"].(float64); ok {
+				req.GuidanceScale = &gs
+			}
+			if wm, ok := request.Extra["watermark"].(bool); ok {
+				req.Watermark = &wm
+			}
+			if opt, ok := request.Extra["optimize_prompt"].(bool); ok {
+				req.OptimizePrompt = &opt
+			}
+		}
 
 		resp, err := client.GenerateImages(ctx, req)
 		if err != nil {
@@ -177,10 +197,44 @@ func (a *ArkAdaptor) Media(ctx context.Context, config *ProviderConfig, request 
 				Text: &request.Prompt,
 			},
 		},
+		ExtraBody: make(model.ExtraBody),
 	}
+
 	if request.Duration > 0 {
 		duration := int64(request.Duration)
 		req.Duration = &duration
+	}
+	if request.Seed != 0 {
+		seed := int64(request.Seed)
+		req.Seed = &seed
+	}
+
+	// Map Size to Ratio/Resolution for video
+	if request.Size != "" {
+		if strings.Contains(request.Size, "p") || strings.Contains(request.Size, "x") {
+			req.Resolution = &request.Size
+		} else {
+			req.Ratio = &request.Size
+		}
+	}
+
+	// Handle extra fields for Video
+	if request.Extra != nil {
+		for k, v := range request.Extra {
+			switch k {
+			case "service_tier":
+				if s, ok := v.(string); ok { req.ServiceTier = &s }
+			case "watermark":
+				if b, ok := v.(bool); ok { req.Watermark = &b }
+			case "frames":
+				if f, ok := v.(float64); ok {
+					frames := int64(f)
+					req.Frames = &frames
+				}
+			default:
+				req.ExtraBody[k] = v
+			}
+		}
 	}
 
 	resp, err := client.CreateContentGenerationTask(ctx, req)
@@ -327,6 +381,13 @@ func (a *ArkAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, re
 		if request.Size != "" {
 			req.Size = &request.Size
 		}
+		if request.Seed != 0 {
+			seed := int64(request.Seed)
+			req.Seed = &seed
+		}
+		if request.ResponseFormat != "" {
+			req.ResponseFormat = &request.ResponseFormat
+		}
 
 		stream, err := client.GenerateImagesStreaming(ctx, req)
 		if err != nil {
@@ -345,10 +406,43 @@ func (a *ArkAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, re
 				Text: &request.Prompt,
 			},
 		},
+		ExtraBody: make(model.ExtraBody),
 	}
+
 	if request.Duration > 0 {
 		duration := int64(request.Duration)
 		req.Duration = &duration
+	}
+	if request.Seed != 0 {
+		seed := int64(request.Seed)
+		req.Seed = &seed
+	}
+
+	if request.Size != "" {
+		if strings.Contains(request.Size, "p") || strings.Contains(request.Size, "x") {
+			req.Resolution = &request.Size
+		} else {
+			req.Ratio = &request.Size
+		}
+	}
+
+	// Handle extra fields for Video
+	if request.Extra != nil {
+		for k, v := range request.Extra {
+			switch k {
+			case "service_tier":
+				if s, ok := v.(string); ok { req.ServiceTier = &s }
+			case "watermark":
+				if b, ok := v.(bool); ok { req.Watermark = &b }
+			case "frames":
+				if f, ok := v.(float64); ok {
+					frames := int64(f)
+					req.Frames = &frames
+				}
+			default:
+				req.ExtraBody[k] = v
+			}
+		}
 	}
 
 	resp, err := client.CreateContentGenerationTask(ctx, req)
