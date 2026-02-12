@@ -132,6 +132,14 @@ func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
 		req.ResponseFormat = &r.ResponseFormat
 	}
 	if r.Extra != nil {
+		images := contentImageURLs(r.Extra["images"])
+		if len(images) > 0 {
+			req.Image = images
+		} else if image, ok := contentImageURL(r.Extra["image"]); ok {
+			req.Image = image
+		}
+	}
+	if r.Extra != nil {
 		if v, ok := r.Extra["guidance_scale"].(float64); ok {
 			req.GuidanceScale = &v
 		}
@@ -140,6 +148,19 @@ func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
 		}
 		if v, ok := r.Extra["optimize_prompt"].(bool); ok {
 			req.OptimizePrompt = &v
+		}
+	}
+	maxImages := r.N
+	if maxImages <= 0 && r.Extra != nil {
+		if n, ok := intValue(r.Extra["n"]); ok {
+			maxImages = n
+		}
+	}
+	if maxImages > 0 && req.Image != nil {
+		sequential := model.SequentialImageGeneration(model.SequentialImageGenerationAuto)
+		req.SequentialImageGeneration = &sequential
+		req.SequentialImageGenerationOptions = &model.SequentialImageGenerationOptions{
+			MaxImages: &maxImages,
 		}
 	}
 	return req
@@ -156,6 +177,21 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 			},
 		},
 		ExtraBody: make(model.ExtraBody),
+	}
+	appendImageContent := func(url, role string) {
+		if url == "" {
+			return
+		}
+		item := &model.CreateContentGenerationContentItem{
+			Type: model.ContentGenerationContentItemTypeImage,
+			ImageURL: &model.ImageURL{
+				URL: url,
+			},
+		}
+		if role != "" {
+			item.Role = volcengine.String(role)
+		}
+		req.Content = append(req.Content, item)
 	}
 	if r.Duration > 0 {
 		req.Duration = volcengine.Int64(int64(r.Duration))
@@ -183,11 +219,90 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 			if f, ok := v.(float64); ok {
 				req.Frames = volcengine.Int64(int64(f))
 			}
+		case "image":
+			if url, ok := contentImageURL(v); ok {
+				appendImageContent(url, "")
+			}
+		case "images":
+			urls := contentImageURLs(v)
+			if len(urls) > 0 {
+				appendImageContent(urls[0], "first_frame")
+			}
+			if len(urls) > 1 {
+				appendImageContent(urls[1], "last_frame")
+			}
 		default:
 			req.ExtraBody[k] = v
 		}
 	}
 	return req
+}
+
+func contentImageURLs(v interface{}) []string {
+	switch arr := v.(type) {
+	case []string:
+		var out []string
+		for _, item := range arr {
+			if item != "" {
+				out = append(out, item)
+			}
+		}
+		return out
+	case []interface{}:
+		var out []string
+		for _, item := range arr {
+			if url, ok := contentImageURL(item); ok {
+				out = append(out, url)
+			}
+		}
+		return out
+	default:
+		if url, ok := contentImageURL(v); ok {
+			return []string{url}
+		}
+	}
+	return nil
+}
+
+func contentImageURL(v interface{}) (string, bool) {
+	switch item := v.(type) {
+	case string:
+		if item == "" {
+			return "", false
+		}
+		return item, true
+	case map[string]interface{}:
+		if url, ok := item["url"].(string); ok && url != "" {
+			return url, true
+		}
+		if imageURL, ok := item["image_url"].(map[string]interface{}); ok {
+			if url, ok := imageURL["url"].(string); ok && url != "" {
+				return url, true
+			}
+		}
+	case map[string]string:
+		if url, ok := item["url"]; ok && url != "" {
+			return url, true
+		}
+	}
+	return "", false
+}
+
+func intValue(v interface{}) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int32:
+		return int(n), true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	case float32:
+		return int(n), true
+	default:
+		return 0, false
+	}
 }
 
 type arkStream struct {
