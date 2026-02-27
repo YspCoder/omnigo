@@ -79,39 +79,78 @@ func (a *GoogleAdaptor) Stream(ctx context.Context, cfg *ProviderConfig, r *dto.
 }
 
 func (a *GoogleAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (*dto.MediaResponse, error) {
-	if r.Type != dto.MediaTypeImage {
-		return nil, fmt.Errorf("only image generation supported for Google")
-	}
 	c, err := a.getClient(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.Models.GenerateImages(ctx, r.Model, r.Prompt, a.toImgCfg(r))
-	if err != nil {
-		return nil, err
-	}
-	res := &dto.MediaResponse{}
-	for _, img := range resp.GeneratedImages {
-		if img.Image == nil {
-			continue
+	switch r.Type {
+	case dto.MediaTypeImage:
+		resp, err := c.Models.GenerateImages(ctx, r.Model, r.Prompt, a.toImgCfg(r))
+		if err != nil {
+			return nil, err
 		}
-		data := dto.ImageData{}
-		if img.Image.GCSURI != "" {
-			data.URL = img.Image.GCSURI
+		res := &dto.MediaResponse{}
+		for _, img := range resp.GeneratedImages {
+			if img.Image == nil {
+				continue
+			}
+			data := dto.ImageData{}
+			if img.Image.GCSURI != "" {
+				data.URL = img.Image.GCSURI
+			}
+			if len(img.Image.ImageBytes) > 0 {
+				data.B64JSON = base64.StdEncoding.EncodeToString(img.Image.ImageBytes)
+			}
+			res.Data = append(res.Data, data)
 		}
-		if len(img.Image.ImageBytes) > 0 {
-			data.B64JSON = base64.StdEncoding.EncodeToString(img.Image.ImageBytes)
+		if len(res.Data) > 0 {
+			res.URL = res.Data[0].URL
 		}
-		res.Data = append(res.Data, data)
+		return res, nil
+	case dto.MediaTypeVideo:
+		op, err := c.Models.GenerateVideos(ctx, r.Model, r.Prompt, nil, a.toVidCfg(r))
+		if err != nil {
+			return nil, err
+		}
+		return a.toVidResp(op), nil
+	default:
+		return nil, fmt.Errorf("unsupported media type for Google: %s", r.Type)
 	}
-	if len(res.Data) > 0 {
-		res.URL = res.Data[0].URL
-	}
-	return res, nil
 }
 
 func (a *GoogleAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, id string) (*dto.TaskStatusResponse, error) {
-	return nil, fmt.Errorf("task status not supported by Google")
+	c, err := a.getClient(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+	op, err := c.Operations.GetVideosOperation(ctx, &genai.GenerateVideosOperation{Name: id}, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	status := "RUNNING"
+	videoURL := ""
+	code := ""
+	message := ""
+	if op.Done {
+		if len(op.Error) > 0 {
+			status = "FAILED"
+			code, message = mapErr(op.Error)
+		} else {
+			status = "SUCCEEDED"
+			videoURL = firstVideoURL(op.Response)
+		}
+	}
+
+	return &dto.TaskStatusResponse{
+		Output: dto.TaskStatusOutput{
+			TaskID:     op.Name,
+			TaskStatus: status,
+			VideoURL:   videoURL,
+			Code:       code,
+			Message:    message,
+		},
+	}, nil
 }
 
 func (a *GoogleAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
@@ -149,7 +188,90 @@ func (a *GoogleAdaptor) toImgCfg(r *dto.MediaRequest) *genai.GenerateImagesConfi
 	if r.Size != "" {
 		cfg.AspectRatio = r.Size
 	}
+	if r.Resolution != "" {
+		cfg.ImageSize = r.Resolution
+	}
 	return cfg
+}
+
+func (a *GoogleAdaptor) toVidCfg(r *dto.MediaRequest) *genai.GenerateVideosConfig {
+	cfg := &genai.GenerateVideosConfig{}
+	if r.N > 0 {
+		cfg.NumberOfVideos = int32(r.N)
+	}
+	if r.Size != "" {
+		cfg.AspectRatio = r.Size
+	}
+	if r.Resolution != "" {
+		cfg.Resolution = r.Resolution
+	}
+	if r.Duration > 0 {
+		cfg.DurationSeconds = genai.Ptr(int32(r.Duration))
+	}
+	if r.Fps > 0 {
+		cfg.FPS = genai.Ptr(int32(r.Fps))
+	}
+	if r.Seed != 0 {
+		cfg.Seed = genai.Ptr(int32(r.Seed))
+	}
+	if r.Extra != nil {
+		if v, ok := r.Extra["negative_prompt"].(string); ok {
+			cfg.NegativePrompt = v
+		}
+		if v, ok := r.Extra["person_generation"].(string); ok {
+			cfg.PersonGeneration = v
+		}
+		if v, ok := r.Extra["output_gcs_uri"].(string); ok {
+			cfg.OutputGCSURI = v
+		}
+		if v, ok := r.Extra["enhance_prompt"].(bool); ok {
+			cfg.EnhancePrompt = v
+		}
+		if v, ok := r.Extra["generate_audio"].(bool); ok {
+			cfg.GenerateAudio = genai.Ptr(v)
+		}
+	}
+	return cfg
+}
+
+func (a *GoogleAdaptor) toVidResp(op *genai.GenerateVideosOperation) *dto.MediaResponse {
+	res := &dto.MediaResponse{
+		TaskID: op.Name,
+	}
+	if !op.Done {
+		res.Status = "RUNNING"
+		return res
+	}
+	if len(op.Error) > 0 {
+		res.Status = "FAILED"
+		res.ErrorCode, res.ErrorMessage = mapErr(op.Error)
+		return res
+	}
+	res.Status = "SUCCEEDED"
+	res.Video.URL = firstVideoURL(op.Response)
+	res.URL = res.Video.URL
+	return res
+}
+
+func firstVideoURL(resp *genai.GenerateVideosResponse) string {
+	if resp == nil || len(resp.GeneratedVideos) == 0 {
+		return ""
+	}
+	v := resp.GeneratedVideos[0]
+	if v == nil || v.Video == nil {
+		return ""
+	}
+	return v.Video.URI
+}
+
+func mapErr(errMap map[string]any) (code, message string) {
+	if v, ok := errMap["code"]; ok {
+		code = fmt.Sprint(v)
+	}
+	if v, ok := errMap["message"]; ok {
+		message = fmt.Sprint(v)
+	}
+	return code, message
 }
 
 type googleStream struct {
