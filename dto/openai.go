@@ -3,8 +3,16 @@ package dto
 
 // Message represents a single message in a chat conversation.
 type Message struct {
-	Role    string      `json:"role"`
-	Content interface{} `json:"content"`
+	Role        string      `json:"role"`
+	Content     interface{} `json:"content"`
+	ImageURL    string      `json:"image_url,omitempty"`
+	ImageDetail string      `json:"image_detail,omitempty"`
+	VideoURL    string      `json:"video_url,omitempty"`
+	VideoFPS    float64     `json:"video_fps,omitempty"`
+	FileURL     string      `json:"file_url,omitempty"`
+	FileID      string      `json:"file_id,omitempty"`
+	FileName    string      `json:"file_name,omitempty"`
+	Name        string      `json:"name,omitempty"`
 }
 
 // ChatRequest represents a chat completion request following the OpenAI schema.

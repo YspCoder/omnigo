@@ -3,6 +3,7 @@ package adapter
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"time"
@@ -112,12 +113,150 @@ func (a *ArkAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, id str
 	return res, nil
 }
 
-func (a *ArkAdaptor) toChatReq(r *dto.ChatRequest) model.CreateChatCompletionRequest {
-	req := model.CreateChatCompletionRequest{Model: r.Model}
+func (a *ArkAdaptor) toChatReq(r *dto.ChatRequest) model.ChatRequest {
+	req := &arkChatRequest{Model: r.Model}
+	if r.MaxTokens > 0 {
+		req.MaxTokens = &r.MaxTokens
+	}
+	if r.Temperature != 0 {
+		t := float32(r.Temperature)
+		req.Temperature = &t
+	}
 	for _, m := range r.Messages {
-		req.Messages = append(req.Messages, &model.ChatCompletionMessage{Role: m.Role, Content: &model.ChatCompletionMessageContent{StringValue: volcengine.String(fmt.Sprint(m.Content))}})
+		req.Messages = append(req.Messages, &arkChatMessage{
+			Role:    m.Role,
+			Content: toArkChatMessageContent(m),
+		})
 	}
 	return req
+}
+
+type arkChatRequest struct {
+	Model       string            `json:"model"`
+	Messages    []*arkChatMessage `json:"messages"`
+	MaxTokens   *int              `json:"max_tokens,omitempty"`
+	Temperature *float32          `json:"temperature,omitempty"`
+	Stream      *bool             `json:"stream,omitempty"`
+}
+
+func (r *arkChatRequest) MarshalJSON() ([]byte, error) {
+	type alias arkChatRequest
+	return json.Marshal((*alias)(r))
+}
+
+func (r *arkChatRequest) WithStream(stream bool) model.ChatRequest {
+	r.Stream = &stream
+	return r
+}
+
+func (r *arkChatRequest) IsStream() bool {
+	return r.Stream != nil && *r.Stream
+}
+
+func (r *arkChatRequest) GetModel() string {
+	return r.Model
+}
+
+type arkChatMessage struct {
+	Role    string                 `json:"role"`
+	Content *arkChatMessageContent `json:"content"`
+}
+
+type arkChatMessageContent struct {
+	StringValue *string
+	ListValue   []*arkChatMessageContentPart
+}
+
+func (c arkChatMessageContent) MarshalJSON() ([]byte, error) {
+	if c.StringValue != nil {
+		return json.Marshal(c.StringValue)
+	}
+	if c.ListValue != nil {
+		return json.Marshal(c.ListValue)
+	}
+	return json.Marshal(nil)
+}
+
+type arkChatMessageContentPart struct {
+	Type     string           `json:"type,omitempty"`
+	Text     string           `json:"text,omitempty"`
+	ImageURL *arkImageURLPart `json:"image_url,omitempty"`
+	VideoURL *arkVideoURLPart `json:"video_url,omitempty"`
+	FileURL  *arkFileURLPart  `json:"file_url,omitempty"`
+}
+
+type arkImageURLPart struct {
+	URL    string `json:"url,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type arkVideoURLPart struct {
+	URL string   `json:"url,omitempty"`
+	FPS *float64 `json:"fps,omitempty"`
+}
+
+type arkFileURLPart struct {
+	URL      string `json:"url,omitempty"`
+	FileID   string `json:"file_id,omitempty"`
+	FileName string `json:"file_name,omitempty"`
+	Name     string `json:"name,omitempty"`
+}
+
+func toArkChatMessageContent(m dto.Message) *arkChatMessageContent {
+	parts := make([]*arkChatMessageContentPart, 0, 4)
+	if text, ok := messageContentText(m.Content); ok && text != "" {
+		parts = append(parts, &arkChatMessageContentPart{
+			Type: "text",
+			Text: text,
+		})
+	}
+	if m.ImageURL != "" {
+		parts = append(parts, &arkChatMessageContentPart{
+			Type: "image_url",
+			ImageURL: &arkImageURLPart{
+				URL:    m.ImageURL,
+				Detail: m.ImageDetail,
+			},
+		})
+	}
+	if m.VideoURL != "" {
+		video := &arkVideoURLPart{URL: m.VideoURL}
+		if m.VideoFPS > 0 {
+			video.FPS = &m.VideoFPS
+		}
+		parts = append(parts, &arkChatMessageContentPart{
+			Type:     "video_url",
+			VideoURL: video,
+		})
+	}
+	if m.FileURL != "" || m.FileID != "" {
+		parts = append(parts, &arkChatMessageContentPart{
+			Type: "file_url",
+			FileURL: &arkFileURLPart{
+				URL:      m.FileURL,
+				FileID:   m.FileID,
+				FileName: m.FileName,
+				Name:     m.Name,
+			},
+		})
+	}
+	if len(parts) > 0 {
+		return &arkChatMessageContent{ListValue: parts}
+	}
+	text, _ := messageContentText(m.Content)
+	return &arkChatMessageContent{StringValue: &text}
+}
+
+func messageContentText(v interface{}) (string, bool) {
+	if v == nil {
+		return "", false
+	}
+	switch text := v.(type) {
+	case string:
+		return text, true
+	default:
+		return fmt.Sprint(v), true
+	}
 }
 
 func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
