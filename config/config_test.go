@@ -44,3 +44,18 @@ func TestLoadConfigNormalizesProvider(t *testing.T) {
 		t.Fatalf("expected provider to be normalized to lower case, got %q", cfg.Provider)
 	}
 }
+
+func TestSetSystemPromptOptions(t *testing.T) {
+	cfg := &Config{}
+
+	SetSystemPrompt("You are a tester.")(cfg)
+	SetSystemPromptCacheType("ephemeral")(cfg)
+
+	if cfg.SystemPrompt != "You are a tester." {
+		t.Fatalf("expected system prompt to be set, got %q", cfg.SystemPrompt)
+	}
+
+	if cfg.SystemPromptCacheType != "ephemeral" {
+		t.Fatalf("expected system prompt cache type to be set, got %q", cfg.SystemPromptCacheType)
+	}
+}

@@ -260,7 +260,7 @@ func messageContentText(v interface{}) (string, bool) {
 }
 
 func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
-	req := model.GenerateImagesRequest{Model: r.Model, Prompt: r.Prompt}
+	req := model.GenerateImagesRequest{Model: r.Model, Prompt: mediaPromptWithSystem(r)}
 	if r.Size != "" {
 		req.Size = &r.Size
 	}
@@ -306,15 +306,23 @@ func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
 }
 
 func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGenerationTaskRequest {
+	content := make([]*model.CreateContentGenerationContentItem, 0, 1+len(r.Messages))
+	if systemPrompt := firstSystemMessage(r.Messages); systemPrompt != "" {
+		content = append(content, &model.CreateContentGenerationContentItem{
+			Type: model.ContentGenerationContentItemTypeText,
+			Text: volcengine.String(systemPrompt),
+			Role: volcengine.String("system"),
+		})
+	}
+	content = append(content, &model.CreateContentGenerationContentItem{
+		Type: model.ContentGenerationContentItemTypeText,
+		Text: volcengine.String(r.Prompt),
+	})
+
 	req := model.CreateContentGenerationTaskRequest{
-		Model: r.Model,
-		Ratio: volcengine.String("adaptive"),
-		Content: []*model.CreateContentGenerationContentItem{
-			{
-				Type: model.ContentGenerationContentItemTypeText,
-				Text: volcengine.String(r.Prompt),
-			},
-		},
+		Model:     r.Model,
+		Ratio:     volcengine.String("adaptive"),
+		Content:   content,
 		ExtraBody: make(model.ExtraBody),
 	}
 	appendImageContent := func(url, role string) {

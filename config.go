@@ -64,10 +64,10 @@ var (
 // to modify configuration settings.
 var (
 	// Provider configuration
-	SetProvider = config.SetProvider // Sets the LLM provider (e.g., "openai", "ali")
-	SetModel    = config.SetModel    // Sets the model name for the selected provider
-	SetEndpoint = config.SetEndpoint // Sets a custom endpoint for the selected provider
-	SetAPIKey   = config.SetAPIKey   // Sets the API key for the current provider
+	SetProvider  = config.SetProvider  // Sets the LLM provider (e.g., "openai", "ali")
+	SetModel     = config.SetModel     // Sets the model name for the selected provider
+	SetEndpoint  = config.SetEndpoint  // Sets a custom endpoint for the selected provider
+	SetAPIKey    = config.SetAPIKey    // Sets the API key for the current provider
 	SetAccessKey = config.SetAccessKey // Sets the access key for the current provider
 	SetSecretKey = config.SetSecretKey // Sets the secret key for the current provider
 
@@ -80,13 +80,15 @@ var (
 	SetSeed             = config.SetSeed             // Sets random seed for reproducible generation
 
 	// Advanced generation parameters
-	SetMinP          = config.SetMinP          // Sets minimum probability threshold
-	SetRepeatPenalty = config.SetRepeatPenalty // Controls repetition penalty
-	SetRepeatLastN   = config.SetRepeatLastN   // Sets context window for repetition
-	SetMirostat      = config.SetMirostat      // Enables Mirostat sampling
-	SetMirostatEta   = config.SetMirostatEta   // Sets Mirostat learning rate
-	SetMirostatTau   = config.SetMirostatTau   // Sets Mirostat target entropy
-	SetTfsZ          = config.SetTfsZ          // Sets tail-free sampling parameter
+	SetMinP                  = config.SetMinP                  // Sets minimum probability threshold
+	SetRepeatPenalty         = config.SetRepeatPenalty         // Controls repetition penalty
+	SetRepeatLastN           = config.SetRepeatLastN           // Sets context window for repetition
+	SetMirostat              = config.SetMirostat              // Enables Mirostat sampling
+	SetMirostatEta           = config.SetMirostatEta           // Sets Mirostat learning rate
+	SetMirostatTau           = config.SetMirostatTau           // Sets Mirostat target entropy
+	SetTfsZ                  = config.SetTfsZ                  // Sets tail-free sampling parameter
+	SetSystemPrompt          = config.SetSystemPrompt          // Sets the default system prompt for requests
+	SetSystemPromptCacheType = config.SetSystemPromptCacheType // Sets the cache type for the default system prompt
 
 	// Runtime configuration
 	SetTimeout      = config.SetTimeout      // Sets request timeout duration

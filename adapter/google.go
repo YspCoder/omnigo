@@ -85,7 +85,7 @@ func (a *GoogleAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.M
 	}
 	switch r.Type {
 	case dto.MediaTypeImage:
-		resp, err := c.Models.GenerateImages(ctx, r.Model, r.Prompt, a.toImgCfg(r))
+		resp, err := c.Models.GenerateImages(ctx, r.Model, mediaPromptWithSystem(r), a.toImgCfg(r))
 		if err != nil {
 			return nil, err
 		}
@@ -108,7 +108,7 @@ func (a *GoogleAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.M
 		}
 		return res, nil
 	case dto.MediaTypeVideo:
-		op, err := c.Models.GenerateVideos(ctx, r.Model, r.Prompt, nil, a.toVidCfg(r))
+		op, err := c.Models.GenerateVideos(ctx, r.Model, mediaPromptWithSystem(r), nil, a.toVidCfg(r))
 		if err != nil {
 			return nil, err
 		}
@@ -159,8 +159,9 @@ func (a *GoogleAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig,
 
 // Helpers
 func (a *GoogleAdaptor) toContents(r *dto.ChatRequest) []*genai.Content {
-	res := make([]*genai.Content, 0, len(r.Messages))
-	for _, m := range r.Messages {
+	messages := nonSystemMessages(r.Messages)
+	res := make([]*genai.Content, 0, len(messages))
+	for _, m := range messages {
 		res = append(res, &genai.Content{Role: m.Role, Parts: []*genai.Part{{Text: fmt.Sprint(m.Content)}}})
 	}
 	return res
@@ -168,6 +169,12 @@ func (a *GoogleAdaptor) toContents(r *dto.ChatRequest) []*genai.Content {
 
 func (a *GoogleAdaptor) toGenCfg(r *dto.ChatRequest) *genai.GenerateContentConfig {
 	cfg := &genai.GenerateContentConfig{}
+	if systemPrompt := firstSystemMessage(r.Messages); systemPrompt != "" {
+		cfg.SystemInstruction = &genai.Content{
+			Role:  "system",
+			Parts: []*genai.Part{{Text: systemPrompt}},
+		}
+	}
 	if r.Temperature != 0 {
 		cfg.Temperature = genai.Ptr(float32(r.Temperature))
 	}

@@ -50,7 +50,7 @@ func (a *OpenAIAdaptor) getClient(config *ProviderConfig) *openai.Client {
 			}
 		}
 	}
-	
+
 	if httpClient != nil {
 		opts = append(opts, option.WithHTTPClient(httpClient))
 	}
@@ -173,7 +173,7 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 	switch request.Type {
 	case dto.MediaTypeImage:
 		params := openai.ImageGenerateParams{
-			Prompt: request.Prompt,
+			Prompt: mediaPromptWithSystem(request),
 			Model:  openai.ImageModel(request.Model),
 		}
 		if request.N > 0 {
@@ -185,7 +185,7 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 		if request.ResponseFormat != "" {
 			params.ResponseFormat = openai.ImageGenerateParamsResponseFormat(request.ResponseFormat)
 		}
-		
+
 		resp, err := client.Images.Generate(ctx, params)
 		if err != nil {
 			return nil, err

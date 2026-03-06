@@ -4,6 +4,10 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/YspCoder/omnigo/dto"
 )
 
 func getStringExtra(extra map[string]interface{}, key string) string {
@@ -97,4 +101,43 @@ func hmacSign(key []byte, content string) []byte {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(content))
 	return mac.Sum(nil)
+}
+
+func firstSystemMessage(messages []dto.Message) string {
+	for _, message := range messages {
+		if message.Role != "system" {
+			continue
+		}
+		if text := strings.TrimSpace(fmt.Sprint(message.Content)); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func nonSystemMessages(messages []dto.Message) []dto.Message {
+	result := make([]dto.Message, 0, len(messages))
+	for _, message := range messages {
+		if message.Role == "system" {
+			continue
+		}
+		result = append(result, message)
+	}
+	return result
+}
+
+func mediaPromptWithSystem(request *dto.MediaRequest) string {
+	if request == nil {
+		return ""
+	}
+
+	prompt := strings.TrimSpace(request.Prompt)
+	systemPrompt := firstSystemMessage(request.Messages)
+	if systemPrompt == "" {
+		return prompt
+	}
+	if prompt == "" {
+		return systemPrompt
+	}
+	return systemPrompt + "\n\n" + prompt
 }

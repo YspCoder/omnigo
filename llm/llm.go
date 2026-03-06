@@ -92,8 +92,50 @@ func (l *LLMImpl) NewPrompt(prompt string) *Prompt {
 	return &Prompt{Input: prompt}
 }
 
+func (l *LLMImpl) effectivePrompt(prompt *Prompt) *Prompt {
+	if prompt == nil {
+		return &Prompt{}
+	}
+	if prompt.SystemPrompt != "" || l.config == nil || l.config.SystemPrompt == "" {
+		return prompt
+	}
+
+	cloned := *prompt
+	cloned.SystemPrompt = l.config.SystemPrompt
+	cloned.SystemCacheType = CacheType(l.config.SystemPromptCacheType)
+	if prompt.Messages != nil {
+		cloned.Messages = append([]PromptMessage(nil), prompt.Messages...)
+	}
+	return &cloned
+}
+
+func (l *LLMImpl) effectiveMediaRequest(request *dto.MediaRequest) *dto.MediaRequest {
+	if request == nil {
+		return &dto.MediaRequest{}
+	}
+	if l.config == nil || l.config.SystemPrompt == "" {
+		return request
+	}
+	for _, message := range request.Messages {
+		if message.Role == "system" {
+			return request
+		}
+	}
+
+	cloned := *request
+	cloned.Messages = make([]dto.Message, 0, len(request.Messages)+1)
+	cloned.Messages = append(cloned.Messages, dto.Message{
+		Role:    "system",
+		Content: l.config.SystemPrompt,
+	})
+	cloned.Messages = append(cloned.Messages, request.Messages...)
+	return &cloned
+}
+
 // Generate produces text based on the given prompt and options.
 func (l *LLMImpl) Generate(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (string, error) {
+	prompt = l.effectivePrompt(prompt)
+
 	options := make(map[string]interface{})
 	l.optionsMutex.RLock()
 	for k, v := range l.Options {
@@ -124,6 +166,8 @@ func (l *LLMImpl) Generate(ctx context.Context, prompt *Prompt, opts ...Generate
 
 // Stream initiates a streaming response.
 func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOption) (dto.TokenStream, error) {
+	prompt = l.effectivePrompt(prompt)
+
 	request := &dto.ChatRequest{
 		Model:    l.config.Model,
 		Prompt:   prompt.String(),
@@ -135,10 +179,12 @@ func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOpti
 
 // Media initiates an image/video generation request.
 func (l *LLMImpl) Media(ctx context.Context, request *dto.MediaRequest) (*dto.MediaResponse, error) {
+	request = l.effectiveMediaRequest(request)
 	return l.relay.Media(ctx, l.adaptor, l.adaptorCfg, request)
 }
 
 func (l *LLMImpl) StreamMedia(ctx context.Context, request *dto.MediaRequest) (dto.TokenStream, error) {
+	request = l.effectiveMediaRequest(request)
 	return l.relay.StreamMedia(ctx, l.adaptor, l.adaptorCfg, request)
 }
 

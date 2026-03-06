@@ -102,9 +102,17 @@ llm, err := omnigo.NewLLM(
     omnigo.SetProvider("openai"),
     omnigo.SetModel("gpt-4o-mini"),
     omnigo.SetAPIKey("your-api-key"),
+    omnigo.SetSystemPrompt("你是一个严谨的中文助手"),
     omnigo.SetTemperature(0.7),
     omnigo.SetMaxTokens(300),
 )
+```
+
+也可以通过环境变量配置默认 system prompt：
+
+```bash
+export LLM_SYSTEM_PROMPT="你是一个严谨的中文助手"
+export LLM_SYSTEM_PROMPT_CACHE_TYPE="ephemeral"
 ```
 
 ### Prompt 结构化

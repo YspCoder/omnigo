@@ -17,6 +17,7 @@ type MediaRequest struct {
 	Type           MediaType              `json:"-"`
 	Model          string                 `json:"model"`
 	Prompt         string                 `json:"prompt"`
+	Messages       []Message              `json:"messages,omitempty"`
 	N              int                    `json:"n,omitempty"`
 	Size           string                 `json:"size,omitempty"`
 	Resolution     string                 `json:"resolution,omitempty"`

@@ -50,8 +50,8 @@ type llmImpl struct {
 
 // SetSystemPrompt sets the system prompt for the LLM.
 func (l *llmImpl) SetSystemPrompt(prompt string, cacheType CacheType) {
-	newPrompt := NewPrompt(prompt, WithSystemPrompt(prompt, cacheType))
-	l.SetOption("system_prompt", newPrompt)
+	l.config.SystemPrompt = prompt
+	l.config.SystemPromptCacheType = string(cacheType)
 }
 
 // GetProvider returns the provider of the LLM.

@@ -64,13 +64,13 @@ type Config struct {
 	MirostatEta           *float64          `env:"LLM_MIROSTAT_ETA" envDefault:"0.1"`
 	MirostatTau           *float64          `env:"LLM_MIROSTAT_TAU" envDefault:"5.0"`
 	TfsZ                  *float64          `env:"LLM_TFS_Z" envDefault:"1"`
-	SystemPrompt          string
-	SystemPromptCacheType string
+	SystemPrompt          string            `env:"LLM_SYSTEM_PROMPT"`
+	SystemPromptCacheType string            `env:"LLM_SYSTEM_PROMPT_CACHE_TYPE"`
 	ExtraHeaders          map[string]string
 	AccessKey             string `env:"LLM_ACCESS_KEY"`
 	SecretKey             string `env:"LLM_SECRET_KEY"`
-	EnableCaching         bool `env:"LLM_ENABLE_CACHING" envDefault:"false"`
-	EnableStreaming       bool `env:"LLM_ENABLE_STREAMING" envDefault:"false"`
+	EnableCaching         bool   `env:"LLM_ENABLE_CACHING" envDefault:"false"`
+	EnableStreaming       bool   `env:"LLM_ENABLE_STREAMING" envDefault:"false"`
 }
 
 // LoadConfig creates a new Config instance, loading values from environment
@@ -347,6 +347,20 @@ func SetMirostatTau(tau float64) ConfigOption {
 func SetTfsZ(z float64) ConfigOption {
 	return func(c *Config) {
 		c.TfsZ = &z
+	}
+}
+
+// SetSystemPrompt sets the default system prompt for requests.
+func SetSystemPrompt(prompt string) ConfigOption {
+	return func(c *Config) {
+		c.SystemPrompt = prompt
+	}
+}
+
+// SetSystemPromptCacheType sets the cache type for the default system prompt.
+func SetSystemPromptCacheType(cacheType string) ConfigOption {
+	return func(c *Config) {
+		c.SystemPromptCacheType = cacheType
 	}
 }
 
