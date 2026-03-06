@@ -16,6 +16,7 @@ import (
 // LLM interface defines the methods for LLM interaction.
 type LLM interface {
 	Generate(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (string, error)
+	GenerateWithResponse(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (*dto.GenerateResponse, error)
 	Stream(ctx context.Context, prompt *Prompt, opts ...StreamOption) (dto.TokenStream, error)
 	Media(ctx context.Context, request *dto.MediaRequest) (*dto.MediaResponse, error)
 	StreamMedia(ctx context.Context, request *dto.MediaRequest) (dto.TokenStream, error)
@@ -134,6 +135,15 @@ func (l *LLMImpl) effectiveMediaRequest(request *dto.MediaRequest) *dto.MediaReq
 
 // Generate produces text based on the given prompt and options.
 func (l *LLMImpl) Generate(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (string, error) {
+	resp, err := l.GenerateWithResponse(ctx, prompt, opts...)
+	if err != nil {
+		return "", err
+	}
+	return resp.Text, nil
+}
+
+// GenerateWithResponse produces text and preserves the raw provider response.
+func (l *LLMImpl) GenerateWithResponse(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (*dto.GenerateResponse, error) {
 	prompt = l.effectivePrompt(prompt)
 
 	options := make(map[string]interface{})
@@ -154,14 +164,14 @@ func (l *LLMImpl) Generate(ctx context.Context, prompt *Prompt, opts ...Generate
 
 	resp, err := l.relay.Chat(ctx, l.adaptor, l.adaptorCfg, request)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if len(resp.Choices) > 0 {
 		content := fmt.Sprint(resp.Choices[0].Message.Content)
-		return content, nil
+		return &dto.GenerateResponse{Text: content, Raw: resp}, nil
 	}
-	return "", fmt.Errorf("no choices in response")
+	return nil, fmt.Errorf("no choices in response")
 }
 
 // Stream initiates a streaming response.

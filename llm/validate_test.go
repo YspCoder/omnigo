@@ -8,8 +8,8 @@ import (
 
 func TestValidate_AllowsAKSKWithoutAPIKey(t *testing.T) {
 	cfg := &config.Config{
-		Provider:  "jimeng",
-		Model:     "jimeng_ti2v_v30_pro",
+		Provider:  "ark",
+		Model:     "doubao-seed-1-6-250615",
 		APIKeys:   map[string]string{},
 		AccessKey: "test-ak",
 		SecretKey: "test-sk",

@@ -37,6 +37,12 @@ type ChatResponse struct {
 	Usage   Usage        `json:"usage,omitempty"`
 }
 
+// GenerateResponse preserves both the extracted text and the raw provider payload.
+type GenerateResponse struct {
+	Text string        `json:"text,omitempty"`
+	Raw  *ChatResponse `json:"raw,omitempty"`
+}
+
 // ChatChoice represents a single response choice.
 type ChatChoice struct {
 	Index        int     `json:"index,omitempty"`

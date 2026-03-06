@@ -85,6 +85,29 @@ func (l *llmImpl) StreamMedia(ctx context.Context, request *dto.MediaRequest) (d
 	return l.LLM.StreamMedia(ctx, request)
 }
 
+// GenerateWithResponse returns both the extracted text and the raw provider response.
+func (l *llmImpl) GenerateWithResponse(ctx context.Context, prompt *llm.Prompt, opts ...llm.GenerateOption) (*dto.GenerateResponse, error) {
+	l.logger.Debug("Starting GenerateWithResponse method", "prompt_length", len(prompt.String()), "context", ctx)
+
+	config := &llm.GenerateConfig{}
+	for _, opt := range opts {
+		opt(config)
+	}
+
+	if config.UseJSONSchema {
+		if err := prompt.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid prompt: %w", err)
+		}
+	}
+
+	resp, err := l.LLM.GenerateWithResponse(ctx, prompt, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("LLM.GenerateWithResponse error: %w", err)
+	}
+
+	return resp, nil
+}
+
 // GetPromptJSONSchema generates and returns the JSON schema for the Prompt.
 func (l *llmImpl) GetPromptJSONSchema(opts ...SchemaOption) ([]byte, error) {
 	p := &Prompt{}
@@ -102,26 +125,12 @@ func (l *llmImpl) UpdateLogLevel(level LogLevel) {
 
 // Implement the base Generate method (if not already provided by embedded llm.LLM)
 func (l *llmImpl) Generate(ctx context.Context, prompt *llm.Prompt, opts ...llm.GenerateOption) (string, error) {
-	l.logger.Debug("Starting Generate method", "prompt_length", len(prompt.String()), "context", ctx)
-
-	config := &llm.GenerateConfig{}
-	for _, opt := range opts {
-		opt(config)
-	}
-
-	if config.UseJSONSchema {
-		if err := prompt.Validate(); err != nil {
-			return "", fmt.Errorf("invalid prompt: %w", err)
-		}
-	}
-
-	// Call the base LLM's Generate method
-	response, err := l.LLM.Generate(ctx, prompt, opts...)
+	response, err := l.GenerateWithResponse(ctx, prompt, opts...)
 	if err != nil {
-		return "", fmt.Errorf("LLM.Generate error: %w", err)
+		return "", err
 	}
 
-	return response, nil
+	return response.Text, nil
 }
 
 // NewLLM creates a new LLM instance with the specified configuration options.

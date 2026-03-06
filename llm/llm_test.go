@@ -1,25 +1,27 @@
 package llm
 
 import (
+	"context"
 	"testing"
 
 	"github.com/YspCoder/omnigo/adapter"
 	"github.com/YspCoder/omnigo/config"
 	"github.com/YspCoder/omnigo/dto"
+	"github.com/YspCoder/omnigo/relay"
 	"github.com/YspCoder/omnigo/utils"
 )
 
 func TestNewLLM_AllowsAKSKWithoutAPIKey(t *testing.T) {
 	cfg := &config.Config{
-		Provider:  "jimeng",
-		Model:     "jimeng_ti2v_v30_pro",
+		Provider:  "ark",
+		Model:     "doubao-seed-1-6-250615",
 		APIKeys:   map[string]string{},
 		AccessKey: "test-ak",
 		SecretKey: "test-sk",
 	}
 
 	logger := utils.NewLogger(utils.LogLevelOff)
-	registry := adapter.NewRegistry("jimeng")
+	registry := adapter.NewRegistry("ark")
 
 	_, err := NewLLM(cfg, logger, registry)
 	if err != nil {
@@ -112,4 +114,48 @@ func TestEffectiveMediaRequestKeepsExplicitSystemPrompt(t *testing.T) {
 	if effective.Messages[0].Content != "explicit media prompt" {
 		t.Fatalf("expected explicit system prompt to win, got %#v", effective.Messages[0].Content)
 	}
+}
+
+func TestGenerateWithResponseReturnsPrimaryChoiceContent(t *testing.T) {
+	client := &LLMImpl{
+		config:     &config.Config{Model: "test-model"},
+		relay:      relay.NewRelay(),
+		adaptor:    stubAdaptor{response: &dto.ChatResponse{Choices: []dto.ChatChoice{{Message: dto.Message{Content: "hello"}}}}},
+		adaptorCfg: &adapter.ProviderConfig{},
+	}
+
+	resp, err := client.GenerateWithResponse(nil, NewPrompt("hello"))
+	if err != nil {
+		t.Fatalf("GenerateWithResponse error = %v", err)
+	}
+	if resp.Text != "hello" {
+		t.Fatalf("text = %q, want hello", resp.Text)
+	}
+	if resp.Raw == nil || len(resp.Raw.Choices) != 1 {
+		t.Fatalf("raw response not preserved: %#v", resp.Raw)
+	}
+}
+
+type stubAdaptor struct {
+	response *dto.ChatResponse
+}
+
+func (s stubAdaptor) Chat(_ context.Context, _ *adapter.ProviderConfig, _ *dto.ChatRequest) (*dto.ChatResponse, error) {
+	return s.response, nil
+}
+
+func (s stubAdaptor) Stream(_ context.Context, _ *adapter.ProviderConfig, _ *dto.ChatRequest) (dto.TokenStream, error) {
+	return nil, nil
+}
+
+func (s stubAdaptor) Media(_ context.Context, _ *adapter.ProviderConfig, _ *dto.MediaRequest) (*dto.MediaResponse, error) {
+	return nil, nil
+}
+
+func (s stubAdaptor) TaskStatus(_ context.Context, _ *adapter.ProviderConfig, _ string) (*dto.TaskStatusResponse, error) {
+	return nil, nil
+}
+
+func (s stubAdaptor) StreamMedia(_ context.Context, _ *adapter.ProviderConfig, _ *dto.MediaRequest) (dto.TokenStream, error) {
+	return nil, nil
 }
