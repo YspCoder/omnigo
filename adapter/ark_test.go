@@ -9,7 +9,8 @@ import (
 func TestArkToVidReqOmitsTextRoleAndUsesFirstFrame(t *testing.T) {
 	adaptor := &ArkAdaptor{}
 	req := adaptor.toVidReq(&dto.MediaRequest{
-		Model: "seedance-1-0-pro-250528",
+		Model:      "seedance-1-0-pro-250528",
+		Resolution: "2k",
 		Messages: []dto.Message{
 			{Role: "system", Content: "You are a film director."},
 			{Role: "user", Content: "Create a cinematic snow reunion scene."},
@@ -36,5 +37,8 @@ func TestArkToVidReqOmitsTextRoleAndUsesFirstFrame(t *testing.T) {
 	}
 	if req.Content[2].Role == nil || *req.Content[2].Role != "first_frame" {
 		t.Fatalf("content[2].role = %v, want first_frame", req.Content[2].Role)
+	}
+	if req.Resolution != nil {
+		t.Fatalf("resolution = %v, want nil for image-to-video", *req.Resolution)
 	}
 }
