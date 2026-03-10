@@ -9,7 +9,7 @@ import (
 func TestGoogleToVidCfg_VideoPayloadShape(t *testing.T) {
 	adp := &GoogleAdaptor{}
 	req := &dto.MediaRequest{
-		Prompt:   "a cat running",
+		Messages: []dto.Message{{Role: "user", Content: "a cat running"}},
 		N:        1,
 		Size:     "16:9",
 		Duration: 8,

@@ -28,8 +28,11 @@ func main() {
 	}
 
 	req := &dto.MediaRequest{
-		Type:   dto.MediaTypeVideo,
-		Prompt: "A white rabbit in a suit working in a futuristic lab",
+		Type: dto.MediaTypeVideo,
+		Messages: []dto.Message{{
+			Role:    "user",
+			Content: "A white rabbit in a suit working in a futuristic lab",
+		}},
 		Extra: map[string]interface{}{
 			"frames": 25, // Optional parameter for Jimeng
 		},

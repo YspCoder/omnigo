@@ -104,15 +104,16 @@ func hmacSign(key []byte, content string) []byte {
 }
 
 func firstSystemMessage(messages []dto.Message) string {
+	parts := make([]string, 0, len(messages))
 	for _, message := range messages {
 		if message.Role != "system" {
 			continue
 		}
 		if text := strings.TrimSpace(fmt.Sprint(message.Content)); text != "" {
-			return text
+			parts = append(parts, text)
 		}
 	}
-	return ""
+	return strings.Join(parts, "\n\n")
 }
 
 func nonSystemMessages(messages []dto.Message) []dto.Message {
@@ -131,7 +132,7 @@ func mediaPromptWithSystem(request *dto.MediaRequest) string {
 		return ""
 	}
 
-	prompt := strings.TrimSpace(request.Prompt)
+	prompt := firstUserMessage(request.Messages)
 	systemPrompt := firstSystemMessage(request.Messages)
 	if systemPrompt == "" {
 		return prompt
@@ -140,4 +141,17 @@ func mediaPromptWithSystem(request *dto.MediaRequest) string {
 		return systemPrompt
 	}
 	return systemPrompt + "\n\n" + prompt
+}
+
+func firstUserMessage(messages []dto.Message) string {
+	parts := make([]string, 0, len(messages))
+	for _, message := range messages {
+		if message.Role != "user" {
+			continue
+		}
+		if text := strings.TrimSpace(fmt.Sprint(message.Content)); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }

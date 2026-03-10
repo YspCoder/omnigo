@@ -7,16 +7,16 @@ import "encoding/json"
 type MediaType string
 
 const (
+	MediaTypeText  MediaType = "text"
 	MediaTypeImage MediaType = "image"
 	MediaTypeVideo MediaType = "video"
 )
 
-// MediaRequest represents a request for image/video generation.
+// MediaRequest represents a request for text/image/video generation.
 // Use Extra for provider- or model-specific fields.
 type MediaRequest struct {
 	Type           MediaType              `json:"-"`
 	Model          string                 `json:"model"`
-	Prompt         string                 `json:"prompt"`
 	Messages       []Message              `json:"messages,omitempty"`
 	N              int                    `json:"n,omitempty"`
 	Size           string                 `json:"size,omitempty"`
@@ -36,6 +36,7 @@ type MediaResponse struct {
 	TaskID       string      `json:"task_id,omitempty"`
 	Status       string      `json:"status,omitempty"`
 	URL          string      `json:"url,omitempty"`
+	Text         string      `json:"text,omitempty"`
 	ErrorCode    string      `json:"code,omitempty"`
 	ErrorMessage string      `json:"message,omitempty"`
 	Video        struct {
@@ -52,6 +53,7 @@ func (m MediaResponse) MarshalJSON() ([]byte, error) {
 		TaskID       string      `json:"task_id,omitempty"`
 		Status       string      `json:"status,omitempty"`
 		URL          string      `json:"url,omitempty"`
+		Text         string      `json:"text,omitempty"`
 		ErrorCode    string      `json:"code,omitempty"`
 		ErrorMessage string      `json:"message,omitempty"`
 		Video        *struct {
@@ -66,6 +68,7 @@ func (m MediaResponse) MarshalJSON() ([]byte, error) {
 		TaskID:       m.TaskID,
 		Status:       m.Status,
 		URL:          m.URL,
+		Text:         m.Text,
 		ErrorCode:    m.ErrorCode,
 		ErrorMessage: m.ErrorMessage,
 	}

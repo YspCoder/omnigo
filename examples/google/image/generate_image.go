@@ -27,10 +27,13 @@ func main() {
 	}
 
 	req := &dto.MediaRequest{
-		Type:   dto.MediaTypeImage,
-		Prompt: "A futuristic white rabbit wearing a navy blue business suit, cinematic lighting",
-		N:      1,
-		Size:   "1:1", // Google Imagen uses aspect ratios like 1:1, 4:3, etc.
+		Type: dto.MediaTypeImage,
+		Messages: []dto.Message{{
+			Role:    "user",
+			Content: "A futuristic white rabbit wearing a navy blue business suit, cinematic lighting",
+		}},
+		N:    1,
+		Size: "1:1", // Google Imagen uses aspect ratios like 1:1, 4:3, etc.
 	}
 
 	resp, err := llm.Media(context.Background(), req)

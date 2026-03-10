@@ -133,6 +133,17 @@ func (l *LLMImpl) effectiveMediaRequest(request *dto.MediaRequest) *dto.MediaReq
 	return &cloned
 }
 
+func (l *LLMImpl) mediaChatRequest(request *dto.MediaRequest, stream bool) *dto.ChatRequest {
+	return &dto.ChatRequest{
+		Model:       l.config.Model,
+		Messages:    request.Messages,
+		Prompt:      mediaPromptString(request.Messages),
+		Temperature: l.config.Temperature,
+		MaxTokens:   l.config.MaxTokens,
+		Stream:      stream,
+	}
+}
+
 // Generate produces text based on the given prompt and options.
 func (l *LLMImpl) Generate(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (string, error) {
 	resp, err := l.GenerateWithResponse(ctx, prompt, opts...)
@@ -190,11 +201,25 @@ func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOpti
 // Media initiates an image/video generation request.
 func (l *LLMImpl) Media(ctx context.Context, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	request = l.effectiveMediaRequest(request)
+	if request.Type == dto.MediaTypeText {
+		resp, err := l.relay.Chat(ctx, l.adaptor, l.adaptorCfg, l.mediaChatRequest(request, false))
+		if err != nil {
+			return nil, err
+		}
+		result := &dto.MediaResponse{}
+		if len(resp.Choices) > 0 {
+			result.Text = fmt.Sprint(resp.Choices[0].Message.Content)
+		}
+		return result, nil
+	}
 	return l.relay.Media(ctx, l.adaptor, l.adaptorCfg, request)
 }
 
 func (l *LLMImpl) StreamMedia(ctx context.Context, request *dto.MediaRequest) (dto.TokenStream, error) {
 	request = l.effectiveMediaRequest(request)
+	if request.Type == dto.MediaTypeText {
+		return l.relay.Stream(ctx, l.adaptor, nil, l.adaptorCfg, l.mediaChatRequest(request, true))
+	}
 	return l.relay.StreamMedia(ctx, l.adaptor, l.adaptorCfg, request)
 }
 
@@ -215,4 +240,15 @@ func toDTOMessages(prompt *Prompt) []dto.Message {
 		msgs = append(msgs, dto.Message{Role: "user", Content: prompt.Input})
 	}
 	return msgs
+}
+
+func mediaPromptString(messages []dto.Message) string {
+	var prompt string
+	for _, message := range messages {
+		if prompt != "" {
+			prompt += "\n\n"
+		}
+		prompt += fmt.Sprint(message.Content)
+	}
+	return prompt
 }

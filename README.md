@@ -327,7 +327,7 @@ func main() {
 resp, err := llm.Media(context.Background(), &dto.MediaRequest{
     Type:           dto.MediaTypeImage,
     Model:          "your-image-model",
-    Prompt:         "一只戴着墨镜的猫在沙滩上",
+    Messages:       []dto.Message{{Role: "user", Content: "一只戴着墨镜的猫在沙滩上"}},
     N:              1,
     Size:           "1024x1024",
     ResponseFormat: "url",
@@ -372,11 +372,11 @@ func main() {
     }
 
     req := &dto.MediaRequest{
-        Type:   dto.MediaTypeImage,
-        Model:  "qwen-image-max",
-        Prompt: "一只戴着墨镜的猫在沙滩上",
-        N:      1,
-        Size:   "1024x1024",
+        Type:     dto.MediaTypeImage,
+        Model:    "qwen-image-max",
+        Messages: []dto.Message{{Role: "user", Content: "一只戴着墨镜的猫在沙滩上"}},
+        N:        1,
+        Size:     "1024x1024",
         Extra: map[string]interface{}{
             "negative_prompt": "低质量, 模糊",
             "prompt_extend":   true,
@@ -422,9 +422,9 @@ func main() {
     }
 
     req := &dto.MediaRequest{
-        Type:   dto.MediaTypeVideo,
-        Model:  "wan2.2-kf2v-flash",
-        Prompt: "写实风格，一只黑色小猫好奇地看向天空",
+        Type:     dto.MediaTypeVideo,
+        Model:    "wan2.2-kf2v-flash",
+        Messages: []dto.Message{{Role: "user", Content: "写实风格，一只黑色小猫好奇地看向天空"}},
         Extra: map[string]interface{}{
             "first_frame_url": "https://wanx.alicdn.com/material/20250318/first_frame.png",
             "last_frame_url":  "https://wanx.alicdn.com/material/20250318/last_frame.png",
@@ -512,9 +512,9 @@ func main() {
     }
 
     req := &dto.MediaRequest{
-        Type:   dto.MediaTypeVideo,
-        Model:  "wan2.2-kf2v-flash",
-        Prompt: "写实风格，一只黑色小猫好奇地看向天空",
+        Type:     dto.MediaTypeVideo,
+        Model:    "wan2.2-kf2v-flash",
+        Messages: []dto.Message{{Role: "user", Content: "写实风格，一只黑色小猫好奇地看向天空"}},
         Extra: map[string]interface{}{
             "first_frame_url": "https://wanx.alicdn.com/material/20250318/first_frame.png",
             "last_frame_url":  "https://wanx.alicdn.com/material/20250318/last_frame.png",
@@ -580,8 +580,8 @@ func main() {
     }
 
     req := &dto.MediaRequest{
-        Type:   dto.MediaTypeVideo,
-        Prompt: "赛博朋克风格的白兔执行官在指挥中心，全息屏闪烁",
+        Type:     dto.MediaTypeVideo,
+        Messages: []dto.Message{{Role: "user", Content: "赛博朋克风格的白兔执行官在指挥中心，全息屏闪烁"}},
         Extra: map[string]interface{}{
             "image_url": "https://example.com/character.png", // 可选的首帧图
         },
@@ -672,9 +672,9 @@ func main() {
     }
 
     req := &dto.MediaRequest{
-        Type:   dto.MediaTypeImage,
-        Prompt: "A sophisticated white rabbit in a sharp navy suit, cinematic lighting",
-        Size:   "1:1", // 纵横比
+        Type:     dto.MediaTypeImage,
+        Messages: []dto.Message{{Role: "user", Content: "A sophisticated white rabbit in a sharp navy suit, cinematic lighting"}},
+        Size:     "1:1", // 纵横比
     }
 
     resp, err := llm.Media(context.Background(), req)
@@ -722,7 +722,7 @@ func main() {
 resp, err := llm.Media(context.Background(), &dto.MediaRequest{
     Type:           dto.MediaTypeVideo,
     Model:          "your-video-model",
-    Prompt:         "日落时分的城市航拍，暖色调",
+    Messages:       []dto.Message{{Role: "user", Content: "日落时分的城市航拍，暖色调"}},
     Size:           "1024x1024",
     Duration:       5,
     Fps:            24,

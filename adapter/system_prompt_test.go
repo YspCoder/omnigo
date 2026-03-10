@@ -8,9 +8,9 @@ import (
 
 func TestMediaPromptWithSystem(t *testing.T) {
 	request := &dto.MediaRequest{
-		Prompt: "draw a cat",
 		Messages: []dto.Message{
 			{Role: "system", Content: "be concise"},
+			{Role: "user", Content: "draw a cat"},
 		},
 	}
 

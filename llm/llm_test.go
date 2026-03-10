@@ -75,11 +75,16 @@ func TestEffectiveMediaRequestUsesConfiguredSystemPrompt(t *testing.T) {
 		},
 	}
 
-	request := &dto.MediaRequest{Prompt: "draw a cat"}
+	request := &dto.MediaRequest{
+		Messages: []dto.Message{{
+			Role:    "user",
+			Content: "draw a cat",
+		}},
+	}
 	effective := client.effectiveMediaRequest(request)
 
-	if len(effective.Messages) != 1 {
-		t.Fatalf("expected one injected system message, got %d", len(effective.Messages))
+	if len(effective.Messages) != 2 {
+		t.Fatalf("expected injected system message plus original user message, got %d", len(effective.Messages))
 	}
 
 	if effective.Messages[0].Role != "system" {
@@ -90,7 +95,7 @@ func TestEffectiveMediaRequestUsesConfiguredSystemPrompt(t *testing.T) {
 		t.Fatalf("expected injected system prompt, got %#v", effective.Messages[0].Content)
 	}
 
-	if len(request.Messages) != 0 {
+	if len(request.Messages) != 1 {
 		t.Fatalf("expected original request to remain unchanged, got %d messages", len(request.Messages))
 	}
 }
@@ -103,11 +108,16 @@ func TestEffectiveMediaRequestKeepsExplicitSystemPrompt(t *testing.T) {
 	}
 
 	request := &dto.MediaRequest{
-		Prompt: "draw a cat",
-		Messages: []dto.Message{{
-			Role:    "system",
-			Content: "explicit media prompt",
-		}},
+		Messages: []dto.Message{
+			{
+				Role:    "system",
+				Content: "explicit media prompt",
+			},
+			{
+				Role:    "user",
+				Content: "draw a cat",
+			},
+		},
 	}
 	effective := client.effectiveMediaRequest(request)
 
@@ -138,6 +148,7 @@ func TestGenerateWithResponseReturnsPrimaryChoiceContent(t *testing.T) {
 
 type stubAdaptor struct {
 	response *dto.ChatResponse
+	stream   dto.TokenStream
 }
 
 func (s stubAdaptor) Chat(_ context.Context, _ *adapter.ProviderConfig, _ *dto.ChatRequest) (*dto.ChatResponse, error) {
@@ -145,7 +156,7 @@ func (s stubAdaptor) Chat(_ context.Context, _ *adapter.ProviderConfig, _ *dto.C
 }
 
 func (s stubAdaptor) Stream(_ context.Context, _ *adapter.ProviderConfig, _ *dto.ChatRequest) (dto.TokenStream, error) {
-	return nil, nil
+	return s.stream, nil
 }
 
 func (s stubAdaptor) Media(_ context.Context, _ *adapter.ProviderConfig, _ *dto.MediaRequest) (*dto.MediaResponse, error) {
@@ -159,3 +170,53 @@ func (s stubAdaptor) TaskStatus(_ context.Context, _ *adapter.ProviderConfig, _ 
 func (s stubAdaptor) StreamMedia(_ context.Context, _ *adapter.ProviderConfig, _ *dto.MediaRequest) (dto.TokenStream, error) {
 	return nil, nil
 }
+
+func TestMediaTypeTextUsesChat(t *testing.T) {
+	client := &LLMImpl{
+		config:     &config.Config{Model: "test-model"},
+		relay:      relay.NewRelay(),
+		adaptor:    stubAdaptor{response: &dto.ChatResponse{Choices: []dto.ChatChoice{{Message: dto.Message{Content: "hello from chat"}}}}},
+		adaptorCfg: &adapter.ProviderConfig{},
+	}
+
+	resp, err := client.Media(context.Background(), &dto.MediaRequest{
+		Type: dto.MediaTypeText,
+		Messages: []dto.Message{
+			{Role: "user", Content: "hello"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Media error = %v", err)
+	}
+	if resp.Text != "hello from chat" {
+		t.Fatalf("text = %q, want hello from chat", resp.Text)
+	}
+}
+
+func TestStreamMediaTypeTextUsesChatStream(t *testing.T) {
+	expected := &stubTokenStream{}
+	client := &LLMImpl{
+		config:     &config.Config{Model: "test-model"},
+		relay:      relay.NewRelay(),
+		adaptor:    stubAdaptor{stream: expected},
+		adaptorCfg: &adapter.ProviderConfig{},
+	}
+
+	stream, err := client.StreamMedia(context.Background(), &dto.MediaRequest{
+		Type: dto.MediaTypeText,
+		Messages: []dto.Message{
+			{Role: "user", Content: "hello"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("StreamMedia error = %v", err)
+	}
+	if stream != expected {
+		t.Fatalf("stream = %#v, want %#v", stream, expected)
+	}
+}
+
+type stubTokenStream struct{}
+
+func (s *stubTokenStream) Next(context.Context) (*dto.StreamToken, error) { return nil, nil }
+func (s *stubTokenStream) Close() error                                   { return nil }

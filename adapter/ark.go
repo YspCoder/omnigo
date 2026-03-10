@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/YspCoder/omnigo/dto"
@@ -306,18 +307,22 @@ func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
 }
 
 func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGenerationTaskRequest {
-	content := make([]*model.CreateContentGenerationContentItem, 0, 1+len(r.Messages))
-	if systemPrompt := firstSystemMessage(r.Messages); systemPrompt != "" {
+	content := make([]*model.CreateContentGenerationContentItem, 0, len(r.Messages))
+	for _, message := range r.Messages {
+		text, ok := messageContentText(message.Content)
+		if !ok || strings.TrimSpace(text) == "" {
+			continue
+		}
+		role := message.Role
+		if role == "" {
+			role = "user"
+		}
 		content = append(content, &model.CreateContentGenerationContentItem{
 			Type: model.ContentGenerationContentItemTypeText,
-			Text: volcengine.String(systemPrompt),
-			Role: volcengine.String("system"),
+			Text: volcengine.String(text),
+			Role: volcengine.String(role),
 		})
 	}
-	content = append(content, &model.CreateContentGenerationContentItem{
-		Type: model.ContentGenerationContentItemTypeText,
-		Text: volcengine.String(r.Prompt),
-	})
 
 	req := model.CreateContentGenerationTaskRequest{
 		Model:     r.Model,
