@@ -316,14 +316,9 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 		if !ok || strings.TrimSpace(text) == "" {
 			continue
 		}
-		role := message.Role
-		if role == "" {
-			role = "user"
-		}
 		content = append(content, &model.CreateContentGenerationContentItem{
 			Type: model.ContentGenerationContentItemTypeText,
 			Text: volcengine.String(text),
-			Role: volcengine.String(role),
 		})
 	}
 
@@ -376,7 +371,7 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 			}
 		case "image":
 			if url, ok := contentImageURL(v); ok {
-				appendImageContent(url, "")
+				appendImageContent(url, "first_frame")
 			}
 		case "images":
 			urls := contentImageURLs(v)
