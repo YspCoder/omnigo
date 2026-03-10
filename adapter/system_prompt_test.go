@@ -23,7 +23,7 @@ func TestMediaPromptWithSystem(t *testing.T) {
 
 func TestGoogleToGenCfgUsesSystemInstruction(t *testing.T) {
 	adaptor := &GoogleAdaptor{}
-	cfg := adaptor.toGenCfg(&dto.ChatRequest{
+	cfg := adaptor.toGenCfg(&dto.MediaRequest{
 		Messages: []dto.Message{
 			{Role: "system", Content: "speak formally"},
 			{Role: "user", Content: "hello"},

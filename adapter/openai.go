@@ -60,7 +60,7 @@ func (a *OpenAIAdaptor) getClient(config *ProviderConfig) *openai.Client {
 	return a.client
 }
 
-func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (*dto.ChatResponse, error) {
+func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	client := a.getClient(config)
 
 	params := openai.ChatCompletionNewParams{
@@ -79,7 +79,7 @@ func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, reques
 		return nil, err
 	}
 
-	res := &dto.ChatResponse{
+	res := &dto.MediaResponse{
 		ID:      resp.ID,
 		Created: resp.Created,
 		Model:   resp.Model,
@@ -99,6 +99,9 @@ func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, reques
 			},
 			FinishReason: string(c.FinishReason),
 		}
+	}
+	if len(res.Choices) > 0 {
+		res.Text = fmt.Sprint(res.Choices[0].Message.Content)
 	}
 	return res, nil
 }
@@ -149,7 +152,7 @@ func (w *openAIStreamWrapper) Close() error {
 	return w.stream.Close()
 }
 
-func (a *OpenAIAdaptor) Stream(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (dto.TokenStream, error) {
+func (a *OpenAIAdaptor) Stream(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
 	client := a.getClient(config)
 
 	params := openai.ChatCompletionNewParams{

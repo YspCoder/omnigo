@@ -133,18 +133,20 @@ func (l *LLMImpl) effectiveMediaRequest(request *dto.MediaRequest) *dto.MediaReq
 	return &cloned
 }
 
-func (l *LLMImpl) mediaChatRequest(request *dto.MediaRequest, stream bool) *dto.ChatRequest {
-	return &dto.ChatRequest{
+func (l *LLMImpl) textRequest(messages []dto.Message, stream bool, options map[string]interface{}) *dto.MediaRequest {
+	return &dto.MediaRequest{
+		Type:        dto.MediaTypeText,
 		Model:       l.config.Model,
-		Messages:    request.Messages,
-		Prompt:      mediaPromptString(request.Messages),
+		Messages:    messages,
+		Prompt:      mediaPromptString(messages),
 		Temperature: l.config.Temperature,
 		MaxTokens:   l.config.MaxTokens,
 		Stream:      stream,
+		Options:     options,
 	}
 }
 
-// Generate produces text based on the given prompt and options.
+// Generate produces text based on the given prompt and routes it through the unified request pipeline.
 func (l *LLMImpl) Generate(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (string, error) {
 	resp, err := l.GenerateWithResponse(ctx, prompt, opts...)
 	if err != nil {
@@ -153,7 +155,7 @@ func (l *LLMImpl) Generate(ctx context.Context, prompt *Prompt, opts ...Generate
 	return resp.Text, nil
 }
 
-// GenerateWithResponse produces text and preserves the raw provider response.
+// GenerateWithResponse produces text and preserves the raw unified provider response.
 func (l *LLMImpl) GenerateWithResponse(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (*dto.GenerateResponse, error) {
 	prompt = l.effectivePrompt(prompt)
 
@@ -164,53 +166,41 @@ func (l *LLMImpl) GenerateWithResponse(ctx context.Context, prompt *Prompt, opts
 	}
 	l.optionsMutex.RUnlock()
 
-	request := &dto.ChatRequest{
-		Model:       l.config.Model,
-		Prompt:      prompt.String(),
-		Messages:    toDTOMessages(prompt),
-		Temperature: l.config.Temperature,
-		MaxTokens:   l.config.MaxTokens,
-		Options:     options,
-	}
+	request := l.textRequest(toDTOMessages(prompt), false, options)
 
 	resp, err := l.relay.Chat(ctx, l.adaptor, l.adaptorCfg, request)
 	if err != nil {
 		return nil, err
 	}
 
+	if resp.Text != "" {
+		return &dto.GenerateResponse{Text: resp.Text, Raw: resp}, nil
+	}
 	if len(resp.Choices) > 0 {
 		content := fmt.Sprint(resp.Choices[0].Message.Content)
+		resp.Text = content
 		return &dto.GenerateResponse{Text: content, Raw: resp}, nil
 	}
 	return nil, fmt.Errorf("no choices in response")
 }
 
-// Stream initiates a streaming response.
+// Stream initiates a streaming text response through the unified request pipeline.
 func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOption) (dto.TokenStream, error) {
 	prompt = l.effectivePrompt(prompt)
 
-	request := &dto.ChatRequest{
-		Model:    l.config.Model,
-		Prompt:   prompt.String(),
-		Messages: toDTOMessages(prompt),
-		Stream:   true,
-	}
+	request := l.textRequest(toDTOMessages(prompt), true, nil)
 	return l.relay.Stream(ctx, l.adaptor, nil, l.adaptorCfg, request)
 }
 
-// Media initiates an image/video generation request.
+// Media executes a unified multimodal request.
 func (l *LLMImpl) Media(ctx context.Context, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	request = l.effectiveMediaRequest(request)
 	if request.Type == dto.MediaTypeText {
-		resp, err := l.relay.Chat(ctx, l.adaptor, l.adaptorCfg, l.mediaChatRequest(request, false))
+		resp, err := l.relay.Chat(ctx, l.adaptor, l.adaptorCfg, request)
 		if err != nil {
 			return nil, err
 		}
-		result := &dto.MediaResponse{}
-		if len(resp.Choices) > 0 {
-			result.Text = fmt.Sprint(resp.Choices[0].Message.Content)
-		}
-		return result, nil
+		return resp, nil
 	}
 	return l.relay.Media(ctx, l.adaptor, l.adaptorCfg, request)
 }
@@ -218,7 +208,8 @@ func (l *LLMImpl) Media(ctx context.Context, request *dto.MediaRequest) (*dto.Me
 func (l *LLMImpl) StreamMedia(ctx context.Context, request *dto.MediaRequest) (dto.TokenStream, error) {
 	request = l.effectiveMediaRequest(request)
 	if request.Type == dto.MediaTypeText {
-		return l.relay.Stream(ctx, l.adaptor, nil, l.adaptorCfg, l.mediaChatRequest(request, true))
+		request.Stream = true
+		return l.relay.Stream(ctx, l.adaptor, nil, l.adaptorCfg, request)
 	}
 	return l.relay.StreamMedia(ctx, l.adaptor, l.adaptorCfg, request)
 }

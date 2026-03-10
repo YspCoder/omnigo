@@ -50,7 +50,7 @@ func (a *GoogleAdaptor) getClient(ctx context.Context, cfg *ProviderConfig) (*ge
 	return c, nil
 }
 
-func (a *GoogleAdaptor) Chat(ctx context.Context, cfg *ProviderConfig, r *dto.ChatRequest) (*dto.ChatResponse, error) {
+func (a *GoogleAdaptor) Chat(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (*dto.MediaResponse, error) {
 	c, err := a.getClient(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -59,16 +59,19 @@ func (a *GoogleAdaptor) Chat(ctx context.Context, cfg *ProviderConfig, r *dto.Ch
 	if err != nil {
 		return nil, err
 	}
-	res := &dto.ChatResponse{}
+	res := &dto.MediaResponse{}
 	for _, cand := range resp.Candidates {
 		if cand.Content != nil && len(cand.Content.Parts) > 0 {
 			res.Choices = append(res.Choices, dto.ChatChoice{Message: dto.Message{Role: cand.Content.Role, Content: cand.Content.Parts[0].Text}, FinishReason: string(cand.FinishReason)})
 		}
 	}
+	if len(res.Choices) > 0 {
+		res.Text = fmt.Sprint(res.Choices[0].Message.Content)
+	}
 	return res, nil
 }
 
-func (a *GoogleAdaptor) Stream(ctx context.Context, cfg *ProviderConfig, r *dto.ChatRequest) (dto.TokenStream, error) {
+func (a *GoogleAdaptor) Stream(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (dto.TokenStream, error) {
 	c, err := a.getClient(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -158,7 +161,7 @@ func (a *GoogleAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig,
 }
 
 // Helpers
-func (a *GoogleAdaptor) toContents(r *dto.ChatRequest) []*genai.Content {
+func (a *GoogleAdaptor) toContents(r *dto.MediaRequest) []*genai.Content {
 	messages := nonSystemMessages(r.Messages)
 	res := make([]*genai.Content, 0, len(messages))
 	for _, m := range messages {
@@ -167,7 +170,7 @@ func (a *GoogleAdaptor) toContents(r *dto.ChatRequest) []*genai.Content {
 	return res
 }
 
-func (a *GoogleAdaptor) toGenCfg(r *dto.ChatRequest) *genai.GenerateContentConfig {
+func (a *GoogleAdaptor) toGenCfg(r *dto.MediaRequest) *genai.GenerateContentConfig {
 	cfg := &genai.GenerateContentConfig{}
 	if systemPrompt := firstSystemMessage(r.Messages); systemPrompt != "" {
 		cfg.SystemInstruction = &genai.Content{

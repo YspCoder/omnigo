@@ -39,12 +39,12 @@ func (a *ArkAdaptor) getClient(config *ProviderConfig) *arkruntime.Client {
 	return a.client
 }
 
-func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, r *dto.ChatRequest) (*dto.ChatResponse, error) {
+func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, r *dto.MediaRequest) (*dto.MediaResponse, error) {
 	resp, err := a.getClient(config).CreateChatCompletion(ctx, a.toChatReq(r))
 	if err != nil {
 		return nil, err
 	}
-	res := &dto.ChatResponse{Usage: dto.Usage{PromptTokens: resp.Usage.PromptTokens, CompletionTokens: resp.Usage.CompletionTokens, TotalTokens: resp.Usage.TotalTokens}}
+	res := &dto.MediaResponse{Usage: dto.Usage{PromptTokens: resp.Usage.PromptTokens, CompletionTokens: resp.Usage.CompletionTokens, TotalTokens: resp.Usage.TotalTokens}}
 	for _, c := range resp.Choices {
 		msg := ""
 		if c.Message.Content != nil && c.Message.Content.StringValue != nil {
@@ -52,10 +52,13 @@ func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, r *dto.Ch
 		}
 		res.Choices = append(res.Choices, dto.ChatChoice{Index: c.Index, Message: dto.Message{Role: c.Message.Role, Content: msg}, FinishReason: string(c.FinishReason)})
 	}
+	if len(res.Choices) > 0 {
+		res.Text = fmt.Sprint(res.Choices[0].Message.Content)
+	}
 	return res, nil
 }
 
-func (a *ArkAdaptor) Stream(ctx context.Context, config *ProviderConfig, r *dto.ChatRequest) (dto.TokenStream, error) {
+func (a *ArkAdaptor) Stream(ctx context.Context, config *ProviderConfig, r *dto.MediaRequest) (dto.TokenStream, error) {
 	s, err := a.getClient(config).CreateChatCompletionStream(ctx, a.toChatReq(r))
 	if err != nil {
 		return nil, err
@@ -114,7 +117,7 @@ func (a *ArkAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, id str
 	return res, nil
 }
 
-func (a *ArkAdaptor) toChatReq(r *dto.ChatRequest) model.ChatRequest {
+func (a *ArkAdaptor) toChatReq(r *dto.MediaRequest) model.ChatRequest {
 	req := &arkChatRequest{Model: r.Model}
 	if r.MaxTokens > 0 {
 		req.MaxTokens = &r.MaxTokens

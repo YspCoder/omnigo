@@ -20,15 +20,15 @@ func NewRelay() *Relay {
 	return &Relay{}
 }
 
-// Chat executes a chat completion request.
-func (r *Relay) Chat(ctx context.Context, adp adapter.Adaptor, config *adapter.ProviderConfig, request *dto.ChatRequest) (*dto.ChatResponse, error) {
+// Chat executes a text-generation request through the provider adaptor.
+func (r *Relay) Chat(ctx context.Context, adp adapter.Adaptor, config *adapter.ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	if adp == nil {
 		return nil, fmt.Errorf("adaptor is required")
 	}
 	return adp.Chat(ctx, config, request)
 }
 
-// Media executes an image/video generation request.
+// Media executes a multimodal request through the provider adaptor.
 func (r *Relay) Media(ctx context.Context, adp adapter.Adaptor, config *adapter.ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	if adp == nil {
 		return nil, fmt.Errorf("adaptor is required")
@@ -44,14 +44,15 @@ func (r *Relay) TaskStatus(ctx context.Context, adp adapter.Adaptor, config *ada
 	return adp.TaskStatus(ctx, config, taskID)
 }
 
-// Stream executes a streaming chat request.
-func (r *Relay) Stream(ctx context.Context, adp adapter.Adaptor, _ interface{}, config *adapter.ProviderConfig, request *dto.ChatRequest) (dto.TokenStream, error) {
+// Stream executes a streaming text-generation request through the provider adaptor.
+func (r *Relay) Stream(ctx context.Context, adp adapter.Adaptor, _ interface{}, config *adapter.ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
 	if adp == nil {
 		return nil, fmt.Errorf("adaptor is required")
 	}
 	return adp.Stream(ctx, config, request)
 }
 
+// StreamMedia executes a streaming multimodal request through the provider adaptor.
 func (r *Relay) StreamMedia(ctx context.Context, adp adapter.Adaptor, config *adapter.ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
 	if adp == nil {
 		return nil, fmt.Errorf("adaptor is required")

@@ -85,7 +85,7 @@ func (l *llmImpl) StreamMedia(ctx context.Context, request *dto.MediaRequest) (d
 	return l.LLM.StreamMedia(ctx, request)
 }
 
-// GenerateWithResponse returns both the extracted text and the raw provider response.
+// GenerateWithResponse returns both the extracted text and the raw unified provider response.
 func (l *llmImpl) GenerateWithResponse(ctx context.Context, prompt *llm.Prompt, opts ...llm.GenerateOption) (*dto.GenerateResponse, error) {
 	l.logger.Debug("Starting GenerateWithResponse method", "prompt_length", len(prompt.String()), "context", ctx)
 

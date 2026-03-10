@@ -3,6 +3,20 @@ package dto
 
 import "encoding/json"
 
+// Message represents a single message in a multimodal conversation.
+type Message struct {
+	Role        string      `json:"role"`
+	Content     interface{} `json:"content"`
+	ImageURL    string      `json:"image_url,omitempty"`
+	ImageDetail string      `json:"image_detail,omitempty"`
+	VideoURL    string      `json:"video_url,omitempty"`
+	VideoFPS    float64     `json:"video_fps,omitempty"`
+	FileURL     string      `json:"file_url,omitempty"`
+	FileID      string      `json:"file_id,omitempty"`
+	FileName    string      `json:"file_name,omitempty"`
+	Name        string      `json:"name,omitempty"`
+}
+
 // MediaType indicates the kind of media request.
 type MediaType string
 
@@ -18,6 +32,9 @@ type MediaRequest struct {
 	Type           MediaType              `json:"-"`
 	Model          string                 `json:"model"`
 	Messages       []Message              `json:"messages,omitempty"`
+	Stream         bool                   `json:"stream,omitempty"`
+	Temperature    float64                `json:"temperature,omitempty"`
+	MaxTokens      int                    `json:"max_tokens,omitempty"`
 	N              int                    `json:"n,omitempty"`
 	Size           string                 `json:"size,omitempty"`
 	Resolution     string                 `json:"resolution,omitempty"`
@@ -26,19 +43,47 @@ type MediaRequest struct {
 	Seed           int                    `json:"seed,omitempty"`
 	ResponseFormat string                 `json:"response_format,omitempty"`
 	Extra          map[string]interface{} `json:"extra,omitempty"`
+	Prompt         string                 `json:"-"`
+	Options        map[string]interface{} `json:"-"`
+	Schema         interface{}            `json:"-"`
 }
 
-// MediaResponse represents the response for image/video generation.
+// GenerateResponse preserves both the extracted text and the raw multimodal response.
+type GenerateResponse struct {
+	Text string         `json:"text,omitempty"`
+	Raw  *MediaResponse `json:"raw,omitempty"`
+}
+
+// Choice represents a single text-generation candidate within a multimodal response.
+type ChatChoice struct {
+	Index        int     `json:"index,omitempty"`
+	Message      Message `json:"message,omitempty"`
+	FinishReason string  `json:"finish_reason,omitempty"`
+}
+
+// Usage represents token usage statistics.
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
+}
+
+// MediaResponse represents the unified response for text/image/video generation.
 type MediaResponse struct {
-	Created      int64       `json:"created,omitempty"`
-	Data         []ImageData `json:"data,omitempty"`
-	RequestID    string      `json:"request_id,omitempty"`
-	TaskID       string      `json:"task_id,omitempty"`
-	Status       string      `json:"status,omitempty"`
-	URL          string      `json:"url,omitempty"`
-	Text         string      `json:"text,omitempty"`
-	ErrorCode    string      `json:"code,omitempty"`
-	ErrorMessage string      `json:"message,omitempty"`
+	ID           string       `json:"id,omitempty"`
+	Object       string       `json:"object,omitempty"`
+	Created      int64        `json:"created,omitempty"`
+	Model        string       `json:"model,omitempty"`
+	Choices      []ChatChoice `json:"choices,omitempty"`
+	Usage        Usage        `json:"usage,omitempty"`
+	Data         []ImageData  `json:"data,omitempty"`
+	RequestID    string       `json:"request_id,omitempty"`
+	TaskID       string       `json:"task_id,omitempty"`
+	Status       string       `json:"status,omitempty"`
+	URL          string       `json:"url,omitempty"`
+	Text         string       `json:"text,omitempty"`
+	ErrorCode    string       `json:"code,omitempty"`
+	ErrorMessage string       `json:"message,omitempty"`
 	Video        struct {
 		URL string `json:"url,omitempty"`
 	} `json:"video,omitempty"`
@@ -47,22 +92,32 @@ type MediaResponse struct {
 // MarshalJSON removes duplicated URL fields and empty video object in JSON output.
 func (m MediaResponse) MarshalJSON() ([]byte, error) {
 	type mediaResponseJSON struct {
-		Created      int64       `json:"created,omitempty"`
-		Data         []ImageData `json:"data,omitempty"`
-		RequestID    string      `json:"request_id,omitempty"`
-		TaskID       string      `json:"task_id,omitempty"`
-		Status       string      `json:"status,omitempty"`
-		URL          string      `json:"url,omitempty"`
-		Text         string      `json:"text,omitempty"`
-		ErrorCode    string      `json:"code,omitempty"`
-		ErrorMessage string      `json:"message,omitempty"`
+		ID           string       `json:"id,omitempty"`
+		Object       string       `json:"object,omitempty"`
+		Created      int64        `json:"created,omitempty"`
+		Model        string       `json:"model,omitempty"`
+		Choices      []ChatChoice `json:"choices,omitempty"`
+		Usage        Usage        `json:"usage,omitempty"`
+		Data         []ImageData  `json:"data,omitempty"`
+		RequestID    string       `json:"request_id,omitempty"`
+		TaskID       string       `json:"task_id,omitempty"`
+		Status       string       `json:"status,omitempty"`
+		URL          string       `json:"url,omitempty"`
+		Text         string       `json:"text,omitempty"`
+		ErrorCode    string       `json:"code,omitempty"`
+		ErrorMessage string       `json:"message,omitempty"`
 		Video        *struct {
 			URL string `json:"url,omitempty"`
 		} `json:"video,omitempty"`
 	}
 
 	out := mediaResponseJSON{
+		ID:           m.ID,
+		Object:       m.Object,
 		Created:      m.Created,
+		Model:        m.Model,
+		Choices:      m.Choices,
+		Usage:        m.Usage,
 		Data:         m.Data,
 		RequestID:    m.RequestID,
 		TaskID:       m.TaskID,

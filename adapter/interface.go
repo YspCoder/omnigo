@@ -35,20 +35,20 @@ type ProviderConfig struct {
 	ChatProtocol string
 }
 
-// Adaptor defines the interface for provider-specific implementations using their SDKs.
+// Adaptor defines provider-specific implementations for unified multimodal requests.
 type Adaptor interface {
-	// Chat executes a chat completion request.
-	Chat(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (*dto.ChatResponse, error)
+	// Chat executes a text-generation request using the unified multimodal DTO.
+	Chat(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error)
 
-	// Stream executes a streaming chat completion request.
-	Stream(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (dto.TokenStream, error)
+	// Stream executes a streaming text-generation request using the unified multimodal DTO.
+	Stream(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error)
 
-	// Media executes an image or video generation request.
+	// Media executes a unified multimodal request, typically for image or video generation.
 	Media(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error)
 
 	// TaskStatus queries a background task status (mostly for video).
 	TaskStatus(ctx context.Context, config *ProviderConfig, taskID string) (*dto.TaskStatusResponse, error)
 
-	// StreamMedia executes a streaming media generation request.
+	// StreamMedia executes a streaming multimodal request.
 	StreamMedia(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error)
 }

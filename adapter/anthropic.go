@@ -22,12 +22,12 @@ func (a *AnthropicAdaptor) getClient(config *ProviderConfig) *anthropic.Client {
 	return client
 }
 
-func (a *AnthropicAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (*dto.ChatResponse, error) {
+func (a *AnthropicAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	client := a.getClient(config)
 
 	messages := make([]anthropic.Message, 0)
 	var system string
-	
+
 	for _, m := range request.Messages {
 		if m.Role == "system" {
 			system = fmt.Sprint(m.Content)
@@ -49,13 +49,14 @@ func (a *AnthropicAdaptor) Chat(ctx context.Context, config *ProviderConfig, req
 		return nil, err
 	}
 
-	res := &dto.ChatResponse{
+	res := &dto.MediaResponse{
 		Choices: []dto.ChatChoice{{
 			Message: dto.Message{
 				Role:    "assistant",
 				Content: resp.Content[0].GetText(),
 			},
 		}},
+		Text: resp.Content[0].GetText(),
 		Usage: dto.Usage{
 			PromptTokens:     resp.Usage.InputTokens,
 			CompletionTokens: resp.Usage.OutputTokens,
@@ -65,7 +66,7 @@ func (a *AnthropicAdaptor) Chat(ctx context.Context, config *ProviderConfig, req
 	return res, nil
 }
 
-func (a *AnthropicAdaptor) Stream(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (dto.TokenStream, error) {
+func (a *AnthropicAdaptor) Stream(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
 	return nil, fmt.Errorf("stream not implemented for Anthropic SDK yet")
 }
 

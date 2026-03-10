@@ -130,7 +130,7 @@ func TestGenerateWithResponseReturnsPrimaryChoiceContent(t *testing.T) {
 	client := &LLMImpl{
 		config:     &config.Config{Model: "test-model"},
 		relay:      relay.NewRelay(),
-		adaptor:    stubAdaptor{response: &dto.ChatResponse{Choices: []dto.ChatChoice{{Message: dto.Message{Content: "hello"}}}}},
+		adaptor:    stubAdaptor{response: &dto.MediaResponse{Choices: []dto.ChatChoice{{Message: dto.Message{Content: "hello"}}}, Text: "hello"}},
 		adaptorCfg: &adapter.ProviderConfig{},
 	}
 
@@ -147,15 +147,15 @@ func TestGenerateWithResponseReturnsPrimaryChoiceContent(t *testing.T) {
 }
 
 type stubAdaptor struct {
-	response *dto.ChatResponse
+	response *dto.MediaResponse
 	stream   dto.TokenStream
 }
 
-func (s stubAdaptor) Chat(_ context.Context, _ *adapter.ProviderConfig, _ *dto.ChatRequest) (*dto.ChatResponse, error) {
+func (s stubAdaptor) Chat(_ context.Context, _ *adapter.ProviderConfig, _ *dto.MediaRequest) (*dto.MediaResponse, error) {
 	return s.response, nil
 }
 
-func (s stubAdaptor) Stream(_ context.Context, _ *adapter.ProviderConfig, _ *dto.ChatRequest) (dto.TokenStream, error) {
+func (s stubAdaptor) Stream(_ context.Context, _ *adapter.ProviderConfig, _ *dto.MediaRequest) (dto.TokenStream, error) {
 	return s.stream, nil
 }
 
@@ -175,7 +175,7 @@ func TestMediaTypeTextUsesChat(t *testing.T) {
 	client := &LLMImpl{
 		config:     &config.Config{Model: "test-model"},
 		relay:      relay.NewRelay(),
-		adaptor:    stubAdaptor{response: &dto.ChatResponse{Choices: []dto.ChatChoice{{Message: dto.Message{Content: "hello from chat"}}}}},
+		adaptor:    stubAdaptor{response: &dto.MediaResponse{Choices: []dto.ChatChoice{{Message: dto.Message{Content: "hello from chat"}}}, Text: "hello from chat"}},
 		adaptorCfg: &adapter.ProviderConfig{},
 	}
 

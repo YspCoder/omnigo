@@ -12,14 +12,14 @@ import (
 // Most modern DashScope models are OpenAI compatible.
 type AliAdaptor struct{}
 
-func (a *AliAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (*dto.ChatResponse, error) {
+func (a *AliAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	if config.BaseURL == "" {
 		config.BaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 	}
 	return (&OpenAIAdaptor{}).Chat(ctx, config, request)
 }
 
-func (a *AliAdaptor) Stream(ctx context.Context, config *ProviderConfig, request *dto.ChatRequest) (dto.TokenStream, error) {
+func (a *AliAdaptor) Stream(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
 	if config.BaseURL == "" {
 		config.BaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 	}
