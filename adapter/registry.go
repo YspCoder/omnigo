@@ -92,6 +92,22 @@ func NewRegistry(providerNames ...string) *Registry {
 				return &ArkAdaptor{}
 			},
 		},
+		"vidu": {
+			Name:     "vidu",
+			Type:     TypeCustom,
+			Endpoint: "https://api.vidu.cn",
+			AdaptorFactory: func() Adaptor {
+				return &ViduAdaptor{}
+			},
+		},
+		"kling": {
+			Name:     "kling",
+			Type:     TypeCustom,
+			Endpoint: "https://api-beijing.klingai.com",
+			AdaptorFactory: func() Adaptor {
+				return &KlingAdaptor{}
+			},
+		},
 	}
 
 	if len(providerNames) == 0 {

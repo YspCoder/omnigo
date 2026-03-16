@@ -435,6 +435,10 @@ func (a *OpenAIAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, 
 	return nil, fmt.Errorf("task status not supported by OpenAI")
 }
 
+func (a *OpenAIAdaptor) ListTasks(ctx context.Context, config *ProviderConfig, query map[string]string) (*dto.TaskListResponse, error) {
+	return nil, fmt.Errorf("task list not supported by OpenAI")
+}
+
 func (a *OpenAIAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
 	return nil, fmt.Errorf("streaming media not supported by OpenAI adaptor")
 }

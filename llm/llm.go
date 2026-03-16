@@ -21,6 +21,7 @@ type LLM interface {
 	Media(ctx context.Context, request *dto.MediaRequest) (*dto.MediaResponse, error)
 	StreamMedia(ctx context.Context, request *dto.MediaRequest) (dto.TokenStream, error)
 	TaskStatus(ctx context.Context, taskID string) (*dto.TaskStatusResponse, error)
+	ListTasks(ctx context.Context, query map[string]string) (*dto.TaskListResponse, error)
 	SetOption(key string, value interface{})
 	SetLogLevel(level utils.LogLevel)
 	NewPrompt(input string) *Prompt
@@ -195,7 +196,7 @@ func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOpti
 // Media executes a unified multimodal request.
 func (l *LLMImpl) Media(ctx context.Context, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	request = l.effectiveMediaRequest(request)
-	if request.Type == dto.MediaTypeText {
+	if request.Type == dto.MediaTypeText && !l.textMediaUsesProviderMedia(request) {
 		resp, err := l.relay.Chat(ctx, l.adaptor, l.adaptorCfg, request)
 		if err != nil {
 			return nil, err
@@ -207,16 +208,32 @@ func (l *LLMImpl) Media(ctx context.Context, request *dto.MediaRequest) (*dto.Me
 
 func (l *LLMImpl) StreamMedia(ctx context.Context, request *dto.MediaRequest) (dto.TokenStream, error) {
 	request = l.effectiveMediaRequest(request)
-	if request.Type == dto.MediaTypeText {
+	if request.Type == dto.MediaTypeText && !l.textMediaUsesProviderMedia(request) {
 		request.Stream = true
 		return l.relay.Stream(ctx, l.adaptor, nil, l.adaptorCfg, request)
 	}
 	return l.relay.StreamMedia(ctx, l.adaptor, l.adaptorCfg, request)
 }
 
+func (l *LLMImpl) textMediaUsesProviderMedia(request *dto.MediaRequest) bool {
+	if request == nil {
+		return false
+	}
+	switch l.providerName {
+	case "vidu":
+		return true
+	default:
+		return false
+	}
+}
+
 // TaskStatus queries a provider task status.
 func (l *LLMImpl) TaskStatus(ctx context.Context, taskID string) (*dto.TaskStatusResponse, error) {
 	return l.relay.TaskStatus(ctx, l.adaptor, l.adaptorCfg, taskID)
+}
+
+func (l *LLMImpl) ListTasks(ctx context.Context, query map[string]string) (*dto.TaskListResponse, error) {
+	return l.relay.ListTasks(ctx, l.adaptor, l.adaptorCfg, query)
 }
 
 func toDTOMessages(prompt *Prompt) []dto.Message {

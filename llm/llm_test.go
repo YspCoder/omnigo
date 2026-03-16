@@ -149,6 +149,7 @@ func TestGenerateWithResponseReturnsPrimaryChoiceContent(t *testing.T) {
 type stubAdaptor struct {
 	response *dto.MediaResponse
 	stream   dto.TokenStream
+	media    *dto.MediaResponse
 }
 
 func (s stubAdaptor) Chat(_ context.Context, _ *adapter.ProviderConfig, _ *dto.MediaRequest) (*dto.MediaResponse, error) {
@@ -160,10 +161,14 @@ func (s stubAdaptor) Stream(_ context.Context, _ *adapter.ProviderConfig, _ *dto
 }
 
 func (s stubAdaptor) Media(_ context.Context, _ *adapter.ProviderConfig, _ *dto.MediaRequest) (*dto.MediaResponse, error) {
-	return nil, nil
+	return s.media, nil
 }
 
 func (s stubAdaptor) TaskStatus(_ context.Context, _ *adapter.ProviderConfig, _ string) (*dto.TaskStatusResponse, error) {
+	return nil, nil
+}
+
+func (s stubAdaptor) ListTasks(_ context.Context, _ *adapter.ProviderConfig, _ map[string]string) (*dto.TaskListResponse, error) {
 	return nil, nil
 }
 
@@ -213,6 +218,29 @@ func TestStreamMediaTypeTextUsesChatStream(t *testing.T) {
 	}
 	if stream != expected {
 		t.Fatalf("stream = %#v, want %#v", stream, expected)
+	}
+}
+
+func TestMediaTypeTextUsesProviderMediaForVidu(t *testing.T) {
+	client := &LLMImpl{
+		providerName: "vidu",
+		config:       &config.Config{Model: "text-to-audio"},
+		relay:        relay.NewRelay(),
+		adaptor:      stubAdaptor{media: &dto.MediaResponse{TaskID: "task-1", Status: "created"}},
+		adaptorCfg:   &adapter.ProviderConfig{},
+	}
+
+	resp, err := client.Media(context.Background(), &dto.MediaRequest{
+		Type: dto.MediaTypeText,
+		Messages: []dto.Message{
+			{Role: "user", Content: "rain ambience"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Media error = %v", err)
+	}
+	if resp.TaskID != "task-1" {
+		t.Fatalf("task id = %q, want task-1", resp.TaskID)
 	}
 }
 

@@ -44,6 +44,14 @@ func (r *Relay) TaskStatus(ctx context.Context, adp adapter.Adaptor, config *ada
 	return adp.TaskStatus(ctx, config, taskID)
 }
 
+// ListTasks queries a provider task list.
+func (r *Relay) ListTasks(ctx context.Context, adp adapter.Adaptor, config *adapter.ProviderConfig, query map[string]string) (*dto.TaskListResponse, error) {
+	if adp == nil {
+		return nil, fmt.Errorf("adaptor is required")
+	}
+	return adp.ListTasks(ctx, config, query)
+}
+
 // Stream executes a streaming text-generation request through the provider adaptor.
 func (r *Relay) Stream(ctx context.Context, adp adapter.Adaptor, _ interface{}, config *adapter.ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
 	if adp == nil {

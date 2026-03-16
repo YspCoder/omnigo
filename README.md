@@ -37,8 +37,34 @@
 - Ali / DashScope (`ali`)
 - Jimeng / Volcengine (`jimeng`)
 - Google / Gemini (`google`)
+- Vidu (`vidu`)
+- Kling AI (`kling`)
 
 > 说明：以上名称为 `SetProvider(...)` 传入值。
+
+### Kling AI 示例
+
+```go
+videoReq := &dto.MediaRequest{
+    Type:     dto.MediaTypeVideo,
+    Model:    "kling-v2-6",
+    Duration: 5,
+    Size:     "16:9",
+    Messages: []dto.Message{
+        {Role: "user", Content: "一只可爱的小兔子，戴着眼镜，坐在桌边，看报纸"},
+    },
+    Extra: map[string]interface{}{
+        "mode":  "text-to-video",
+        "sound": "on",
+    },
+}
+
+llm, err := omnigo.NewLLM(
+    omnigo.SetProvider("kling"),
+    omnigo.SetModel("kling-v2-6"),
+    omnigo.SetAPIKey(os.Getenv("KLING_API_KEY")),
+)
+```
 
 ## 安装
 
@@ -595,6 +621,166 @@ func main() {
     log.Printf("Task Submitted. ID: %s, Status: %s", resp.TaskID, resp.Status)
 }
 ```
+
+### 视频生成示例 (Vidu)
+
+Vidu 适配器目前覆盖以下视频能力：
+
+- `text-to-video`
+- `image-to-video`
+- `reference-to-video`
+- `start-end-to-video`
+- `multi-frame`
+- `reference-to-image`
+- `text-to-audio`
+- `timing-to-audio`
+- `text-to-speech`
+- `voice-clone`
+- `lip-sync`
+
+支持两种路由方式：
+
+- 推荐：通过 `Extra["mode"]` 显式指定能力
+- 兼容：只传 `Type` 时，omnigo 会按 `Type + Model + 输入形态` 自动适配  
+  例如 `Type=video` 会按图片数 / `subjects` / `frames` 自动区分图生、参考生、首尾帧、多帧；`Type=text` 在 Vidu 下会按模型名称优先路由到音频/TTS能力，而不是聊天接口
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "os"
+    "time"
+
+    "github.com/YspCoder/omnigo"
+    "github.com/YspCoder/omnigo/dto"
+)
+
+func main() {
+    apiKey := os.Getenv("VIDU_API_KEY")
+    if apiKey == "" {
+        log.Fatal("VIDU_API_KEY is not set")
+    }
+
+    llm, err := omnigo.NewLLM(
+        omnigo.SetProvider("vidu"),
+        omnigo.SetModel("viduq2"),
+        omnigo.SetAPIKey(apiKey),
+    )
+    if err != nil {
+        log.Fatalf("create LLM failed: %v", err)
+    }
+
+    req := &dto.MediaRequest{
+        Type:       dto.MediaTypeVideo,
+        Model:      "viduq2",
+        Messages:   []dto.Message{{Role: "user", Content: "一个机器人站在雨夜霓虹街头，镜头缓慢推进"}},
+        Size:       "16:9",
+        Duration:   5,
+        Resolution: "720p",
+        Extra: map[string]interface{}{
+            "mode":               "text-to-video",
+            "movement_amplitude": "medium",
+            "bgm":                true,
+        },
+    }
+
+    resp, err := llm.Media(context.Background(), req)
+    if err != nil {
+        log.Fatalf("video generation failed: %v", err)
+    }
+    log.Printf("Task submitted. ID=%s Status=%s", resp.TaskID, resp.Status)
+
+    for {
+        status, err := llm.TaskStatus(context.Background(), resp.TaskID)
+        if err != nil {
+            log.Fatalf("query task failed: %v", err)
+        }
+        log.Println("status:", status.Output.TaskStatus)
+        if status.Output.TaskStatus == "success" {
+            log.Println("video_url:", status.Output.VideoURL)
+            break
+        }
+        if status.Output.TaskStatus == "failed" {
+            log.Fatalf("video failed: %s", status.Output.Message)
+        }
+        time.Sleep(5 * time.Second)
+    }
+}
+```
+
+Vidu 的 `Extra` 入参约定：
+
+- `mode`: `text-to-video` / `image-to-video` / `reference-to-video` / `start-end-to-video` / `multi-frame`
+- `mode`: `reference-to-image` / `text-to-audio` / `timing-to-audio` / `text-to-speech` / `voice-clone` / `lip-sync`
+- `image` 或 `images`: 图生/首尾帧输入图片 URL
+- `start_image`, `end_image`: 首尾帧模式
+- `subjects`: 参考生视频主体数组，原样透传到 Vidu
+- `frames`: 多帧模式帧数组，原样透传到 Vidu
+- `style`, `movement_amplitude`, `bgm`, `callback_url`, `off_peak`, `watermark`, `wm_position`, `wm_url`, `payload`, `meta_data`: Vidu 扩展参数
+- `lip-sync` 建议直接把官方接口字段放进 `Extra`，例如 `video_url`、`audio_url`、`text`、`voice` 等，omnigo 会原样透传到 Vidu
+
+图片与音频调用示例：
+
+```go
+// 参考生图
+imgReq := &dto.MediaRequest{
+    Type:       dto.MediaTypeImage,
+    Model:      "vidu2.0",
+    Messages:   []dto.Message{{Role: "user", Content: "生成一张角色一致的海报图"}},
+    Size:       "1:1",
+    Resolution: "2k",
+    Extra: map[string]interface{}{
+        "mode": "reference-to-image",
+        "subjects": []map[string]interface{}{
+            {"images": []string{"https://example.com/character.png"}},
+        },
+    },
+}
+
+// 文生音频
+audioReq := &dto.MediaRequest{
+    Type:     dto.MediaTypeAudio,
+    Model:    "vidu2.0",
+    Messages: []dto.Message{{Role: "user", Content: "雨夜城市环境音，远处有列车经过"}},
+    Extra: map[string]interface{}{
+        "mode": "text-to-audio",
+    },
+}
+
+// 语音合成
+ttsReq := &dto.MediaRequest{
+    Type:  dto.MediaTypeAudio,
+    Model: "vidu2.0",
+    Extra: map[string]interface{}{
+        "mode":  "text-to-speech",
+        "text":  "欢迎使用 omnigo 接入 Vidu。",
+        "voice": "your_voice_id",
+    },
+}
+```
+
+任务接口：
+
+```go
+status, err := llm.TaskStatus(ctx, "your-task-id")
+if err != nil {
+    log.Fatal(err)
+}
+log.Println(status.Output.TaskStatus, status.Output.URL)
+
+tasks, err := llm.ListTasks(ctx, map[string]string{
+    "page_num":  "1",
+    "page_size": "20",
+})
+if err != nil {
+    log.Fatal(err)
+}
+log.Println("total:", tasks.Total, "items:", len(tasks.Items))
+```
+
+其中 `subjects` / `frames` 建议直接按 Vidu 官方接口结构传入，omnigo 不额外重写其内部字段。
 
 ### 文本生成示例 (Google / Gemini)
 

@@ -117,6 +117,10 @@ func (a *ArkAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, id str
 	return res, nil
 }
 
+func (a *ArkAdaptor) ListTasks(ctx context.Context, cfg *ProviderConfig, query map[string]string) (*dto.TaskListResponse, error) {
+	return nil, fmt.Errorf("task list not supported by Ark adaptor")
+}
+
 func (a *ArkAdaptor) toChatReq(r *dto.MediaRequest) model.ChatRequest {
 	req := &arkChatRequest{Model: r.Model}
 	if r.MaxTokens > 0 {

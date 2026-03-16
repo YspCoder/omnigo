@@ -22,6 +22,8 @@ type LLM interface {
 	// GetPromptJSONSchema returns the JSON schema for prompt validation in byte format.
 	// The schema can be customized using SchemaOption parameters.
 	GetPromptJSONSchema(opts ...SchemaOption) ([]byte, error)
+	// ListTasks returns the provider task list.
+	ListTasks(ctx context.Context, query map[string]string) (*dto.TaskListResponse, error)
 	// GetProvider returns the name of the current LLM provider (e.g., "openai").
 	GetProvider() string
 	// GetModel returns the name of the current model being used.

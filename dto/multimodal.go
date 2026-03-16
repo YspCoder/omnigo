@@ -24,6 +24,7 @@ const (
 	MediaTypeText  MediaType = "text"
 	MediaTypeImage MediaType = "image"
 	MediaTypeVideo MediaType = "video"
+	MediaTypeAudio MediaType = "audio"
 )
 
 // MediaRequest represents a request for text/image/video generation.
@@ -158,6 +159,7 @@ type TaskStatusOutput struct {
 	SubmitTime    string `json:"submit_time,omitempty"`
 	ScheduledTime string `json:"scheduled_time,omitempty"`
 	EndTime       string `json:"end_time,omitempty"`
+	URL           string `json:"url,omitempty"`
 	VideoURL      string `json:"video_url,omitempty"`
 	OrigPrompt    string `json:"orig_prompt,omitempty"`
 	ActualPrompt  string `json:"actual_prompt,omitempty"`
@@ -170,4 +172,24 @@ type TaskStatusUsage struct {
 	VideoDuration int `json:"video_duration,omitempty"`
 	VideoCount    int `json:"video_count,omitempty"`
 	SR            int `json:"SR,omitempty"`
+}
+
+// TaskListResponse represents a provider task list response.
+type TaskListResponse struct {
+	Items    []TaskListItem `json:"items,omitempty"`
+	Tasks    []TaskListItem `json:"tasks,omitempty"`
+	Total    int            `json:"total,omitempty"`
+	PageNum  int            `json:"page_num,omitempty"`
+	PageSize int            `json:"page_size,omitempty"`
+	HasMore  bool           `json:"has_more,omitempty"`
+}
+
+// TaskListItem represents a single task in a task list response.
+type TaskListItem struct {
+	ID        string      `json:"id,omitempty"`
+	TaskID    string      `json:"task_id,omitempty"`
+	State     string      `json:"state,omitempty"`
+	Model     string      `json:"model,omitempty"`
+	CreatedAt string      `json:"created_at,omitempty"`
+	Payload   interface{} `json:"payload,omitempty"`
 }
