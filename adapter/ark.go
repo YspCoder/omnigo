@@ -107,12 +107,34 @@ func (a *ArkAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, id str
 	if err != nil {
 		return nil, err
 	}
-	res := &dto.TaskStatusResponse{Output: dto.TaskStatusOutput{TaskID: resp.ID, TaskStatus: resp.Status, VideoURL: resp.Content.VideoURL}}
+	res := &dto.TaskStatusResponse{
+		Usage: &dto.TaskStatusUsage{},
+		Output: dto.TaskStatusOutput{
+			TaskID:       resp.ID,
+			TaskStatus:   resp.Status,
+			SubmitTime:   formatUnixMillis(resp.CreatedAt),
+			EndTime:      formatUnixMillis(resp.UpdatedAt),
+			VideoURL:     resp.Content.VideoURL,
+			LastFrameURL: resp.Content.LastFrameURL,
+			ActualPrompt: volcengine.StringValue(resp.RevisedPrompt),
+			Resolution:   volcengine.StringValue(resp.Resolution),
+			Ratio:        volcengine.StringValue(resp.Ratio),
+			Duration:     int64ToInt(resp.Duration),
+			Seed:         int64ToInt(resp.Seed),
+			ServiceTier:  volcengine.StringValue(resp.ServiceTier),
+		},
+	}
 	if res.Output.VideoURL == "" {
 		res.Output.VideoURL = resp.Content.FileURL
 	}
+	res.Output.URL = firstNonEmptyString(res.Output.VideoURL, res.Output.LastFrameURL)
 	if resp.Error != nil {
 		res.Output.Code, res.Output.Message = resp.Error.Code, resp.Error.Message
+	}
+	res.Usage.VideoDuration = int64ToInt(resp.Duration)
+	res.Usage.VideoCount = 1
+	if resp.Status == model.StatusFailed {
+		res.Usage = nil
 	}
 	return res, nil
 }
@@ -360,17 +382,41 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 	}
 	for k, v := range r.Extra {
 		switch k {
+		case "callback_url":
+			if s, ok := v.(string); ok && s != "" {
+				req.CallbackUrl = &s
+			}
+		case "return_last_frame":
+			if b, ok := v.(bool); ok {
+				req.ReturnLastFrame = &b
+			}
 		case "service_tier":
 			if s, ok := v.(string); ok {
 				req.ServiceTier = &s
+			}
+		case "execution_expires_after":
+			if n, ok := int64Value(v); ok {
+				req.ExecutionExpiresAfter = volcengine.Int64(n)
+			}
+		case "generate_audio":
+			if b, ok := v.(bool); ok {
+				req.GenerateAudio = &b
+			}
+		case "draft":
+			if b, ok := v.(bool); ok {
+				req.Draft = &b
+			}
+		case "camera_fixed":
+			if b, ok := v.(bool); ok {
+				req.CameraFixed = &b
 			}
 		case "watermark":
 			if b, ok := v.(bool); ok {
 				req.Watermark = &b
 			}
 		case "frames":
-			if f, ok := v.(float64); ok {
-				req.Frames = volcengine.Int64(int64(f))
+			if n, ok := int64Value(v); ok {
+				req.Frames = volcengine.Int64(n)
 			}
 		case "image":
 			if url, ok := contentImageURL(v); ok {
@@ -383,6 +429,20 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 			}
 			if len(urls) > 1 {
 				appendImageContent(urls[1], "last_frame")
+			}
+		case "draft_task_id":
+			if id, ok := v.(string); ok && id != "" {
+				req.Content = append(req.Content, &model.CreateContentGenerationContentItem{
+					Type:      model.ContentGenerationContentItemTypeDraftTask,
+					DraftTask: &model.DraftTask{ID: id},
+				})
+			}
+		case "draft_task":
+			if id, ok := contentDraftTaskID(v); ok {
+				req.Content = append(req.Content, &model.CreateContentGenerationContentItem{
+					Type:      model.ContentGenerationContentItemTypeDraftTask,
+					DraftTask: &model.DraftTask{ID: id},
+				})
 			}
 		default:
 			req.ExtraBody[k] = v
@@ -459,6 +519,61 @@ func intValue(v interface{}) (int, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func int64Value(v interface{}) (int64, bool) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int32:
+		return int64(n), true
+	case int64:
+		return n, true
+	case float64:
+		return int64(n), true
+	case float32:
+		return int64(n), true
+	default:
+		return 0, false
+	}
+}
+
+func int64ToInt(v *int64) int {
+	if v == nil {
+		return 0
+	}
+	return int(*v)
+}
+
+func contentDraftTaskID(v interface{}) (string, bool) {
+	switch item := v.(type) {
+	case string:
+		if item == "" {
+			return "", false
+		}
+		return item, true
+	case map[string]interface{}:
+		if id, ok := item["id"].(string); ok && id != "" {
+			return id, true
+		}
+		if task, ok := item["draft_task"].(map[string]interface{}); ok {
+			if id, ok := task["id"].(string); ok && id != "" {
+				return id, true
+			}
+		}
+	case map[string]string:
+		if id, ok := item["id"]; ok && id != "" {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+func formatUnixMillis(ts int64) string {
+	if ts <= 0 {
+		return ""
+	}
+	return time.UnixMilli(ts).UTC().Format(time.RFC3339)
 }
 
 type arkStream struct {

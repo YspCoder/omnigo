@@ -2,8 +2,10 @@ package adapter
 
 import (
 	"testing"
+	"time"
 
 	"github.com/YspCoder/omnigo/dto"
+	"github.com/volcengine/volcengine-go-sdk/volcengine"
 )
 
 func TestArkToVidReqOmitsTextRoleAndUsesFirstFrame(t *testing.T) {
@@ -106,5 +108,80 @@ func TestArkToChatReqIncludesFileIDPartWithoutText(t *testing.T) {
 	}
 	if content.ListValue[0].FileURL.Name != "episode-script" {
 		t.Fatalf("name = %q, want %q", content.ListValue[0].FileURL.Name, "episode-script")
+	}
+}
+
+func TestArkToVidReqSupportsSeedanceDocumentFields(t *testing.T) {
+	adaptor := &ArkAdaptor{}
+	req := adaptor.toVidReq(&dto.MediaRequest{
+		Model:      "doubao-seedance-1-5-pro-251215",
+		Duration:   5,
+		Size:       "16:9",
+		Resolution: "720p",
+		Seed:       20,
+		Messages: []dto.Message{
+			{Role: "user", Content: "生成一段短片"},
+		},
+		Extra: map[string]interface{}{
+			"callback_url":             "https://example.com/callback",
+			"return_last_frame":        true,
+			"service_tier":             "default",
+			"execution_expires_after":  172800,
+			"generate_audio":           true,
+			"draft":                    true,
+			"camera_fixed":             false,
+			"watermark":                false,
+			"frames":                   29,
+			"draft_task_id":            "cgt-draft-123",
+		},
+	})
+
+	if req.CallbackUrl == nil || *req.CallbackUrl != "https://example.com/callback" {
+		t.Fatalf("callback_url = %v, want callback url", req.CallbackUrl)
+	}
+	if req.ReturnLastFrame == nil || !*req.ReturnLastFrame {
+		t.Fatalf("return_last_frame = %v, want true", req.ReturnLastFrame)
+	}
+	if req.ServiceTier == nil || *req.ServiceTier != "default" {
+		t.Fatalf("service_tier = %v, want default", req.ServiceTier)
+	}
+	if req.ExecutionExpiresAfter == nil || *req.ExecutionExpiresAfter != 172800 {
+		t.Fatalf("execution_expires_after = %v, want 172800", req.ExecutionExpiresAfter)
+	}
+	if req.GenerateAudio == nil || !*req.GenerateAudio {
+		t.Fatalf("generate_audio = %v, want true", req.GenerateAudio)
+	}
+	if req.Draft == nil || !*req.Draft {
+		t.Fatalf("draft = %v, want true", req.Draft)
+	}
+	if req.CameraFixed == nil || *req.CameraFixed {
+		t.Fatalf("camera_fixed = %v, want false", req.CameraFixed)
+	}
+	if req.Watermark == nil || *req.Watermark {
+		t.Fatalf("watermark = %v, want false", req.Watermark)
+	}
+	if req.Frames == nil || *req.Frames != 29 {
+		t.Fatalf("frames = %v, want 29", req.Frames)
+	}
+	if len(req.Content) != 2 {
+		t.Fatalf("content len = %d, want 2", len(req.Content))
+	}
+	if req.Content[1].Type != "draft_task" || req.Content[1].DraftTask == nil || req.Content[1].DraftTask.ID != "cgt-draft-123" {
+		t.Fatalf("content[1] = %#v, want draft_task content", req.Content[1])
+	}
+}
+
+func TestFormatUnixMillis(t *testing.T) {
+	ts := time.Date(2026, 3, 17, 12, 34, 56, 0, time.UTC).UnixMilli()
+	got := formatUnixMillis(ts)
+	if got != "2026-03-17T12:34:56Z" {
+		t.Fatalf("formatUnixMillis = %q, want RFC3339 UTC", got)
+	}
+}
+
+func TestInt64ToInt(t *testing.T) {
+	got := int64ToInt(volcengine.Int64(12))
+	if got != 12 {
+		t.Fatalf("int64ToInt = %d, want 12", got)
 	}
 }

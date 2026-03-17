@@ -161,6 +161,12 @@ type TaskStatusOutput struct {
 	EndTime       string `json:"end_time,omitempty"`
 	URL           string `json:"url,omitempty"`
 	VideoURL      string `json:"video_url,omitempty"`
+	LastFrameURL  string `json:"last_frame_url,omitempty"`
+	Resolution    string `json:"resolution,omitempty"`
+	Ratio         string `json:"ratio,omitempty"`
+	Duration      int    `json:"duration,omitempty"`
+	Seed          int    `json:"seed,omitempty"`
+	ServiceTier   string `json:"service_tier,omitempty"`
 	OrigPrompt    string `json:"orig_prompt,omitempty"`
 	ActualPrompt  string `json:"actual_prompt,omitempty"`
 	Code          string `json:"code,omitempty"`
