@@ -171,6 +171,43 @@ func TestArkToVidReqSupportsSeedanceDocumentFields(t *testing.T) {
 	}
 }
 
+func TestArkToVidReqSupportsReferenceImages(t *testing.T) {
+	adaptor := &ArkAdaptor{}
+	req := adaptor.toVidReq(&dto.MediaRequest{
+		Model:    "doubao-seedance-1-0-lite-i2v-250428",
+		Duration: 5,
+		Size:     "16:9",
+		Messages: []dto.Message{
+			{Role: "user", Content: "[图1]男生和[图2]柯基坐在[图3]草坪上"},
+		},
+		Extra: map[string]interface{}{
+			"reference_images": []string{
+				"https://example.com/ref-1.png",
+				"https://example.com/ref-2.png",
+				"https://example.com/ref-3.png",
+				"https://example.com/ref-4.png",
+				"https://example.com/ref-5.png",
+			},
+		},
+	})
+
+	if len(req.Content) != 6 {
+		t.Fatalf("content len = %d, want 6", len(req.Content))
+	}
+	for i := 1; i < len(req.Content); i++ {
+		item := req.Content[i]
+		if item.Type != "image_url" || item.ImageURL == nil {
+			t.Fatalf("content[%d] = %#v, want image_url", i, item)
+		}
+		if item.Role == nil || *item.Role != "reference_image" {
+			t.Fatalf("content[%d].role = %v, want reference_image", i, item.Role)
+		}
+	}
+	if got := req.Content[5].ImageURL.URL; got != "https://example.com/ref-5.png" {
+		t.Fatalf("last reference image = %q, want ref-5", got)
+	}
+}
+
 func TestFormatUnixMillis(t *testing.T) {
 	ts := time.Date(2026, 3, 17, 12, 34, 56, 0, time.UTC).UnixMilli()
 	got := formatUnixMillis(ts)

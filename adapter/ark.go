@@ -371,6 +371,11 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 		}
 		req.Content = append(req.Content, item)
 	}
+	appendReferenceImages := func(urls []string) {
+		for _, url := range urls {
+			appendImageContent(url, "reference_image")
+		}
+	}
 	if r.Duration > 0 {
 		req.Duration = volcengine.Int64(int64(r.Duration))
 	}
@@ -430,6 +435,13 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 			if len(urls) > 1 {
 				appendImageContent(urls[1], "last_frame")
 			}
+		case "reference_image":
+			if url, ok := contentImageURL(v); ok {
+				appendReferenceImages([]string{url})
+			}
+		case "reference_images":
+			urls := contentImageURLs(v)
+			appendReferenceImages(urls)
 		case "draft_task_id":
 			if id, ok := v.(string); ok && id != "" {
 				req.Content = append(req.Content, &model.CreateContentGenerationContentItem{
