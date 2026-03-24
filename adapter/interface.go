@@ -9,13 +9,6 @@ import (
 	"github.com/YspCoder/omnigo/dto"
 )
 
-const (
-	ModeChat  = "chat"
-	ModeImage = "image"
-	ModeVideo = "video"
-	ModeTask  = "task"
-)
-
 // ProviderConfig holds configuration for a specific provider.
 type ProviderConfig struct {
 	Name         string

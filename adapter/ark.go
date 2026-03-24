@@ -329,7 +329,7 @@ func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
 			maxImages = n
 		}
 	}
-	if maxImages > 0 && req.Image != nil {
+	if maxImages > 0 {
 		sequential := model.SequentialImageGeneration(model.SequentialImageGenerationAuto)
 		req.SequentialImageGeneration = &sequential
 		req.SequentialImageGenerationOptions = &model.SequentialImageGenerationOptions{
