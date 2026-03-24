@@ -307,8 +307,6 @@ func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
 		} else if image, ok := contentImageURL(r.Extra["image"]); ok {
 			req.Image = image
 		}
-	}
-	if r.Extra != nil {
 		if v, ok := r.Extra["guidance_scale"].(float64); ok {
 			req.GuidanceScale = &v
 		}
@@ -319,6 +317,12 @@ func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
 			req.OptimizePrompt = &v
 		}
 	}
+
+	if req.Watermark == nil {
+		v := false
+		req.Watermark = &v
+	}
+
 	maxImages := r.N
 	if maxImages <= 0 && r.Extra != nil {
 		if n, ok := intValue(r.Extra["n"]); ok {
@@ -418,6 +422,9 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 		case "watermark":
 			if b, ok := v.(bool); ok {
 				req.Watermark = &b
+			} else {
+				wm := false
+				req.Watermark = &wm
 			}
 		case "frames":
 			if n, ok := int64Value(v); ok {
