@@ -88,7 +88,15 @@ func (a *GoogleAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.M
 	}
 	switch r.Type {
 	case dto.MediaTypeImage:
-		resp, err := c.Models.GenerateImages(ctx, r.Model, mediaPromptWithSystem(r), a.toImgCfg(r))
+		model := normalizeGoogleMediaModel(r.Model)
+		if isGoogleGenerateContentImageModel(model) {
+			resp, err := c.Models.GenerateContent(ctx, model, genai.Text(mediaPromptWithSystem(r)), a.toImgContentCfg(r))
+			if err != nil {
+				return nil, err
+			}
+			return a.toImgContentResp(resp), nil
+		}
+		resp, err := c.Models.GenerateImages(ctx, model, mediaPromptWithSystem(r), a.toImgCfg(r))
 		if err != nil {
 			return nil, err
 		}
@@ -199,11 +207,19 @@ func (a *GoogleAdaptor) toImgCfg(r *dto.MediaRequest) *genai.GenerateImagesConfi
 	if r.ResponseFormat != "" {
 		cfg.OutputMIMEType = r.ResponseFormat
 	}
-	if r.Size != "" {
-		cfg.AspectRatio = r.Size
-	}
-	if r.Resolution != "" {
-		cfg.ImageSize = r.Resolution
+	cfg.AspectRatio, cfg.ImageSize = normalizeGoogleImageShape(r.Size, r.Resolution)
+	return cfg
+}
+
+func (a *GoogleAdaptor) toImgContentCfg(r *dto.MediaRequest) *genai.GenerateContentConfig {
+	cfg := a.toGenCfg(r)
+	cfg.ResponseModalities = []string{"TEXT", "IMAGE"}
+	cfg.ImageConfig = &genai.ImageConfig{}
+	cfg.ImageConfig.AspectRatio, cfg.ImageConfig.ImageSize = normalizeGoogleImageShape(r.Size, r.Resolution)
+	if r.Extra != nil {
+		if v, ok := r.Extra["person_generation"].(string); ok {
+			cfg.ImageConfig.PersonGeneration = v
+		}
 	}
 	return cfg
 }
@@ -286,6 +302,85 @@ func mapErr(errMap map[string]any) (code, message string) {
 		message = fmt.Sprint(v)
 	}
 	return code, message
+}
+
+func normalizeGoogleMediaModel(model string) string {
+	return strings.TrimSpace(model)
+}
+
+func isGoogleGenerateContentImageModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return false
+	}
+	return !strings.HasPrefix(model, "imagen-")
+}
+
+func normalizeGoogleImageShape(size, resolution string) (aspectRatio, imageSize string) {
+	for _, value := range []string{size, resolution} {
+		v := strings.TrimSpace(value)
+		if v == "" {
+			continue
+		}
+		switch {
+		case isGoogleImageAspectRatio(v):
+			aspectRatio = v
+		case isGoogleImageSize(v):
+			imageSize = strings.ToUpper(v)
+		}
+	}
+	return aspectRatio, imageSize
+}
+
+func isGoogleImageAspectRatio(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "1:1", "9:16", "16:9", "4:3", "3:4":
+		return true
+	default:
+		return false
+	}
+}
+
+func isGoogleImageSize(value string) bool {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "1K", "2K", "4K":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *GoogleAdaptor) toImgContentResp(resp *genai.GenerateContentResponse) *dto.MediaResponse {
+	res := &dto.MediaResponse{}
+	if resp == nil {
+		return res
+	}
+
+	for _, cand := range resp.Candidates {
+		if cand == nil || cand.Content == nil {
+			continue
+		}
+		for _, part := range cand.Content.Parts {
+			if part == nil {
+				continue
+			}
+			if text := strings.TrimSpace(part.Text); text != "" {
+				res.Choices = append(res.Choices, dto.ChatChoice{
+					Message:      dto.Message{Role: cand.Content.Role, Content: text},
+					FinishReason: string(cand.FinishReason),
+				})
+				if res.Text == "" {
+					res.Text = text
+				}
+			}
+			if part.InlineData != nil && len(part.InlineData.Data) > 0 {
+				res.Data = append(res.Data, dto.ImageData{
+					B64JSON: base64.StdEncoding.EncodeToString(part.InlineData.Data),
+				})
+			}
+		}
+	}
+	return res
 }
 
 type googleStream struct {

@@ -827,7 +827,10 @@ func main() {
 
 ### 图像生成示例 (Google / Gemini)
 
-Google 适配器支持通过 `predict` 接口进行图像与视频生成。
+Google 适配器对不同模型使用不同接口：
+- `imagen-*` 图像模型走 `GenerateImages` / `predict`
+- `gemini-*` 原生图像生成模型走 `GenerateContent`，并通过 `responseModalities=["TEXT","IMAGE"]` 返回图像
+- 视频模型继续走 `GenerateVideos`
 
 ```go
 package main
