@@ -46,11 +46,18 @@ func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, r *dto.Me
 	}
 	res := &dto.MediaResponse{Usage: dto.Usage{PromptTokens: resp.Usage.PromptTokens, CompletionTokens: resp.Usage.CompletionTokens, TotalTokens: resp.Usage.TotalTokens}}
 	for _, c := range resp.Choices {
-		msg := ""
-		if c.Message.Content != nil && c.Message.Content.StringValue != nil {
-			msg = *c.Message.Content.StringValue
+		msg := dto.Message{Role: c.Message.Role}
+		if c.Message.Content != nil {
+			msg.Content = arkResponseText(c.Message.Content)
+			if msg.Content == "" && c.Message.Content.StringValue != nil {
+				msg.Content = *c.Message.Content.StringValue
+			}
+			if imageURL, detail := arkResponseFirstImage(c.Message.Content); imageURL != "" {
+				msg.ImageURL = imageURL
+				msg.ImageDetail = detail
+			}
 		}
-		res.Choices = append(res.Choices, dto.ChatChoice{Index: c.Index, Message: dto.Message{Role: c.Message.Role, Content: msg}, FinishReason: string(c.FinishReason)})
+		res.Choices = append(res.Choices, dto.ChatChoice{Index: c.Index, Message: msg, FinishReason: string(c.FinishReason)})
 	}
 	if len(res.Choices) > 0 {
 		res.Text = fmt.Sprint(res.Choices[0].Message.Content)
@@ -233,13 +240,7 @@ type arkFileURLPart struct {
 }
 
 func toArkChatMessageContent(m dto.Message) *arkChatMessageContent {
-	parts := make([]*arkChatMessageContentPart, 0, 4)
-	if text, ok := messageContentText(m.Content); ok && text != "" {
-		parts = append(parts, &arkChatMessageContentPart{
-			Type: "text",
-			Text: text,
-		})
-	}
+	parts := arkContentPartsFromValue(m.Content)
 	if m.ImageURL != "" {
 		parts = append(parts, &arkChatMessageContentPart{
 			Type: "image_url",
@@ -284,9 +285,248 @@ func messageContentText(v interface{}) (string, bool) {
 	switch text := v.(type) {
 	case string:
 		return text, true
+	case []interface{}, []map[string]interface{}:
+		return arkContentText(v), true
 	default:
 		return fmt.Sprint(v), true
 	}
+}
+
+func arkContentPartsFromValue(v interface{}) []*arkChatMessageContentPart {
+	switch content := v.(type) {
+	case nil:
+		return nil
+	case string:
+		if content == "" {
+			return nil
+		}
+		return []*arkChatMessageContentPart{{Type: "text", Text: content}}
+	case []map[string]interface{}:
+		parts := make([]*arkChatMessageContentPart, 0, len(content))
+		for _, item := range content {
+			parts = append(parts, arkContentPartsFromMap(item)...)
+		}
+		return parts
+	case []interface{}:
+		parts := make([]*arkChatMessageContentPart, 0, len(content))
+		for _, item := range content {
+			switch typed := item.(type) {
+			case map[string]interface{}:
+				parts = append(parts, arkContentPartsFromMap(typed)...)
+			case string:
+				if typed != "" {
+					parts = append(parts, &arkChatMessageContentPart{Type: "text", Text: typed})
+				}
+			}
+		}
+		return parts
+	case map[string]interface{}:
+		return arkContentPartsFromMap(content)
+	default:
+		if text := strings.TrimSpace(fmt.Sprint(v)); text != "" && text != "<nil>" {
+			return []*arkChatMessageContentPart{{Type: "text", Text: text}}
+		}
+		return nil
+	}
+}
+
+func arkContentPartsFromMap(item map[string]interface{}) []*arkChatMessageContentPart {
+	if len(item) == 0 {
+		return nil
+	}
+	partType, _ := item["type"].(string)
+	switch partType {
+	case "", "text":
+		if text, ok := item["text"].(string); ok && text != "" {
+			return []*arkChatMessageContentPart{{Type: "text", Text: text}}
+		}
+	case "image_url", "input_image":
+		if imageURL, detail, ok := arkMapImage(item); ok {
+			return []*arkChatMessageContentPart{{
+				Type:     "image_url",
+				ImageURL: &arkImageURLPart{URL: imageURL, Detail: detail},
+			}}
+		}
+	case "video_url", "input_video":
+		if videoURL, fps, ok := arkMapVideo(item); ok {
+			part := &arkChatMessageContentPart{
+				Type:     "video_url",
+				VideoURL: &arkVideoURLPart{URL: videoURL},
+			}
+			if fps != nil {
+				part.VideoURL.FPS = fps
+			}
+			return []*arkChatMessageContentPart{part}
+		}
+	case "file_url", "input_file":
+		if file, ok := arkMapFile(item); ok {
+			return []*arkChatMessageContentPart{{
+				Type:    "file_url",
+				FileURL: file,
+			}}
+		}
+	}
+
+	parts := make([]*arkChatMessageContentPart, 0, 4)
+	if text, ok := item["text"].(string); ok && text != "" {
+		parts = append(parts, &arkChatMessageContentPart{Type: "text", Text: text})
+	}
+	if imageURL, detail, ok := arkMapImage(item); ok {
+		parts = append(parts, &arkChatMessageContentPart{
+			Type: "image_url",
+			ImageURL: &arkImageURLPart{
+				URL:    imageURL,
+				Detail: detail,
+			},
+		})
+	}
+	if videoURL, fps, ok := arkMapVideo(item); ok {
+		part := &arkChatMessageContentPart{
+			Type:     "video_url",
+			VideoURL: &arkVideoURLPart{URL: videoURL},
+		}
+		if fps != nil {
+			part.VideoURL.FPS = fps
+		}
+		parts = append(parts, part)
+	}
+	if file, ok := arkMapFile(item); ok {
+		parts = append(parts, &arkChatMessageContentPart{
+			Type:    "file_url",
+			FileURL: file,
+		})
+	}
+	return parts
+}
+
+func arkMapImage(item map[string]interface{}) (url, detail string, ok bool) {
+	switch image := item["image_url"].(type) {
+	case string:
+		if image != "" {
+			return image, stringValue(item["detail"]), true
+		}
+	case map[string]interface{}:
+		url = stringValue(image["url"])
+		if url != "" {
+			return url, firstNonEmptyString(stringValue(image["detail"]), stringValue(item["detail"])), true
+		}
+	}
+	if url = stringValue(item["url"]); url != "" && (item["image_url"] != nil || item["type"] == "image_url" || item["type"] == "input_image") {
+		return url, stringValue(item["detail"]), true
+	}
+	return "", "", false
+}
+
+func arkMapVideo(item map[string]interface{}) (url string, fps *float64, ok bool) {
+	switch video := item["video_url"].(type) {
+	case string:
+		if video != "" {
+			return video, arkFPSValue(item["fps"]), true
+		}
+	case map[string]interface{}:
+		url = stringValue(video["url"])
+		if url != "" {
+			return url, arkFPSValue(video["fps"]), true
+		}
+	}
+	if url = stringValue(item["url"]); url != "" && (item["video_url"] != nil || item["type"] == "video_url" || item["type"] == "input_video") {
+		return url, arkFPSValue(item["fps"]), true
+	}
+	return "", nil, false
+}
+
+func arkMapFile(item map[string]interface{}) (*arkFileURLPart, bool) {
+	file := &arkFileURLPart{}
+	switch fileURL := item["file_url"].(type) {
+	case string:
+		file.URL = fileURL
+	case map[string]interface{}:
+		file.URL = stringValue(fileURL["url"])
+		file.FileID = stringValue(fileURL["file_id"])
+		file.FileName = firstNonEmptyString(stringValue(fileURL["file_name"]), stringValue(fileURL["filename"]))
+		file.Name = stringValue(fileURL["name"])
+	}
+	if file.URL == "" && item["type"] == "file_url" {
+		file.URL = stringValue(item["url"])
+	}
+	if file.FileID == "" {
+		file.FileID = stringValue(item["file_id"])
+	}
+	if file.FileName == "" {
+		file.FileName = firstNonEmptyString(stringValue(item["file_name"]), stringValue(item["filename"]))
+	}
+	if file.Name == "" {
+		file.Name = stringValue(item["name"])
+	}
+	if file.URL == "" && file.FileID == "" {
+		return nil, false
+	}
+	return file, true
+}
+
+func arkFPSValue(v interface{}) *float64 {
+	switch fps := v.(type) {
+	case float64:
+		return &fps
+	case float32:
+		value := float64(fps)
+		return &value
+	case int:
+		value := float64(fps)
+		return &value
+	case int64:
+		value := float64(fps)
+		return &value
+	default:
+		return nil
+	}
+}
+
+func arkContentText(v interface{}) string {
+	parts := arkContentPartsFromValue(v)
+	texts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part.Type == "text" && strings.TrimSpace(part.Text) != "" {
+			texts = append(texts, part.Text)
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
+func arkResponseText(content *model.ChatCompletionMessageContent) string {
+	if content == nil {
+		return ""
+	}
+	if content.StringValue != nil {
+		return *content.StringValue
+	}
+	if content.ListValue == nil {
+		return ""
+	}
+	texts := make([]string, 0, len(content.ListValue))
+	for _, part := range content.ListValue {
+		if part != nil && part.Type == model.ChatCompletionMessageContentPartTypeText && strings.TrimSpace(part.Text) != "" {
+			texts = append(texts, part.Text)
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
+func arkResponseFirstImage(content *model.ChatCompletionMessageContent) (url, detail string) {
+	if content == nil || content.ListValue == nil {
+		return "", ""
+	}
+	for _, part := range content.ListValue {
+		if part != nil && part.Type == model.ChatCompletionMessageContentPartTypeImageURL && part.ImageURL != nil && part.ImageURL.URL != "" {
+			return part.ImageURL.URL, string(part.ImageURL.Detail)
+		}
+	}
+	return "", ""
+}
+
+func stringValue(v interface{}) string {
+	s, _ := v.(string)
+	return s
 }
 
 func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {

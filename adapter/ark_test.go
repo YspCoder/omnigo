@@ -1,10 +1,14 @@
 package adapter
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/YspCoder/omnigo/dto"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 	"github.com/volcengine/volcengine-go-sdk/volcengine"
 )
 
@@ -111,6 +115,90 @@ func TestArkToChatReqIncludesFileIDPartWithoutText(t *testing.T) {
 	}
 }
 
+func TestArkToChatReqSupportsContentArrayWithImage(t *testing.T) {
+	adaptor := &ArkAdaptor{}
+	req := adaptor.toChatReq(&dto.MediaRequest{
+		Model: "doubao-1.5-vision-pro",
+		Messages: []dto.Message{
+			{
+				Role: "user",
+				Content: []map[string]interface{}{
+					{"type": "text", "text": "描述这张图"},
+					{"type": "image_url", "image_url": map[string]interface{}{
+						"url":    "https://example.com/cat.png",
+						"detail": "high",
+					}},
+				},
+			},
+		},
+	})
+
+	typed, ok := req.(*arkChatRequest)
+	if !ok {
+		t.Fatalf("req type = %T, want *arkChatRequest", req)
+	}
+	if len(typed.Messages) != 1 {
+		t.Fatalf("messages len = %d, want 1", len(typed.Messages))
+	}
+	content := typed.Messages[0].Content
+	if content == nil || len(content.ListValue) != 2 {
+		t.Fatalf("content = %#v, want 2 parts", content)
+	}
+	if content.ListValue[0].Type != "text" || content.ListValue[0].Text != "描述这张图" {
+		t.Fatalf("content.ListValue[0] = %#v, want text part", content.ListValue[0])
+	}
+	if content.ListValue[1].Type != "image_url" || content.ListValue[1].ImageURL == nil {
+		t.Fatalf("content.ListValue[1] = %#v, want image_url part", content.ListValue[1])
+	}
+	if content.ListValue[1].ImageURL.URL != "https://example.com/cat.png" {
+		t.Fatalf("image url = %q, want cat image", content.ListValue[1].ImageURL.URL)
+	}
+	if content.ListValue[1].ImageURL.Detail != "high" {
+		t.Fatalf("image detail = %q, want high", content.ListValue[1].ImageURL.Detail)
+	}
+}
+
+func TestArkChatExtractsTextFromListResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %q, want /chat/completions", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"id":"chat-1","object":"chat.completion","created":1,"model":"doubao-1.5-vision-pro","choices":[{"index":0,"message":{"role":"assistant","content":[{"type":"text","text":"图里是一只橘猫"},{"type":"image_url","image_url":{"url":"https://example.com/result.png","detail":"auto"}}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}`))
+	}))
+	defer server.Close()
+
+	resp, err := (&ArkAdaptor{}).Chat(context.Background(), &ProviderConfig{
+		APIKey:     "test",
+		Region:     "cn-beijing",
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
+	}, &dto.MediaRequest{
+		Model: "doubao-1.5-vision-pro",
+		Messages: []dto.Message{
+			{Role: "user", Content: "描述这张图"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Chat error = %v", err)
+	}
+	if resp.Text != "图里是一只橘猫" {
+		t.Fatalf("resp.Text = %q, want extracted text", resp.Text)
+	}
+	if len(resp.Choices) != 1 {
+		t.Fatalf("choices len = %d, want 1", len(resp.Choices))
+	}
+	msg := resp.Choices[0].Message
+	if msg.Content != "图里是一只橘猫" {
+		t.Fatalf("message content = %#v, want extracted text", msg.Content)
+	}
+	if msg.ImageURL != "https://example.com/result.png" {
+		t.Fatalf("message image_url = %q, want result image", msg.ImageURL)
+	}
+	if msg.ImageDetail != "auto" {
+		t.Fatalf("message image_detail = %q, want auto", msg.ImageDetail)
+	}
+}
+
 func TestArkToVidReqSupportsSeedanceDocumentFields(t *testing.T) {
 	adaptor := &ArkAdaptor{}
 	req := adaptor.toVidReq(&dto.MediaRequest{
@@ -123,16 +211,16 @@ func TestArkToVidReqSupportsSeedanceDocumentFields(t *testing.T) {
 			{Role: "user", Content: "生成一段短片"},
 		},
 		Extra: map[string]interface{}{
-			"callback_url":             "https://example.com/callback",
-			"return_last_frame":        true,
-			"service_tier":             "default",
-			"execution_expires_after":  172800,
-			"generate_audio":           true,
-			"draft":                    true,
-			"camera_fixed":             false,
-			"watermark":                false,
-			"frames":                   29,
-			"draft_task_id":            "cgt-draft-123",
+			"callback_url":            "https://example.com/callback",
+			"return_last_frame":       true,
+			"service_tier":            "default",
+			"execution_expires_after": 172800,
+			"generate_audio":          true,
+			"draft":                   true,
+			"camera_fixed":            false,
+			"watermark":               false,
+			"frames":                  29,
+			"draft_task_id":           "cgt-draft-123",
 		},
 	})
 
@@ -220,5 +308,19 @@ func TestInt64ToInt(t *testing.T) {
 	got := int64ToInt(volcengine.Int64(12))
 	if got != 12 {
 		t.Fatalf("int64ToInt = %d, want 12", got)
+	}
+}
+
+func TestArkResponseText(t *testing.T) {
+	content := &model.ChatCompletionMessageContent{
+		ListValue: []*model.ChatCompletionMessageContentPart{
+			{Type: model.ChatCompletionMessageContentPartTypeText, Text: "第一段"},
+			{Type: model.ChatCompletionMessageContentPartTypeImageURL},
+			{Type: model.ChatCompletionMessageContentPartTypeText, Text: "第二段"},
+		},
+	}
+
+	if got := arkResponseText(content); got != "第一段\n第二段" {
+		t.Fatalf("arkResponseText = %q, want joined text", got)
 	}
 }
