@@ -148,3 +148,62 @@ func TestGoogleToImgContentResp(t *testing.T) {
 		t.Fatalf("unexpected image payload: %q", resp.Data[0].B64JSON)
 	}
 }
+
+func TestGoogleVideoPayloadUsesInlineBytes(t *testing.T) {
+	adp := &GoogleAdaptor{}
+	raw := []byte("video-bytes")
+	url, b64JSON, mimeType := adp.googleVideoPayload(nil, nil, &genai.GenerateVideosResponse{
+		GeneratedVideos: []*genai.GeneratedVideo{
+			{
+				Video: &genai.Video{
+					URI:        "https://example.com/video.mp4",
+					VideoBytes: raw,
+					MIMEType:   "video/mp4",
+				},
+			},
+		},
+	})
+
+	if url != "https://example.com/video.mp4" {
+		t.Fatalf("unexpected url: %q", url)
+	}
+	if b64JSON != base64.StdEncoding.EncodeToString(raw) {
+		t.Fatalf("unexpected base64 payload: %q", b64JSON)
+	}
+	if mimeType != "video/mp4" {
+		t.Fatalf("unexpected mime type: %q", mimeType)
+	}
+}
+
+func TestGoogleToVidRespUsesVideoBase64(t *testing.T) {
+	adp := &GoogleAdaptor{}
+	raw := []byte("video-bytes")
+	resp := adp.toVidResp(&genai.GenerateVideosOperation{
+		Name: "op-1",
+		Done: true,
+		Response: &genai.GenerateVideosResponse{
+			GeneratedVideos: []*genai.GeneratedVideo{
+				{
+					Video: &genai.Video{
+						URI:        "https://example.com/video.mp4",
+						VideoBytes: raw,
+						MIMEType:   "video/mp4",
+					},
+				},
+			},
+		},
+	})
+
+	if resp.Status != "SUCCEEDED" {
+		t.Fatalf("unexpected status: %q", resp.Status)
+	}
+	if resp.Video.URL != "https://example.com/video.mp4" {
+		t.Fatalf("unexpected video url: %q", resp.Video.URL)
+	}
+	if resp.Video.B64JSON != base64.StdEncoding.EncodeToString(raw) {
+		t.Fatalf("unexpected video base64 payload: %q", resp.Video.B64JSON)
+	}
+	if resp.Video.MIMEType != "video/mp4" {
+		t.Fatalf("unexpected video mime type: %q", resp.Video.MIMEType)
+	}
+}

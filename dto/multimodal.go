@@ -86,7 +86,9 @@ type MediaResponse struct {
 	ErrorCode    string       `json:"code,omitempty"`
 	ErrorMessage string       `json:"message,omitempty"`
 	Video        struct {
-		URL string `json:"url,omitempty"`
+		URL      string `json:"url,omitempty"`
+		B64JSON  string `json:"b64_json,omitempty"`
+		MIMEType string `json:"mime_type,omitempty"`
 	} `json:"video,omitempty"`
 }
 
@@ -108,7 +110,9 @@ func (m MediaResponse) MarshalJSON() ([]byte, error) {
 		ErrorCode    string       `json:"code,omitempty"`
 		ErrorMessage string       `json:"message,omitempty"`
 		Video        *struct {
-			URL string `json:"url,omitempty"`
+			URL      string `json:"url,omitempty"`
+			B64JSON  string `json:"b64_json,omitempty"`
+			MIMEType string `json:"mime_type,omitempty"`
 		} `json:"video,omitempty"`
 	}
 
@@ -133,8 +137,16 @@ func (m MediaResponse) MarshalJSON() ([]byte, error) {
 	}
 	if m.Video.URL != "" {
 		out.Video = &struct {
-			URL string `json:"url,omitempty"`
-		}{URL: m.Video.URL}
+			URL      string `json:"url,omitempty"`
+			B64JSON  string `json:"b64_json,omitempty"`
+			MIMEType string `json:"mime_type,omitempty"`
+		}{URL: m.Video.URL, B64JSON: m.Video.B64JSON, MIMEType: m.Video.MIMEType}
+	} else if m.Video.B64JSON != "" {
+		out.Video = &struct {
+			URL      string `json:"url,omitempty"`
+			B64JSON  string `json:"b64_json,omitempty"`
+			MIMEType string `json:"mime_type,omitempty"`
+		}{B64JSON: m.Video.B64JSON, MIMEType: m.Video.MIMEType}
 	}
 	return json.Marshal(out)
 }
@@ -161,6 +173,8 @@ type TaskStatusOutput struct {
 	EndTime       string `json:"end_time,omitempty"`
 	URL           string `json:"url,omitempty"`
 	VideoURL      string `json:"video_url,omitempty"`
+	VideoB64JSON  string `json:"video_b64_json,omitempty"`
+	VideoMIMEType string `json:"video_mime_type,omitempty"`
 	LastFrameURL  string `json:"last_frame_url,omitempty"`
 	Resolution    string `json:"resolution,omitempty"`
 	Ratio         string `json:"ratio,omitempty"`

@@ -141,6 +141,8 @@ func (a *GoogleAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, 
 
 	status := "RUNNING"
 	videoURL := ""
+	videoB64JSON := ""
+	videoMIMEType := ""
 	code := ""
 	message := ""
 	if op.Done {
@@ -149,17 +151,19 @@ func (a *GoogleAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, 
 			code, message = mapErr(op.Error)
 		} else {
 			status = "SUCCEEDED"
-			videoURL = firstVideoURL(op.Response)
+			videoURL, videoB64JSON, videoMIMEType = a.googleVideoPayload(ctx, c, op.Response)
 		}
 	}
 
 	return &dto.TaskStatusResponse{
 		Output: dto.TaskStatusOutput{
-			TaskID:     op.Name,
-			TaskStatus: status,
-			VideoURL:   videoURL,
-			Code:       code,
-			Message:    message,
+			TaskID:        op.Name,
+			TaskStatus:    status,
+			VideoURL:      videoURL,
+			VideoB64JSON:  videoB64JSON,
+			VideoMIMEType: videoMIMEType,
+			Code:          code,
+			Message:       message,
 		},
 	}, nil
 }
@@ -278,20 +282,44 @@ func (a *GoogleAdaptor) toVidResp(op *genai.GenerateVideosOperation) *dto.MediaR
 		return res
 	}
 	res.Status = "SUCCEEDED"
-	res.Video.URL = firstVideoURL(op.Response)
+	res.Video.URL, res.Video.B64JSON, res.Video.MIMEType = a.googleVideoPayload(context.Background(), a.client, op.Response)
 	res.URL = res.Video.URL
 	return res
 }
 
-func firstVideoURL(resp *genai.GenerateVideosResponse) string {
+func firstGeneratedVideo(resp *genai.GenerateVideosResponse) *genai.GeneratedVideo {
 	if resp == nil || len(resp.GeneratedVideos) == 0 {
-		return ""
+		return nil
 	}
 	v := resp.GeneratedVideos[0]
 	if v == nil || v.Video == nil {
-		return ""
+		return nil
 	}
-	return v.Video.URI
+	return v
+}
+
+func (a *GoogleAdaptor) googleVideoPayload(ctx context.Context, c *genai.Client, resp *genai.GenerateVideosResponse) (url, b64JSON, mimeType string) {
+	v := firstGeneratedVideo(resp)
+	if v == nil || v.Video == nil {
+		return "", "", ""
+	}
+
+	url = v.Video.URI
+	mimeType = v.Video.MIMEType
+	if mimeType == "" {
+		mimeType = "video/mp4"
+	}
+
+	videoBytes := v.Video.VideoBytes
+	if len(videoBytes) == 0 && c != nil && c.ClientConfig().Backend != genai.BackendVertexAI {
+		if data, err := c.Files.Download(ctx, genai.NewDownloadURIFromGeneratedVideo(v), nil); err == nil {
+			videoBytes = data
+		}
+	}
+	if len(videoBytes) > 0 {
+		b64JSON = base64.StdEncoding.EncodeToString(videoBytes)
+	}
+	return url, b64JSON, mimeType
 }
 
 func mapErr(errMap map[string]any) (code, message string) {
