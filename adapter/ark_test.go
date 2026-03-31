@@ -296,6 +296,64 @@ func TestArkToVidReqSupportsReferenceImages(t *testing.T) {
 	}
 }
 
+func TestArkToVidReqSupportsReferenceFiles(t *testing.T) {
+	adaptor := &ArkAdaptor{}
+	req := adaptor.toVidReq(&dto.MediaRequest{
+		Model: "doubao-seedance-1-0-lite-i2v-250428",
+		Messages: []dto.Message{
+			{Role: "user", Content: "根据素材生成视频"},
+		},
+		Extra: map[string]interface{}{
+			"files": []interface{}{
+				map[string]interface{}{
+					"url":   "https://example.com/ref-image.png",
+					"type":  "image",
+					"index": 1,
+				},
+				map[string]interface{}{
+					"url":   "https://example.com/ref-video.mp4",
+					"type":  "video",
+					"index": 1,
+				},
+				map[string]interface{}{
+					"url":   "https://example.com/ref-audio.mp3",
+					"type":  "audio",
+					"index": 1,
+				},
+			},
+		},
+	})
+
+	if len(req.Content) != 2 {
+		t.Fatalf("content len = %d, want 2", len(req.Content))
+	}
+	if req.Content[1].Type != "image_url" || req.Content[1].ImageURL == nil {
+		t.Fatalf("content[1] = %#v, want image_url", req.Content[1])
+	}
+	if req.Content[1].Role == nil || *req.Content[1].Role != "reference_image" {
+		t.Fatalf("content[1].role = %v, want reference_image", req.Content[1].Role)
+	}
+
+	raw, ok := req.ExtraBody["content"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("extra content = %#v, want []map[string]interface{}", req.ExtraBody["content"])
+	}
+	if len(raw) != 4 {
+		t.Fatalf("extra content len = %d, want 4", len(raw))
+	}
+	if raw[1]["type"] != "image_url" || raw[1]["role"] != "reference_image" {
+		t.Fatalf("raw[1] = %#v, want reference_image", raw[1])
+	}
+	videoURL, ok := raw[2]["video_url"].(map[string]interface{})
+	if !ok || raw[2]["type"] != "video_url" || raw[2]["role"] != "reference_video" || videoURL["url"] != "https://example.com/ref-video.mp4" {
+		t.Fatalf("raw[2] = %#v, want reference_video", raw[2])
+	}
+	audioURL, ok := raw[3]["audio_url"].(map[string]interface{})
+	if !ok || raw[3]["type"] != "audio_url" || raw[3]["role"] != "reference_audio" || audioURL["url"] != "https://example.com/ref-audio.mp3" {
+		t.Fatalf("raw[3] = %#v, want reference_audio", raw[3])
+	}
+}
+
 func TestFormatUnixMillis(t *testing.T) {
 	ts := time.Date(2026, 3, 17, 12, 34, 56, 0, time.UTC).UnixMilli()
 	got := formatUnixMillis(ts)

@@ -581,6 +581,7 @@ func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
 
 func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGenerationTaskRequest {
 	content := make([]*model.CreateContentGenerationContentItem, 0, len(r.Messages))
+	customContent := make([]map[string]interface{}, 0, len(r.Messages))
 	hasImageInput := false
 	for _, message := range r.Messages {
 		text, ok := messageContentText(message.Content)
@@ -591,6 +592,10 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 			Type: model.ContentGenerationContentItemTypeText,
 			Text: volcengine.String(text),
 		})
+		customContent = append(customContent, map[string]interface{}{
+			"type": "text",
+			"text": text,
+		})
 	}
 
 	req := model.CreateContentGenerationTaskRequest{
@@ -599,25 +604,37 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 		Content:   content,
 		ExtraBody: make(model.ExtraBody),
 	}
-	appendImageContent := func(url, role string) {
+	appendCustomMediaContent := func(contentType, role, fieldName, url string) {
 		if url == "" {
 			return
 		}
-		hasImageInput = true
-		item := &model.CreateContentGenerationContentItem{
-			Type: model.ContentGenerationContentItemTypeImage,
-			ImageURL: &model.ImageURL{
-				URL: url,
+		if contentType == "image_url" {
+			hasImageInput = true
+			item := &model.CreateContentGenerationContentItem{
+				Type: model.ContentGenerationContentItemTypeImage,
+				ImageURL: &model.ImageURL{
+					URL: url,
+				},
+			}
+			if role != "" {
+				item.Role = volcengine.String(role)
+			}
+			req.Content = append(req.Content, item)
+		}
+		customItem := map[string]interface{}{
+			"type": contentType,
+			fieldName: map[string]interface{}{
+				"url": url,
 			},
 		}
 		if role != "" {
-			item.Role = volcengine.String(role)
+			customItem["role"] = role
 		}
-		req.Content = append(req.Content, item)
+		customContent = append(customContent, customItem)
 	}
 	appendReferenceImages := func(urls []string) {
 		for _, url := range urls {
-			appendImageContent(url, "reference_image")
+			appendCustomMediaContent("image_url", "reference_image", "image_url", url)
 		}
 	}
 	if r.Duration > 0 {
@@ -672,15 +689,15 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 			}
 		case "image":
 			if url, ok := contentImageURL(v); ok {
-				appendImageContent(url, "first_frame")
+				appendCustomMediaContent("image_url", "first_frame", "image_url", url)
 			}
 		case "images":
 			urls := contentImageURLs(v)
 			if len(urls) > 0 {
-				appendImageContent(urls[0], "first_frame")
+				appendCustomMediaContent("image_url", "first_frame", "image_url", urls[0])
 			}
 			if len(urls) > 1 {
-				appendImageContent(urls[1], "last_frame")
+				appendCustomMediaContent("image_url", "last_frame", "image_url", urls[1])
 			}
 		case "reference_image":
 			if url, ok := contentImageURL(v); ok {
@@ -689,11 +706,29 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 		case "reference_images":
 			urls := contentImageURLs(v)
 			appendReferenceImages(urls)
+		case "files":
+			files := contentReferenceFiles(v)
+			for _, file := range files {
+				switch file.Type {
+				case "image":
+					appendCustomMediaContent("image_url", "reference_image", "image_url", file.URL)
+				case "video":
+					appendCustomMediaContent("video_url", "reference_video", "video_url", file.URL)
+				case "audio":
+					appendCustomMediaContent("audio_url", "reference_audio", "audio_url", file.URL)
+				}
+			}
 		case "draft_task_id":
 			if id, ok := v.(string); ok && id != "" {
 				req.Content = append(req.Content, &model.CreateContentGenerationContentItem{
 					Type:      model.ContentGenerationContentItemTypeDraftTask,
 					DraftTask: &model.DraftTask{ID: id},
+				})
+				customContent = append(customContent, map[string]interface{}{
+					"type": "draft_task",
+					"draft_task": map[string]interface{}{
+						"id": id,
+					},
 				})
 			}
 		case "draft_task":
@@ -702,15 +737,91 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 					Type:      model.ContentGenerationContentItemTypeDraftTask,
 					DraftTask: &model.DraftTask{ID: id},
 				})
+				customContent = append(customContent, map[string]interface{}{
+					"type": "draft_task",
+					"draft_task": map[string]interface{}{
+						"id": id,
+					},
+				})
 			}
 		default:
 			req.ExtraBody[k] = v
 		}
 	}
+	if len(customContent) > 0 {
+		req.ExtraBody["content"] = customContent
+	}
 	if r.Resolution != "" && !hasImageInput {
 		req.Resolution = &r.Resolution
 	}
 	return req
+}
+
+type contentReferenceFile struct {
+	URL   string
+	Type  string
+	Index int
+}
+
+func contentReferenceFiles(v interface{}) []contentReferenceFile {
+	switch items := v.(type) {
+	case []interface{}:
+		out := make([]contentReferenceFile, 0, len(items))
+		for _, item := range items {
+			file, ok := contentReferenceFileFromValue(item)
+			if ok {
+				out = append(out, file)
+			}
+		}
+		return out
+	case []map[string]interface{}:
+		out := make([]contentReferenceFile, 0, len(items))
+		for _, item := range items {
+			file, ok := contentReferenceFileFromMap(item)
+			if ok {
+				out = append(out, file)
+			}
+		}
+		return out
+	default:
+		if file, ok := contentReferenceFileFromValue(v); ok {
+			return []contentReferenceFile{file}
+		}
+	}
+	return nil
+}
+
+func contentReferenceFileFromValue(v interface{}) (contentReferenceFile, bool) {
+	switch item := v.(type) {
+	case map[string]interface{}:
+		return contentReferenceFileFromMap(item)
+	case map[string]string:
+		mapped := make(map[string]interface{}, len(item))
+		for k, val := range item {
+			mapped[k] = val
+		}
+		return contentReferenceFileFromMap(mapped)
+	default:
+		return contentReferenceFile{}, false
+	}
+}
+
+func contentReferenceFileFromMap(item map[string]interface{}) (contentReferenceFile, bool) {
+	url := stringValue(item["url"])
+	typ := strings.ToLower(strings.TrimSpace(stringValue(item["type"])))
+	if url == "" || typ == "" {
+		return contentReferenceFile{}, false
+	}
+	switch typ {
+	case "image", "video", "audio":
+	default:
+		return contentReferenceFile{}, false
+	}
+	file := contentReferenceFile{URL: url, Type: typ}
+	if n, ok := int64Value(item["index"]); ok {
+		file.Index = int(n)
+	}
+	return file, true
 }
 
 func contentImageURLs(v interface{}) []string {
