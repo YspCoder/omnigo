@@ -37,7 +37,7 @@ func TestGoogleImageModelRouting(t *testing.T) {
 		want  bool
 	}{
 		{model: "gemini-3.1-flash-image-preview", want: true},
-		{model: "gemini-2.5-flash", want: true},
+		{model: "gemini-2.5-flash", want: false},
 		{model: "imagen-3.0-generate-001", want: false},
 	}
 
@@ -45,6 +45,34 @@ func TestGoogleImageModelRouting(t *testing.T) {
 		if got := isGoogleGenerateContentImageModel(tt.model); got != tt.want {
 			t.Fatalf("isGoogleGenerateContentImageModel(%q) = %v, want %v", tt.model, got, tt.want)
 		}
+	}
+}
+
+func TestGoogleToContentsIncludesExtraImages(t *testing.T) {
+	adp := &GoogleAdaptor{}
+	req := &dto.MediaRequest{
+		Messages: []dto.Message{{Role: "user", Content: "edit this image"}},
+		Extra: map[string]interface{}{
+			"image":  "https://example.com/a.png",
+			"images": []string{"https://example.com/b.jpg"},
+		},
+	}
+
+	contents := adp.toContents(req)
+	if len(contents) != 1 {
+		t.Fatalf("expected one content, got %d", len(contents))
+	}
+	if len(contents[0].Parts) != 3 {
+		t.Fatalf("expected one text part and two image parts, got %d", len(contents[0].Parts))
+	}
+	if contents[0].Parts[1].FileData == nil || contents[0].Parts[1].FileData.FileURI != "https://example.com/a.png" {
+		t.Fatalf("unexpected first image part: %#v", contents[0].Parts[1])
+	}
+	if contents[0].Parts[2].FileData == nil || contents[0].Parts[2].FileData.FileURI != "https://example.com/b.jpg" {
+		t.Fatalf("unexpected second image part: %#v", contents[0].Parts[2])
+	}
+	if contents[0].Parts[2].FileData.MIMEType != "image/jpeg" {
+		t.Fatalf("unexpected mime type: %q", contents[0].Parts[2].FileData.MIMEType)
 	}
 }
 

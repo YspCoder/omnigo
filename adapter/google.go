@@ -9,6 +9,7 @@ import (
 	"iter"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/YspCoder/omnigo/dto"
@@ -181,7 +182,17 @@ func (a *GoogleAdaptor) toContents(r *dto.MediaRequest) []*genai.Content {
 	messages := nonSystemMessages(r.Messages)
 	res := make([]*genai.Content, 0, len(messages))
 	for _, m := range messages {
-		res = append(res, &genai.Content{Role: m.Role, Parts: []*genai.Part{{Text: fmt.Sprint(m.Content)}}})
+		parts := make([]*genai.Part, 0, 1+len(googleImageInputs(r)))
+		if text := strings.TrimSpace(fmt.Sprint(m.Content)); text != "" {
+			parts = append(parts, &genai.Part{Text: text})
+		}
+		if m.Role == "user" {
+			parts = append(parts, googleImageParts(r)...)
+		}
+		if len(parts) == 0 {
+			continue
+		}
+		res = append(res, &genai.Content{Role: m.Role, Parts: parts})
 	}
 	return res
 }
@@ -341,7 +352,70 @@ func isGoogleGenerateContentImageModel(model string) bool {
 	if model == "" {
 		return false
 	}
-	return !strings.HasPrefix(model, "imagen-")
+	if strings.HasPrefix(model, "imagen-") {
+		return false
+	}
+	return strings.Contains(model, "image")
+}
+
+func googleImageParts(r *dto.MediaRequest) []*genai.Part {
+	urls := googleImageInputs(r)
+	if len(urls) == 0 {
+		return nil
+	}
+	parts := make([]*genai.Part, 0, len(urls))
+	for _, raw := range urls {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		parts = append(parts, genai.NewPartFromURI(raw, googleImageMIMEType(raw)))
+	}
+	return parts
+}
+
+func googleImageInputs(r *dto.MediaRequest) []string {
+	if r == nil {
+		return nil
+	}
+	out := make([]string, 0, 4)
+	appendURL := func(v string) {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	for _, msg := range r.Messages {
+		appendURL(msg.ImageURL)
+	}
+	appendURL(getStringExtra(r.Extra, "image"))
+	for _, item := range getStringSliceExtra(r.Extra, "images") {
+		appendURL(item)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func googleImageMIMEType(raw string) string {
+	if parsed, err := url.Parse(raw); err == nil {
+		raw = parsed.Path
+	}
+	switch strings.ToLower(filepath.Ext(raw)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	case ".heic":
+		return "image/heic"
+	case ".heif":
+		return "image/heif"
+	default:
+		return "image/png"
+	}
 }
 
 func normalizeGoogleImageShape(size, resolution string) (aspectRatio, imageSize string) {
