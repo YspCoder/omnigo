@@ -40,7 +40,7 @@ type Adaptor interface {
 	Media(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error)
 
 	// TaskStatus queries a background task status (mostly for video).
-	TaskStatus(ctx context.Context, config *ProviderConfig, taskID string) (*dto.TaskStatusResponse, error)
+	TaskStatus(ctx context.Context, config *ProviderConfig, taskID string, query ...map[string]string) (*dto.TaskStatusResponse, error)
 
 	// ListTasks queries a provider task list.
 	ListTasks(ctx context.Context, config *ProviderConfig, query map[string]string) (*dto.TaskListResponse, error)

@@ -20,7 +20,7 @@ type LLM interface {
 	Stream(ctx context.Context, prompt *Prompt, opts ...StreamOption) (dto.TokenStream, error)
 	Media(ctx context.Context, request *dto.MediaRequest) (*dto.MediaResponse, error)
 	StreamMedia(ctx context.Context, request *dto.MediaRequest) (dto.TokenStream, error)
-	TaskStatus(ctx context.Context, taskID string) (*dto.TaskStatusResponse, error)
+	TaskStatus(ctx context.Context, taskID string, query ...map[string]string) (*dto.TaskStatusResponse, error)
 	ListTasks(ctx context.Context, query map[string]string) (*dto.TaskListResponse, error)
 	SetOption(key string, value interface{})
 	SetLogLevel(level utils.LogLevel)
@@ -228,8 +228,8 @@ func (l *LLMImpl) textMediaUsesProviderMedia(request *dto.MediaRequest) bool {
 }
 
 // TaskStatus queries a provider task status.
-func (l *LLMImpl) TaskStatus(ctx context.Context, taskID string) (*dto.TaskStatusResponse, error) {
-	return l.relay.TaskStatus(ctx, l.adaptor, l.adaptorCfg, taskID)
+func (l *LLMImpl) TaskStatus(ctx context.Context, taskID string, query ...map[string]string) (*dto.TaskStatusResponse, error) {
+	return l.relay.TaskStatus(ctx, l.adaptor, l.adaptorCfg, taskID, query...)
 }
 
 func (l *LLMImpl) ListTasks(ctx context.Context, query map[string]string) (*dto.TaskListResponse, error) {

@@ -37,11 +37,11 @@ func (r *Relay) Media(ctx context.Context, adp adapter.Adaptor, config *adapter.
 }
 
 // TaskStatus queries a task status.
-func (r *Relay) TaskStatus(ctx context.Context, adp adapter.Adaptor, config *adapter.ProviderConfig, taskID string) (*dto.TaskStatusResponse, error) {
+func (r *Relay) TaskStatus(ctx context.Context, adp adapter.Adaptor, config *adapter.ProviderConfig, taskID string, query ...map[string]string) (*dto.TaskStatusResponse, error) {
 	if adp == nil {
 		return nil, fmt.Errorf("adaptor is required")
 	}
-	return adp.TaskStatus(ctx, config, taskID)
+	return adp.TaskStatus(ctx, config, taskID, query...)
 }
 
 // ListTasks queries a provider task list.

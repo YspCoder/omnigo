@@ -74,7 +74,7 @@ func (a *AnthropicAdaptor) Media(ctx context.Context, config *ProviderConfig, re
 	return nil, fmt.Errorf("media generation not supported by Anthropic")
 }
 
-func (a *AnthropicAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string) (*dto.TaskStatusResponse, error) {
+func (a *AnthropicAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string, _ ...map[string]string) (*dto.TaskStatusResponse, error) {
 	return nil, fmt.Errorf("task status not supported by Anthropic")
 }
 

@@ -180,7 +180,7 @@ func (a *ViduAdaptor) StreamMedia(ctx context.Context, cfg *ProviderConfig, r *d
 	return &viduPollingStream{adaptor: a, cfg: cfg, taskID: resp.TaskID, last: resp.Status}, nil
 }
 
-func (a *ViduAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, taskID string) (*dto.TaskStatusResponse, error) {
+func (a *ViduAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, taskID string, _ ...map[string]string) (*dto.TaskStatusResponse, error) {
 	var out viduTaskResponse
 	if err := a.doJSON(ctx, cfg, http.MethodGet, "/ent/v2/tasks/"+taskID+"/creations", nil, &out); err != nil {
 		return nil, err

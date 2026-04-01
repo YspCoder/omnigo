@@ -164,7 +164,7 @@ func (s stubAdaptor) Media(_ context.Context, _ *adapter.ProviderConfig, _ *dto.
 	return s.media, nil
 }
 
-func (s stubAdaptor) TaskStatus(_ context.Context, _ *adapter.ProviderConfig, _ string) (*dto.TaskStatusResponse, error) {
+func (s stubAdaptor) TaskStatus(_ context.Context, _ *adapter.ProviderConfig, _ string, _ ...map[string]string) (*dto.TaskStatusResponse, error) {
 	return nil, nil
 }
 

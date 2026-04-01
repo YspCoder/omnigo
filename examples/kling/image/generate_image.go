@@ -58,8 +58,13 @@ func main() {
 	}
 
 	fmt.Printf("Task submitted: task_id=%s status=%s\n", resp.TaskID, resp.Status)
+	statusQuery := map[string]string{
+		"media_type":      "image",
+		"generation_type": "text",
+		"model":           req.Model,
+	}
 	for {
-		status, err := llm.TaskStatus(ctx, resp.TaskID)
+		status, err := llm.TaskStatus(ctx, resp.TaskID, statusQuery)
 		if err != nil {
 			log.Fatalf("query task status failed: %v", err)
 		}

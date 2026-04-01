@@ -109,7 +109,7 @@ func (a *ArkAdaptor) StreamMedia(ctx context.Context, cfg *ProviderConfig, r *dt
 	return &arkVidStream{c, resp.ID, ""}, nil
 }
 
-func (a *ArkAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, id string) (*dto.TaskStatusResponse, error) {
+func (a *ArkAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, id string, _ ...map[string]string) (*dto.TaskStatusResponse, error) {
 	resp, err := a.getClient(cfg).GetContentGenerationTask(ctx, model.GetContentGenerationTaskRequest{ID: id})
 	if err != nil {
 		return nil, err

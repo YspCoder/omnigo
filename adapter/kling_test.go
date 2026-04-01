@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/YspCoder/omnigo/dto"
@@ -155,5 +156,47 @@ func TestKlingTaskStatusFallsBackAcrossEndpoints(t *testing.T) {
 	}
 	if resp.Output.VideoURL != "https://cdn.example.com/video.mp4" {
 		t.Fatalf("video url = %q, want parsed url", resp.Output.VideoURL)
+	}
+}
+
+func TestKlingTaskStatusUsesQueryToTargetSingleEndpoint(t *testing.T) {
+	var textCalls atomic.Int32
+	var imageCalls atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/videos/text2video/task-123":
+			textCalls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","request_id":"req-3","data":{"task_id":"task-123","task_status":"succeed","task_result":{"videos":[{"id":"vid-1","url":"https://cdn.example.com/video.mp4"}]}}}`))
+		case "/v1/videos/image2video/task-123":
+			imageCalls.Add(1)
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	adaptor := &KlingAdaptor{}
+	resp, err := adaptor.TaskStatus(context.Background(), &ProviderConfig{
+		APIKey:  "secret",
+		BaseURL: server.URL,
+	}, "task-123", map[string]string{
+		"media_type":      "video",
+		"generation_type": "text",
+		"model":           "kling-v2-6",
+	})
+	if err != nil {
+		t.Fatalf("TaskStatus error = %v", err)
+	}
+	if resp.Output.TaskStatus != "succeed" {
+		t.Fatalf("task status = %q, want succeed", resp.Output.TaskStatus)
+	}
+	if textCalls.Load() != 1 {
+		t.Fatalf("text endpoint calls = %d, want 1", textCalls.Load())
+	}
+	if imageCalls.Load() != 0 {
+		t.Fatalf("image endpoint calls = %d, want 0", imageCalls.Load())
 	}
 }

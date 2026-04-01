@@ -130,7 +130,7 @@ func (a *GoogleAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.M
 	}
 }
 
-func (a *GoogleAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, id string) (*dto.TaskStatusResponse, error) {
+func (a *GoogleAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, id string, _ ...map[string]string) (*dto.TaskStatusResponse, error) {
 	c, err := a.getClient(ctx, config)
 	if err != nil {
 		return nil, err

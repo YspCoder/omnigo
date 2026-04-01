@@ -212,17 +212,15 @@ func (a *KlingAdaptor) StreamMedia(ctx context.Context, cfg *ProviderConfig, r *
 	return &klingPollingStream{adaptor: a, cfg: cfg, taskID: resp.TaskID, last: resp.Status}, nil
 }
 
-func (a *KlingAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, taskID string) (*dto.TaskStatusResponse, error) {
+func (a *KlingAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, taskID string, query ...map[string]string) (*dto.TaskStatusResponse, error) {
+	if mode := resolveKlingTaskStatusMode(firstQueryMap(query)); mode != "" {
+		return a.taskStatusForMode(ctx, cfg, taskID, mode)
+	}
+
 	var lastErr error
 	for _, mode := range klingTaskModes {
-		endpoint := klingModeEndpoint[mode] + "/" + url.PathEscape(taskID)
-		var env klingEnvelope
-		status, err := a.doJSONWithStatus(ctx, cfg, http.MethodGet, endpoint, nil, &env)
+		resp, status, err := a.taskStatusForModeWithStatus(ctx, cfg, taskID, mode)
 		if err == nil {
-			resp := klingTaskStatusFromEnvelope(taskID, &env)
-			if resp.Output.TaskID == "" {
-				resp.Output.TaskID = taskID
-			}
 			return resp, nil
 		}
 		if status == http.StatusNotFound || status == http.StatusBadRequest {
@@ -235,6 +233,30 @@ func (a *KlingAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, task
 		return nil, lastErr
 	}
 	return nil, fmt.Errorf("kling task status not found for task id: %s", taskID)
+}
+
+func (a *KlingAdaptor) taskStatusForMode(ctx context.Context, cfg *ProviderConfig, taskID, mode string) (*dto.TaskStatusResponse, error) {
+	resp, _, err := a.taskStatusForModeWithStatus(ctx, cfg, taskID, mode)
+	return resp, err
+}
+
+func (a *KlingAdaptor) taskStatusForModeWithStatus(ctx context.Context, cfg *ProviderConfig, taskID, mode string) (*dto.TaskStatusResponse, int, error) {
+	endpoint, ok := klingModeEndpoint[mode]
+	if !ok {
+		return nil, 0, fmt.Errorf("unsupported kling task mode: %s", mode)
+	}
+
+	var env klingEnvelope
+	status, err := a.doJSONWithStatus(ctx, cfg, http.MethodGet, endpoint+"/"+url.PathEscape(taskID), nil, &env)
+	if err != nil {
+		return nil, status, err
+	}
+
+	resp := klingTaskStatusFromEnvelope(taskID, &env)
+	if resp.Output.TaskID == "" {
+		resp.Output.TaskID = taskID
+	}
+	return resp, status, nil
 }
 
 func (a *KlingAdaptor) ListTasks(ctx context.Context, cfg *ProviderConfig, query map[string]string) (*dto.TaskListResponse, error) {
@@ -450,6 +472,111 @@ func inferKlingDedicatedModeFromModel(model string) string {
 	default:
 		return ""
 	}
+}
+
+func resolveKlingTaskStatusMode(query map[string]string) string {
+	if len(query) == 0 {
+		return ""
+	}
+
+	for _, key := range []string{"mode", "task_type", "endpoint"} {
+		if mode := normalizeKlingMode(query[key]); mode != "" {
+			return mode
+		}
+	}
+
+	model := strings.TrimSpace(strings.ToLower(query["model"]))
+	if mode := inferKlingDedicatedModeFromModel(model); mode != "" {
+		return mode
+	}
+
+	mediaType := normalizeKlingStatusMediaType(firstNonEmptyString(
+		query["media_type"],
+		query["type"],
+		query["kind"],
+	))
+	sourceType := normalizeKlingStatusSourceType(firstNonEmptyString(
+		query["generation_type"],
+		query["source_type"],
+		query["input_type"],
+		query["source"],
+	))
+
+	switch mediaType {
+	case "video":
+		switch sourceType {
+		case "text":
+			return klingModeTextToVideo
+		case "image":
+			return klingModeImageToVideo
+		case "multi-image":
+			return klingModeMultiImageToVideo
+		case "omni":
+			return klingModeOmniVideo
+		}
+	case "image":
+		switch sourceType {
+		case "text":
+			return klingModeImageGeneration
+		case "image":
+			return klingModeMultiImageToImage
+		case "omni":
+			return klingModeOmniImage
+		}
+	case "audio":
+		switch sourceType {
+		case "text":
+			if strings.Contains(model, "tts") {
+				return klingModeTTS
+			}
+			return klingModeTextToAudio
+		case "video":
+			return klingModeVideoToAudio
+		case "voice":
+			return klingModeCustomVoices
+		}
+	}
+
+	return ""
+}
+
+func normalizeKlingStatusMediaType(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "video", "videos":
+		return "video"
+	case "image", "images":
+		return "image"
+	case "audio", "audios":
+		return "audio"
+	default:
+		return ""
+	}
+}
+
+func normalizeKlingStatusSourceType(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "text", "text-to-video", "text2video", "text-to-image", "text2image", "image-generation", "text-to-audio", "text2audio", "tts":
+		return "text"
+	case "image", "image-to-video", "image2video", "image-to-image", "image2image":
+		return "image"
+	case "multi-image", "multi-image-to-video", "multi-image2video", "multi-image-to-image", "multi-image2image":
+		return "multi-image"
+	case "video", "video-to-audio", "video2audio":
+		return "video"
+	case "voice", "custom-voices", "voice-clone":
+		return "voice"
+	case "omni", "omni-video", "omni-image":
+		return "omni"
+	default:
+		return ""
+	}
+}
+
+func firstQueryMap(query []map[string]string) map[string]string {
+	if len(query) == 0 {
+		return nil
+	}
+	return query[0]
 }
 
 func isKnownKlingVideoModel(model string) bool {

@@ -431,7 +431,7 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 	}
 }
 
-func (a *OpenAIAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string) (*dto.TaskStatusResponse, error) {
+func (a *OpenAIAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string, _ ...map[string]string) (*dto.TaskStatusResponse, error) {
 	return nil, fmt.Errorf("task status not supported by OpenAI")
 }
 

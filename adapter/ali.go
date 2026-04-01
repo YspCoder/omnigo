@@ -221,7 +221,7 @@ func (a *AliAdaptor) Media(ctx context.Context, config *ProviderConfig, request 
 	}
 }
 
-func (a *AliAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string) (*dto.TaskStatusResponse, error) {
+func (a *AliAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string, _ ...map[string]string) (*dto.TaskStatusResponse, error) {
 	if strings.TrimSpace(taskID) == "" {
 		return nil, fmt.Errorf("task id is required")
 	}
