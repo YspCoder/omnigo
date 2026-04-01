@@ -632,7 +632,7 @@ func (a *ViduAdaptor) doJSON(ctx context.Context, cfg *ProviderConfig, method, p
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Token "+cfg.APIKey)
+	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 	for key, value := range cfg.Headers {
 		req.Header.Set(key, value)
