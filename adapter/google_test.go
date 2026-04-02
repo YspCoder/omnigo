@@ -1,7 +1,10 @@
 package adapter
 
 import (
+	"context"
 	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/YspCoder/omnigo/dto"
@@ -50,29 +53,143 @@ func TestGoogleImageModelRouting(t *testing.T) {
 
 func TestGoogleToContentsIncludesExtraImages(t *testing.T) {
 	adp := &GoogleAdaptor{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/a.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte("png-a"))
+		case "/b.jpg":
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("jpg-b"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
 	req := &dto.MediaRequest{
 		Messages: []dto.Message{{Role: "user", Content: "edit this image"}},
 		Extra: map[string]interface{}{
-			"image":  "https://example.com/a.png",
-			"images": []string{"https://example.com/b.jpg"},
+			"image":  server.URL + "/a.png",
+			"images": []string{server.URL + "/b.jpg"},
 		},
 	}
 
-	contents := adp.toContents(req)
+	contents, err := adp.toContents(context.Background(), nil, req)
+	if err != nil {
+		t.Fatalf("toContents() error = %v", err)
+	}
 	if len(contents) != 1 {
 		t.Fatalf("expected one content, got %d", len(contents))
 	}
 	if len(contents[0].Parts) != 3 {
 		t.Fatalf("expected one text part and two image parts, got %d", len(contents[0].Parts))
 	}
-	if contents[0].Parts[1].FileData == nil || contents[0].Parts[1].FileData.FileURI != "https://example.com/a.png" {
+	if contents[0].Parts[1].InlineData == nil || string(contents[0].Parts[1].InlineData.Data) != "png-a" {
 		t.Fatalf("unexpected first image part: %#v", contents[0].Parts[1])
 	}
-	if contents[0].Parts[2].FileData == nil || contents[0].Parts[2].FileData.FileURI != "https://example.com/b.jpg" {
+	if contents[0].Parts[2].InlineData == nil || string(contents[0].Parts[2].InlineData.Data) != "jpg-b" {
 		t.Fatalf("unexpected second image part: %#v", contents[0].Parts[2])
 	}
-	if contents[0].Parts[2].FileData.MIMEType != "image/jpeg" {
-		t.Fatalf("unexpected mime type: %q", contents[0].Parts[2].FileData.MIMEType)
+	if contents[0].Parts[2].InlineData.MIMEType != "image/jpeg" {
+		t.Fatalf("unexpected mime type: %q", contents[0].Parts[2].InlineData.MIMEType)
+	}
+}
+
+func TestGoogleToContentsOnlyAppendsRequestLevelImagesToLastUserMessage(t *testing.T) {
+	adp := &GoogleAdaptor{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte(r.URL.Path))
+	}))
+	defer server.Close()
+
+	req := &dto.MediaRequest{
+		Messages: []dto.Message{
+			{Role: "user", Content: "first", ImageURL: server.URL + "/first.png"},
+			{Role: "assistant", Content: "noted"},
+			{Role: "user", Content: "second", ImageURL: server.URL + "/second.jpg"},
+		},
+		Extra: map[string]interface{}{
+			"image":  server.URL + "/extra.png",
+			"images": []string{server.URL + "/final.webp"},
+		},
+	}
+
+	contents, err := adp.toContents(context.Background(), nil, req)
+	if err != nil {
+		t.Fatalf("toContents() error = %v", err)
+	}
+	if len(contents) != 3 {
+		t.Fatalf("expected three contents, got %d", len(contents))
+	}
+	if len(contents[0].Parts) != 2 {
+		t.Fatalf("expected first user message to keep only its own image, got %d parts", len(contents[0].Parts))
+	}
+	if got := string(contents[0].Parts[1].InlineData.Data); got != "/first.png" {
+		t.Fatalf("unexpected first user image payload: %q", got)
+	}
+	if len(contents[2].Parts) != 4 {
+		t.Fatalf("expected last user message to include text, own image, and request-level images, got %d parts", len(contents[2].Parts))
+	}
+	if got := string(contents[2].Parts[1].InlineData.Data); got != "/second.jpg" {
+		t.Fatalf("unexpected second user image payload: %q", got)
+	}
+	if got := string(contents[2].Parts[2].InlineData.Data); got != "/extra.png" {
+		t.Fatalf("unexpected extra image payload: %q", got)
+	}
+	if got := string(contents[2].Parts[3].InlineData.Data); got != "/final.webp" {
+		t.Fatalf("unexpected final image payload: %q", got)
+	}
+}
+
+func TestGoogleToMediaPromptContentsIncludesPromptAndImages(t *testing.T) {
+	adp := &GoogleAdaptor{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/source.jpeg":
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("source"))
+		case "/reference.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte("reference"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	req := &dto.MediaRequest{
+		Messages: []dto.Message{
+			{Role: "system", Content: "preserve composition"},
+			{Role: "user", Content: "turn this into cyberpunk", ImageURL: server.URL + "/source.jpeg"},
+		},
+		Extra: map[string]interface{}{
+			"images": []string{server.URL + "/reference.png"},
+		},
+	}
+
+	contents, err := adp.toMediaPromptContents(context.Background(), nil, req)
+	if err != nil {
+		t.Fatalf("toMediaPromptContents() error = %v", err)
+	}
+	if len(contents) != 1 {
+		t.Fatalf("expected one content, got %d", len(contents))
+	}
+	if len(contents[0].Parts) != 3 {
+		t.Fatalf("expected prompt text plus two image parts, got %d", len(contents[0].Parts))
+	}
+	if got := contents[0].Parts[0].Text; got != "preserve composition\n\nturn this into cyberpunk" {
+		t.Fatalf("unexpected prompt text: %q", got)
+	}
+	if got := string(contents[0].Parts[1].InlineData.Data); got != "source" {
+		t.Fatalf("unexpected source image payload: %q", got)
+	}
+	if got := string(contents[0].Parts[2].InlineData.Data); got != "reference" {
+		t.Fatalf("unexpected reference image payload: %q", got)
+	}
+	if got := contents[0].Parts[1].InlineData.MIMEType; got != "image/jpeg" {
+		t.Fatalf("unexpected source image mime: %q", got)
 	}
 }
 
