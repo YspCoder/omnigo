@@ -341,11 +341,12 @@ func (a *KlingAdaptor) resolveMode(r *dto.MediaRequest) (string, string, error) 
 
 	switch r.Type {
 	case dto.MediaTypeVideo:
+		images := klingImageInputs(r)
 		switch {
 		case r.Extra["session_id"] != nil || r.Extra["face_choose"] != nil:
 			return klingModeLipSync, klingModeEndpoint[klingModeLipSync], nil
-		case klingFirstImageURL(r.Messages) != "" || klingFirstVideoURL(r.Messages) != "":
-			if len(allImageURLs(r.Messages)) > 1 || r.Extra["image_list"] != nil {
+		case len(images) > 0 || klingFirstVideoURL(r.Messages) != "":
+			if len(images) > 1 || r.Extra["image_list"] != nil {
 				return klingModeMultiImageToVideo, klingModeEndpoint[klingModeMultiImageToVideo], nil
 			}
 			return klingModeImageToVideo, klingModeEndpoint[klingModeImageToVideo], nil
@@ -374,7 +375,7 @@ func (a *KlingAdaptor) resolveMode(r *dto.MediaRequest) (string, string, error) 
 		switch {
 		case r.Extra["element_list"] != nil || r.Extra["image_list"] != nil:
 			return klingModeOmniImage, klingModeEndpoint[klingModeOmniImage], nil
-		case r.Extra["subject_image_list"] != nil || r.Extra["scene_image"] != nil || r.Extra["style_image"] != nil:
+		case r.Extra["subject_image_list"] != nil || r.Extra["scene_image"] != nil || r.Extra["style_image"] != nil || len(klingImageInputs(r)) > 1:
 			return klingModeMultiImageToImage, klingModeEndpoint[klingModeMultiImageToImage], nil
 		default:
 			return klingModeImageGeneration, klingModeEndpoint[klingModeImageGeneration], nil
@@ -663,7 +664,7 @@ func (a *KlingAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[strin
 
 	switch mode {
 	case klingModeImageToVideo:
-		images := allImageURLs(r.Messages)
+		images := klingImageInputs(r)
 		if _, ok := payload["image"]; !ok && len(images) > 0 {
 			payload["image"] = images[0]
 		}
@@ -672,28 +673,29 @@ func (a *KlingAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[strin
 		}
 	case klingModeMultiImageToVideo:
 		if _, ok := payload["image_list"]; !ok {
-			payload["image_list"] = wrapImages(allImageURLs(r.Messages), "image")
+			payload["image_list"] = wrapImages(klingImageInputs(r), "image")
 		}
 	case klingModeOmniVideo:
 		if _, ok := payload["image_list"]; !ok {
-			payload["image_list"] = wrapImages(allImageURLs(r.Messages), "image_url")
+			payload["image_list"] = wrapImages(klingImageInputs(r), "image_url")
 		}
 		if _, ok := payload["video_list"]; !ok {
 			payload["video_list"] = wrapVideos(allVideoURLs(r.Messages))
 		}
 	case klingModeOmniImage:
 		if _, ok := payload["image_list"]; !ok {
-			payload["image_list"] = wrapImages(allImageURLs(r.Messages), "image")
+			payload["image_list"] = wrapImages(klingImageInputs(r), "image")
 		}
 	case klingModeImageGeneration:
 		if _, ok := payload["image"]; !ok {
-			if image := klingFirstImageURL(r.Messages); image != "" {
-				payload["image"] = image
+			images := klingImageInputs(r)
+			if len(images) > 0 {
+				payload["image"] = images[0]
 			}
 		}
 	case klingModeMultiImageToImage:
 		if _, ok := payload["subject_image_list"]; !ok {
-			payload["subject_image_list"] = wrapImages(allImageURLs(r.Messages), "subject_image")
+			payload["subject_image_list"] = wrapImages(klingImageInputs(r), "subject_image")
 		}
 	}
 
@@ -982,6 +984,44 @@ func allImageURLs(messages []dto.Message) []string {
 		if message.ImageURL != "" {
 			out = append(out, message.ImageURL)
 		}
+	}
+	return out
+}
+
+func klingImageInputs(r *dto.MediaRequest) []string {
+	if r == nil {
+		return nil
+	}
+
+	out := make([]string, 0, 6)
+	seen := make(map[string]struct{}, 6)
+	appendURL := func(raw string) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return
+		}
+		if _, ok := seen[raw]; ok {
+			return
+		}
+		seen[raw] = struct{}{}
+		out = append(out, raw)
+	}
+
+	for _, imageURL := range allImageURLs(r.Messages) {
+		appendURL(imageURL)
+	}
+	appendURL(getStringExtra(r.Extra, "image"))
+	for _, imageURL := range getStringSliceExtra(r.Extra, "images") {
+		appendURL(imageURL)
+	}
+	for _, file := range contentReferenceFiles(r.Extra["files"]) {
+		if file.Type == "image" {
+			appendURL(file.URL)
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

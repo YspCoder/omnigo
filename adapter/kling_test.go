@@ -88,6 +88,97 @@ func TestKlingResolveModeUsesModelInference(t *testing.T) {
 	}
 }
 
+func TestKlingResolveModeUsesExtraImagesForVideo(t *testing.T) {
+	adaptor := &KlingAdaptor{}
+
+	mode, _, err := adaptor.resolveMode(&dto.MediaRequest{
+		Type:  dto.MediaTypeVideo,
+		Model: "kling-v2-6",
+		Extra: map[string]interface{}{
+			"images": []string{"https://example.com/ref.png"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolveMode video with images error = %v", err)
+	}
+	if mode != klingModeImageToVideo {
+		t.Fatalf("video mode = %q, want %q", mode, klingModeImageToVideo)
+	}
+}
+
+func TestKlingResolveModeUsesFilesForMultiImageVideo(t *testing.T) {
+	adaptor := &KlingAdaptor{}
+
+	mode, _, err := adaptor.resolveMode(&dto.MediaRequest{
+		Type:  dto.MediaTypeVideo,
+		Model: "kling-v2-6",
+		Extra: map[string]interface{}{
+			"files": []interface{}{
+				map[string]interface{}{"url": "https://example.com/a.png", "type": "image"},
+				map[string]interface{}{"url": "https://example.com/b.png", "type": "image"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolveMode video with files error = %v", err)
+	}
+	if mode != klingModeMultiImageToVideo {
+		t.Fatalf("video mode = %q, want %q", mode, klingModeMultiImageToVideo)
+	}
+}
+
+func TestKlingBuildPayloadUsesExtraImages(t *testing.T) {
+	adaptor := &KlingAdaptor{}
+	req := &dto.MediaRequest{
+		Type:  dto.MediaTypeVideo,
+		Model: "kling-v2-6",
+		Extra: map[string]interface{}{
+			"images": []string{"https://example.com/ref.png"},
+		},
+	}
+
+	mode, _, err := adaptor.resolveMode(req)
+	if err != nil {
+		t.Fatalf("resolveMode error = %v", err)
+	}
+	payload, err := adaptor.buildPayload(mode, req)
+	if err != nil {
+		t.Fatalf("buildPayload error = %v", err)
+	}
+	if payload["image"] != "https://example.com/ref.png" {
+		t.Fatalf("image = %#v, want propagated extra image", payload["image"])
+	}
+}
+
+func TestKlingBuildPayloadUsesFilesForImageGeneration(t *testing.T) {
+	adaptor := &KlingAdaptor{}
+	req := &dto.MediaRequest{
+		Type:  dto.MediaTypeImage,
+		Model: "kling-v2-new",
+		Extra: map[string]interface{}{
+			"files": []interface{}{
+				map[string]interface{}{"url": "https://example.com/ref.png", "type": "image"},
+				map[string]interface{}{"url": "https://example.com/voice.mp3", "type": "audio"},
+			},
+		},
+	}
+
+	mode, _, err := adaptor.resolveMode(req)
+	if err != nil {
+		t.Fatalf("resolveMode error = %v", err)
+	}
+	if mode != klingModeImageGeneration {
+		t.Fatalf("mode = %q, want %q", mode, klingModeImageGeneration)
+	}
+	payload, err := adaptor.buildPayload(mode, req)
+	if err != nil {
+		t.Fatalf("buildPayload error = %v", err)
+	}
+	if payload["image"] != "https://example.com/ref.png" {
+		t.Fatalf("image = %#v, want propagated file image", payload["image"])
+	}
+}
+
 func TestKlingMediaParsesTTSDirectResult(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/audio/tts" {
