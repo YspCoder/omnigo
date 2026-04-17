@@ -6,12 +6,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
+	"os"
+	pathpkg "path"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/YspCoder/omnigo/dto"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
+	arkfile "github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/file"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/utils"
 	"github.com/volcengine/volcengine-go-sdk/volcengine"
 )
@@ -40,7 +47,11 @@ func (a *ArkAdaptor) getClient(config *ProviderConfig) *arkruntime.Client {
 }
 
 func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, r *dto.MediaRequest) (*dto.MediaResponse, error) {
-	resp, err := a.getClient(config).CreateChatCompletion(ctx, a.toChatReq(r))
+	chatReq, err := a.prepareChatReq(ctx, config, r)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.getClient(config).CreateChatCompletion(ctx, chatReq)
 	if err != nil {
 		return nil, err
 	}
@@ -66,11 +77,211 @@ func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, r *dto.Me
 }
 
 func (a *ArkAdaptor) Stream(ctx context.Context, config *ProviderConfig, r *dto.MediaRequest) (dto.TokenStream, error) {
-	s, err := a.getClient(config).CreateChatCompletionStream(ctx, a.toChatReq(r))
+	chatReq, err := a.prepareChatReq(ctx, config, r)
+	if err != nil {
+		return nil, err
+	}
+	s, err := a.getClient(config).CreateChatCompletionStream(ctx, chatReq)
 	if err != nil {
 		return nil, err
 	}
 	return &arkStream{s}, nil
+}
+
+type arkUploadedFile struct {
+	ID       string
+	FileName string
+}
+
+type arkNamedReader struct {
+	io.Reader
+	name string
+}
+
+func (r *arkNamedReader) Filename() string {
+	return r.name
+}
+
+func (a *ArkAdaptor) prepareChatReq(ctx context.Context, config *ProviderConfig, r *dto.MediaRequest) (model.ChatRequest, error) {
+	req := a.toChatReq(r)
+	typed, ok := req.(*arkChatRequest)
+	if !ok || typed == nil || len(typed.Messages) == 0 {
+		return req, nil
+	}
+	if err := a.uploadFilesForChatParts(ctx, config, typed); err != nil {
+		return nil, err
+	}
+	return typed, nil
+}
+
+func (a *ArkAdaptor) uploadFilesForChatParts(ctx context.Context, config *ProviderConfig, req *arkChatRequest) error {
+	cached := make(map[string]arkUploadedFile)
+	client := a.getClient(config)
+	for _, message := range req.Messages {
+		if message == nil || message.Content == nil || len(message.Content.ListValue) == 0 {
+			continue
+		}
+		for _, part := range message.Content.ListValue {
+			if part == nil || part.FileURL == nil || strings.TrimSpace(part.FileURL.FileID) != "" {
+				continue
+			}
+			rawURL := strings.TrimSpace(part.FileURL.URL)
+			if rawURL == "" {
+				continue
+			}
+			uploaded, ok := cached[rawURL]
+			if !ok {
+				meta, err := a.uploadFileFromURL(ctx, config, client, rawURL)
+				if err != nil {
+					return err
+				}
+				uploaded = arkUploadedFile{ID: meta.ID, FileName: meta.FileName}
+				cached[rawURL] = uploaded
+			}
+			part.FileURL.FileID = uploaded.ID
+			if part.FileURL.FileName == "" && uploaded.FileName != "" {
+				part.FileURL.FileName = uploaded.FileName
+			}
+			part.FileURL.URL = ""
+		}
+	}
+	return nil
+}
+
+func (a *ArkAdaptor) uploadFileFromURL(ctx context.Context, config *ProviderConfig, client *arkruntime.Client, rawURL string) (*arkfile.FileMeta, error) {
+	reader, fileName, err := arkUploadFileReader(ctx, config, rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("open file_url %q: %w", rawURL, err)
+	}
+	defer reader.Close()
+
+	uploadReader := io.Reader(reader)
+	if fileName != "" {
+		uploadReader = &arkNamedReader{Reader: reader, name: fileName}
+	}
+
+	fileMeta, err := client.UploadFile(ctx, &arkfile.UploadFileRequest{
+		File:    uploadReader,
+		Purpose: arkfile.PurposeUserData,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upload file_url %q: %w", rawURL, err)
+	}
+	fileMeta, err = waitArkFileReady(ctx, client, fileMeta.ID)
+	if err != nil {
+		return nil, fmt.Errorf("wait file upload %q: %w", rawURL, err)
+	}
+	return fileMeta, nil
+}
+
+func waitArkFileReady(ctx context.Context, client *arkruntime.Client, fileID string) (*arkfile.FileMeta, error) {
+	if fileID == "" {
+		return nil, fmt.Errorf("empty file_id")
+	}
+	for {
+		fileMeta, err := client.RetrieveFile(ctx, fileID)
+		if err != nil {
+			return nil, err
+		}
+		switch fileMeta.Status {
+		case arkfile.StatusActive:
+			return fileMeta, nil
+		case arkfile.StatusFailed:
+			if fileMeta.Error != nil && fileMeta.Error.Message != "" {
+				return nil, fmt.Errorf("file processing failed: %s", fileMeta.Error.Message)
+			}
+			return nil, fmt.Errorf("file processing failed: %s", fileID)
+		case arkfile.StatusProcessing:
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(3 * time.Second):
+			}
+		default:
+			return fileMeta, nil
+		}
+	}
+}
+
+func arkUploadFileReader(ctx context.Context, config *ProviderConfig, rawURL string) (io.ReadCloser, string, error) {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return nil, "", fmt.Errorf("empty file_url")
+	}
+
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return nil, "", err
+	}
+
+	switch u.Scheme {
+	case "", "file":
+		localPath, err := arkFilePathFromURL(u, trimmed)
+		if err != nil {
+			return nil, "", err
+		}
+		f, err := os.Open(localPath)
+		if err != nil {
+			return nil, "", err
+		}
+		return f, filepath.Base(localPath), nil
+	case "http", "https":
+		httpClient := config.HTTPClient
+		if httpClient == nil {
+			httpClient = &http.Client{}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, trimmed, nil)
+		if err != nil {
+			return nil, "", err
+		}
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return nil, "", err
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			return nil, "", fmt.Errorf("download failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		return resp.Body, arkNameFromURLPath(u.Path), nil
+	default:
+		return nil, "", fmt.Errorf("unsupported file_url scheme: %s", u.Scheme)
+	}
+}
+
+func arkFilePathFromURL(u *url.URL, rawPath string) (string, error) {
+	if u == nil {
+		return "", fmt.Errorf("invalid file url")
+	}
+	if u.Scheme == "" {
+		return rawPath, nil
+	}
+
+	var p string
+	if u.Host != "" && u.Host != "localhost" {
+		p = fmt.Sprintf(`%s%s`, u.Host, u.Path)
+	} else {
+		p = u.Path
+	}
+	unescaped, err := url.PathUnescape(p)
+	if err != nil {
+		return "", err
+	}
+	if runtime.GOOS == "windows" && len(unescaped) >= 3 && strings.HasPrefix(unescaped, "/") && unescaped[2] == ':' {
+		unescaped = unescaped[1:]
+	}
+	if strings.TrimSpace(unescaped) == "" {
+		return "", fmt.Errorf("empty local file path")
+	}
+	return unescaped, nil
+}
+
+func arkNameFromURLPath(p string) string {
+	name := pathpkg.Base(strings.TrimSpace(p))
+	if name == "." || name == "/" || name == "" {
+		return "upload-file"
+	}
+	return name
 }
 
 func (a *ArkAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (*dto.MediaResponse, error) {
@@ -336,10 +547,6 @@ func arkContentPartsFromMap(item map[string]interface{}) []*arkChatMessageConten
 	}
 	partType, _ := item["type"].(string)
 	switch partType {
-	case "", "text":
-		if text, ok := item["text"].(string); ok && text != "" {
-			return []*arkChatMessageContentPart{{Type: "text", Text: text}}
-		}
 	case "image_url", "input_image":
 		if imageURL, detail, ok := arkMapImage(item); ok {
 			return []*arkChatMessageContentPart{{
