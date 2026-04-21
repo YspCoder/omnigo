@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -59,25 +60,33 @@ func TestArkToChatReqIncludesFileURLPart(t *testing.T) {
 		},
 	})
 
-	typed, ok := req.(*arkChatRequest)
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal req: %v", err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal req: %v", err)
+	}
+	input, ok := payload["input"].([]interface{})
+	if !ok || len(input) != 2 {
+		t.Fatalf("input = %#v, want 2 items", payload["input"])
+	}
+	msg, ok := input[1].(map[string]interface{})
 	if !ok {
-		t.Fatalf("req type = %T, want *arkChatRequest", req)
+		t.Fatalf("input[1] = %#v, want object", input[1])
 	}
-	if len(typed.Messages) != 2 {
-		t.Fatalf("messages len = %d, want 2", len(typed.Messages))
+	content, ok := msg["content"].([]interface{})
+	if !ok || len(content) != 2 {
+		t.Fatalf("content = %#v, want 2 parts", msg["content"])
 	}
-	content := typed.Messages[1].Content
-	if content == nil || len(content.ListValue) != 2 {
-		t.Fatalf("content = %#v, want 2 parts", content)
+	textPart, _ := content[0].(map[string]interface{})
+	if textPart["type"] != "input_text" || textPart["text"] != "请分析这份剧本" {
+		t.Fatalf("content[0] = %#v, want input_text", content[0])
 	}
-	if content.ListValue[0].Type != "text" || content.ListValue[0].Text != "请分析这份剧本" {
-		t.Fatalf("content.ListValue[0] = %#v, want text part", content.ListValue[0])
-	}
-	if content.ListValue[1].Type != "input_file" || content.ListValue[1].FileURL == nil {
-		t.Fatalf("content.ListValue[1] = %#v, want input_file part", content.ListValue[1])
-	}
-	if *content.ListValue[1].FileURL != "https://example.com/script.pdf" {
-		t.Fatalf("file url = %q, want %q", *content.ListValue[1].FileURL, "https://example.com/script.pdf")
+	filePart, _ := content[1].(map[string]interface{})
+	if filePart["type"] != "input_file" || filePart["file_url"] != "https://example.com/script.pdf" {
+		t.Fatalf("content[1] = %#v, want input_file", content[1])
 	}
 }
 
@@ -99,25 +108,29 @@ func TestArkToChatReqSupportsTextPartWithFileURL(t *testing.T) {
 		},
 	})
 
-	typed, ok := req.(*arkChatRequest)
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal req: %v", err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal req: %v", err)
+	}
+	input, ok := payload["input"].([]interface{})
+	if !ok || len(input) != 1 {
+		t.Fatalf("input = %#v, want 1 item", payload["input"])
+	}
+	msg, ok := input[0].(map[string]interface{})
 	if !ok {
-		t.Fatalf("req type = %T, want *arkChatRequest", req)
+		t.Fatalf("input[0] = %#v, want object", input[0])
 	}
-	if len(typed.Messages) != 1 {
-		t.Fatalf("messages len = %d, want 1", len(typed.Messages))
+	content, ok := msg["content"].([]interface{})
+	if !ok || len(content) != 2 {
+		t.Fatalf("content = %#v, want 2 parts", msg["content"])
 	}
-	content := typed.Messages[0].Content
-	if content == nil || len(content.ListValue) != 2 {
-		t.Fatalf("content = %#v, want 2 parts", content)
-	}
-	if content.ListValue[0].Type != "text" || content.ListValue[0].Text != "请总结文档要点" {
-		t.Fatalf("content.ListValue[0] = %#v, want text part", content.ListValue[0])
-	}
-	if content.ListValue[1].Type != "input_url" || content.ListValue[1].FileURL == nil {
-		t.Fatalf("content.ListValue[1] = %#v, want input_url part", content.ListValue[1])
-	}
-	if *content.ListValue[1].FileURL != "https://example.com/doc.pdf" {
-		t.Fatalf("file url = %q, want %q", *content.ListValue[1].FileURL, "https://example.com/doc.pdf")
+	filePart, _ := content[1].(map[string]interface{})
+	if filePart["type"] != "input_file" || filePart["file_url"] != "https://example.com/doc.pdf" {
+		t.Fatalf("content[1] = %#v, want input_file", content[1])
 	}
 }
 
@@ -139,37 +152,41 @@ func TestArkToChatReqSupportsContentArrayWithImage(t *testing.T) {
 		},
 	})
 
-	typed, ok := req.(*arkChatRequest)
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal req: %v", err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal req: %v", err)
+	}
+	input, ok := payload["input"].([]interface{})
+	if !ok || len(input) != 1 {
+		t.Fatalf("input = %#v, want 1 item", payload["input"])
+	}
+	msg, ok := input[0].(map[string]interface{})
 	if !ok {
-		t.Fatalf("req type = %T, want *arkChatRequest", req)
+		t.Fatalf("input[0] = %#v, want object", input[0])
 	}
-	if len(typed.Messages) != 1 {
-		t.Fatalf("messages len = %d, want 1", len(typed.Messages))
+	content, ok := msg["content"].([]interface{})
+	if !ok || len(content) != 2 {
+		t.Fatalf("content = %#v, want 2 parts", msg["content"])
 	}
-	content := typed.Messages[0].Content
-	if content == nil || len(content.ListValue) != 2 {
-		t.Fatalf("content = %#v, want 2 parts", content)
+	imagePart, _ := content[1].(map[string]interface{})
+	if imagePart["type"] != "input_image" || imagePart["image_url"] != "https://example.com/cat.png" {
+		t.Fatalf("content[1] = %#v, want input_image", content[1])
 	}
-	if content.ListValue[0].Type != "text" || content.ListValue[0].Text != "描述这张图" {
-		t.Fatalf("content.ListValue[0] = %#v, want text part", content.ListValue[0])
-	}
-	if content.ListValue[1].Type != "image_url" || content.ListValue[1].ImageURL == nil {
-		t.Fatalf("content.ListValue[1] = %#v, want image_url part", content.ListValue[1])
-	}
-	if content.ListValue[1].ImageURL.URL != "https://example.com/cat.png" {
-		t.Fatalf("image url = %q, want cat image", content.ListValue[1].ImageURL.URL)
-	}
-	if content.ListValue[1].ImageURL.Detail != "high" {
-		t.Fatalf("image detail = %q, want high", content.ListValue[1].ImageURL.Detail)
+	if imagePart["detail"] != "high" {
+		t.Fatalf("image detail = %#v, want high", imagePart["detail"])
 	}
 }
 
 func TestArkChatExtractsTextFromListResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat/completions" {
-			t.Fatalf("path = %q, want /chat/completions", r.URL.Path)
+		if r.URL.Path != "/responses" {
+			t.Fatalf("path = %q, want /responses", r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"id":"chat-1","object":"chat.completion","created":1,"model":"doubao-1.5-vision-pro","choices":[{"index":0,"message":{"role":"assistant","content":[{"type":"text","text":"图里是一只橘猫"},{"type":"image_url","image_url":{"url":"https://example.com/result.png","detail":"auto"}}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}`))
+		_, _ = w.Write([]byte(`{"id":"resp-1","created_at":1,"model":"doubao-1.5-vision-pro","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"图里是一只橘猫"}]}],"usage":{"input_tokens":3,"output_tokens":5,"total_tokens":8}}`))
 	}))
 	defer server.Close()
 
@@ -196,12 +213,6 @@ func TestArkChatExtractsTextFromListResponse(t *testing.T) {
 	msg := resp.Choices[0].Message
 	if msg.Content != "图里是一只橘猫" {
 		t.Fatalf("message content = %#v, want extracted text", msg.Content)
-	}
-	if msg.ImageURL != "https://example.com/result.png" {
-		t.Fatalf("message image_url = %q, want result image", msg.ImageURL)
-	}
-	if msg.ImageDetail != "auto" {
-		t.Fatalf("message image_detail = %q, want auto", msg.ImageDetail)
 	}
 }
 

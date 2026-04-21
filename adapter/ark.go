@@ -12,6 +12,7 @@ import (
 	"github.com/YspCoder/omnigo/dto"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/utils"
 	"github.com/volcengine/volcengine-go-sdk/volcengine"
 )
@@ -41,34 +42,36 @@ func (a *ArkAdaptor) getClient(config *ProviderConfig) *arkruntime.Client {
 
 func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, r *dto.MediaRequest) (*dto.MediaResponse, error) {
 	chatReq := a.toChatReq(r)
-	resp, err := a.getClient(config).CreateChatCompletion(ctx, chatReq)
+	resp, err := a.getClient(config).CreateResponses(ctx, chatReq)
 	if err != nil {
 		return nil, err
 	}
-	res := &dto.MediaResponse{Usage: dto.Usage{PromptTokens: resp.Usage.PromptTokens, CompletionTokens: resp.Usage.CompletionTokens, TotalTokens: resp.Usage.TotalTokens}}
-	for _, c := range resp.Choices {
-		msg := dto.Message{Role: c.Message.Role}
-		if c.Message.Content != nil {
-			msg.Content = arkResponseText(c.Message.Content)
-			if msg.Content == "" && c.Message.Content.StringValue != nil {
-				msg.Content = *c.Message.Content.StringValue
-			}
-			if imageURL, detail := arkResponseFirstImage(c.Message.Content); imageURL != "" {
-				msg.ImageURL = imageURL
-				msg.ImageDetail = detail
-			}
-		}
-		res.Choices = append(res.Choices, dto.ChatChoice{Index: c.Index, Message: msg, FinishReason: string(c.FinishReason)})
+	if resp.GetError() != nil && strings.TrimSpace(resp.GetError().GetMessage()) != "" {
+		return nil, fmt.Errorf("ark responses api error: %s", resp.GetError().GetMessage())
 	}
-	if len(res.Choices) > 0 {
-		res.Text = fmt.Sprint(res.Choices[0].Message.Content)
+	text := arkResponsesText(resp)
+	msg := dto.Message{
+		Role:    arkResponsesRole(resp),
+		Content: text,
+	}
+	res := &dto.MediaResponse{
+		ID:      resp.GetId(),
+		Created: resp.GetCreatedAt(),
+		Model:   resp.GetModel(),
+		Text:    text,
+		Choices: []dto.ChatChoice{{
+			Index:        0,
+			Message:      msg,
+			FinishReason: arkResponsesFinishReason(resp),
+		}},
+		Usage: arkResponsesUsage(resp.GetUsage()),
 	}
 	return res, nil
 }
 
 func (a *ArkAdaptor) Stream(ctx context.Context, config *ProviderConfig, r *dto.MediaRequest) (dto.TokenStream, error) {
 	chatReq := a.toChatReq(r)
-	s, err := a.getClient(config).CreateChatCompletionStream(ctx, chatReq)
+	s, err := a.getClient(config).CreateResponsesStream(ctx, chatReq)
 	if err != nil {
 		return nil, err
 	}
@@ -157,68 +160,47 @@ func (a *ArkAdaptor) ListTasks(ctx context.Context, cfg *ProviderConfig, query m
 	return nil, fmt.Errorf("task list not supported by Ark adaptor")
 }
 
-func (a *ArkAdaptor) toChatReq(r *dto.MediaRequest) model.ChatRequest {
-	req := &arkChatRequest{Model: r.Model}
+type arkResponsesRequest struct {
+	Model           string                     `json:"model"`
+	Input           []arkResponsesInputMessage `json:"input"`
+	MaxOutputTokens *int64                     `json:"max_output_tokens,omitempty"`
+	Temperature     *float64                   `json:"temperature,omitempty"`
+}
+
+type arkResponsesInputMessage struct {
+	Role    string                   `json:"role"`
+	Content []map[string]interface{} `json:"content"`
+}
+
+func (a *ArkAdaptor) toChatReq(r *dto.MediaRequest) *responses.ResponsesRequest {
+	req := &arkResponsesRequest{Model: r.Model}
 	if r.MaxTokens > 0 {
-		req.MaxTokens = &r.MaxTokens
+		maxOutputTokens := int64(r.MaxTokens)
+		req.MaxOutputTokens = &maxOutputTokens
 	}
 	if r.Temperature != 0 {
-		t := float32(r.Temperature)
+		t := r.Temperature
 		req.Temperature = &t
 	}
 	for _, m := range r.Messages {
-		req.Messages = append(req.Messages, &arkChatMessage{
-			Role:    m.Role,
-			Content: toArkChatMessageContent(m),
+		content := toArkResponsesMessageContent(m)
+		if len(content) == 0 {
+			continue
+		}
+		req.Input = append(req.Input, arkResponsesInputMessage{
+			Role:    arkNormalizeMessageRole(m.Role),
+			Content: content,
 		})
 	}
-	return req
-}
-
-type arkChatRequest struct {
-	Model       string            `json:"model"`
-	Messages    []*arkChatMessage `json:"messages"`
-	MaxTokens   *int              `json:"max_tokens,omitempty"`
-	Temperature *float32          `json:"temperature,omitempty"`
-	Stream      *bool             `json:"stream,omitempty"`
-}
-
-func (r *arkChatRequest) MarshalJSON() ([]byte, error) {
-	type alias arkChatRequest
-	return json.Marshal((*alias)(r))
-}
-
-func (r *arkChatRequest) WithStream(stream bool) model.ChatRequest {
-	r.Stream = &stream
-	return r
-}
-
-func (r *arkChatRequest) IsStream() bool {
-	return r.Stream != nil && *r.Stream
-}
-
-func (r *arkChatRequest) GetModel() string {
-	return r.Model
-}
-
-type arkChatMessage struct {
-	Role    string                 `json:"role"`
-	Content *arkChatMessageContent `json:"content"`
-}
-
-type arkChatMessageContent struct {
-	StringValue *string
-	ListValue   []*arkChatMessageContentPart
-}
-
-func (c arkChatMessageContent) MarshalJSON() ([]byte, error) {
-	if c.StringValue != nil {
-		return json.Marshal(c.StringValue)
+	data, err := json.Marshal(req)
+	if err != nil {
+		return &responses.ResponsesRequest{Model: r.Model}
 	}
-	if c.ListValue != nil {
-		return json.Marshal(c.ListValue)
+	typed := &responses.ResponsesRequest{}
+	if err := json.Unmarshal(data, typed); err != nil {
+		return &responses.ResponsesRequest{Model: r.Model}
 	}
-	return json.Marshal(nil)
+	return typed
 }
 
 type arkChatMessageContentPart struct {
@@ -239,7 +221,7 @@ type arkVideoURLPart struct {
 	FPS *float64 `json:"fps,omitempty"`
 }
 
-func toArkChatMessageContent(m dto.Message) *arkChatMessageContent {
+func toArkResponsesMessageContent(m dto.Message) []map[string]interface{} {
 	parts := arkContentPartsFromValue(m.Content)
 	if m.ImageURL != "" {
 		parts = append(parts, &arkChatMessageContentPart{
@@ -266,11 +248,131 @@ func toArkChatMessageContent(m dto.Message) *arkChatMessageContent {
 			FileURL: &m.FileURL,
 		})
 	}
-	if len(parts) > 0 {
-		return &arkChatMessageContent{ListValue: parts}
+
+	items := make([]map[string]interface{}, 0, len(parts))
+	for _, part := range parts {
+		if part == nil {
+			continue
+		}
+		switch part.Type {
+		case "text", "input_text":
+			if strings.TrimSpace(part.Text) != "" {
+				items = append(items, map[string]interface{}{
+					"type": "input_text",
+					"text": part.Text,
+				})
+			}
+		case "image_url", "input_image":
+			if part.ImageURL != nil && strings.TrimSpace(part.ImageURL.URL) != "" {
+				item := map[string]interface{}{
+					"type":      "input_image",
+					"image_url": part.ImageURL.URL,
+				}
+				if part.ImageURL.Detail != "" {
+					item["detail"] = part.ImageURL.Detail
+				}
+				items = append(items, item)
+			}
+		case "video_url", "input_video":
+			if part.VideoURL != nil && strings.TrimSpace(part.VideoURL.URL) != "" {
+				item := map[string]interface{}{
+					"type":      "input_video",
+					"video_url": part.VideoURL.URL,
+				}
+				if part.VideoURL.FPS != nil {
+					item["fps"] = *part.VideoURL.FPS
+				}
+				items = append(items, item)
+			}
+		case "file_url", "input_file", "input_url":
+			if part.FileURL != nil && strings.TrimSpace(*part.FileURL) != "" {
+				items = append(items, map[string]interface{}{
+					"type":     "input_file",
+					"file_url": *part.FileURL,
+				})
+			}
+		}
 	}
-	text, _ := messageContentText(m.Content)
-	return &arkChatMessageContent{StringValue: &text}
+	if len(items) > 0 {
+		return items
+	}
+	if text, ok := messageContentText(m.Content); ok && strings.TrimSpace(text) != "" {
+		return []map[string]interface{}{{
+			"type": "input_text",
+			"text": text,
+		}}
+	}
+	return nil
+}
+
+func arkNormalizeMessageRole(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "assistant", "system", "developer", "user":
+		return strings.ToLower(strings.TrimSpace(role))
+	default:
+		return "user"
+	}
+}
+
+func arkResponsesUsage(usage *responses.Usage) dto.Usage {
+	if usage == nil {
+		return dto.Usage{}
+	}
+	return dto.Usage{
+		PromptTokens:     int(usage.GetInputTokens()),
+		CompletionTokens: int(usage.GetOutputTokens()),
+		TotalTokens:      int(usage.GetTotalTokens()),
+	}
+}
+
+func arkResponsesFinishReason(resp *responses.ResponseObject) string {
+	if resp == nil {
+		return ""
+	}
+	status := strings.TrimSpace(resp.GetStatus().String())
+	if status == "" || status == "unspecified" {
+		return ""
+	}
+	return status
+}
+
+func arkResponsesRole(resp *responses.ResponseObject) string {
+	if resp == nil {
+		return "assistant"
+	}
+	for _, item := range resp.GetOutput() {
+		message := item.GetOutputMessage()
+		if message == nil {
+			continue
+		}
+		role := strings.TrimSpace(message.GetRole().String())
+		if role == "" || role == "unspecified" {
+			continue
+		}
+		return role
+	}
+	return "assistant"
+}
+
+func arkResponsesText(resp *responses.ResponseObject) string {
+	if resp == nil {
+		return ""
+	}
+	texts := make([]string, 0, len(resp.GetOutput()))
+	for _, item := range resp.GetOutput() {
+		message := item.GetOutputMessage()
+		if message == nil {
+			continue
+		}
+		for _, content := range message.GetContent() {
+			text := content.GetText()
+			if text == nil || strings.TrimSpace(text.GetText()) == "" {
+				continue
+			}
+			texts = append(texts, strings.TrimSpace(text.GetText()))
+		}
+	}
+	return strings.Join(texts, "\n")
 }
 
 func messageContentText(v interface{}) (string, bool) {
@@ -350,9 +452,9 @@ func arkContentPartsFromMap(item map[string]interface{}) []*arkChatMessageConten
 			return []*arkChatMessageContentPart{part}
 		}
 	case "file_url", "input_file":
-		if file, ok := item["file_url"].(string); ok {
+		if file, ok := arkMapFileURL(item); ok {
 			return []*arkChatMessageContentPart{{
-				Type:    "input_url",
+				Type:    "input_file",
 				FileURL: &file,
 			}}
 		}
@@ -382,9 +484,9 @@ func arkContentPartsFromMap(item map[string]interface{}) []*arkChatMessageConten
 		parts = append(parts, part)
 	}
 
-	if file, ok := item["file_url"].(string); ok {
+	if file, ok := arkMapFileURL(item); ok {
 		parts = append(parts, &arkChatMessageContentPart{
-			Type:    "input_url",
+			Type:    "input_file",
 			FileURL: &file,
 		})
 	}
@@ -425,6 +527,23 @@ func arkMapVideo(item map[string]interface{}) (url string, fps *float64, ok bool
 		return url, arkFPSValue(item["fps"]), true
 	}
 	return "", nil, false
+}
+
+func arkMapFileURL(item map[string]interface{}) (url string, ok bool) {
+	switch file := item["file_url"].(type) {
+	case string:
+		if strings.TrimSpace(file) != "" {
+			return file, true
+		}
+	case map[string]interface{}:
+		if parsed := stringValue(file["url"]); strings.TrimSpace(parsed) != "" {
+			return parsed, true
+		}
+	}
+	if parsed := stringValue(item["url"]); strings.TrimSpace(parsed) != "" && (item["type"] == "file_url" || item["type"] == "input_file") {
+		return parsed, true
+	}
+	return "", false
 }
 
 func arkFPSValue(v interface{}) *float64 {
@@ -910,18 +1029,42 @@ func formatUnixMillis(ts int64) string {
 }
 
 type arkStream struct {
-	r *utils.ChatCompletionStreamReader
+	r *utils.ResponsesStreamReader
 }
 
 func (w *arkStream) Next(ctx context.Context) (*dto.StreamToken, error) {
-	resp, err := w.r.Recv()
-	if err != nil {
-		return nil, err
+	for {
+		resp, err := w.r.Recv()
+		if err != nil {
+			return nil, err
+		}
+		if resp == nil {
+			continue
+		}
+		if evtErr := resp.GetError(); evtErr != nil {
+			return nil, fmt.Errorf("ark responses stream error: %s", evtErr.GetMessage())
+		}
+		if text := resp.GetText(); text != nil {
+			delta := firstNonEmptyString(text.GetDelta(), text.GetText())
+			if strings.TrimSpace(delta) == "" {
+				continue
+			}
+			return &dto.StreamToken{
+				Text:  delta,
+				Type:  "text",
+				Index: int(text.GetOutputIndex()),
+			}, nil
+		}
+		if failed := resp.GetResponseFailed(); failed != nil {
+			if failed.GetResponse() != nil && failed.GetResponse().GetError() != nil && strings.TrimSpace(failed.GetResponse().GetError().GetMessage()) != "" {
+				return nil, fmt.Errorf("ark responses stream failed: %s", failed.GetResponse().GetError().GetMessage())
+			}
+			return nil, fmt.Errorf("ark responses stream failed")
+		}
+		if resp.GetResponseCompleted() != nil {
+			return nil, io.EOF
+		}
 	}
-	if len(resp.Choices) == 0 {
-		return nil, io.EOF
-	}
-	return &dto.StreamToken{Text: resp.Choices[0].Delta.Content, Type: "text", Index: resp.Choices[0].Index}, nil
 }
 func (w *arkStream) Close() error { return w.r.Close() }
 
