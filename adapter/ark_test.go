@@ -2,12 +2,8 @@ package adapter
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"os"
 	"testing"
 	"time"
 
@@ -59,7 +55,7 @@ func TestArkToChatReqIncludesFileURLPart(t *testing.T) {
 		Model: "doubao-1.5-pro",
 		Messages: []dto.Message{
 			{Role: "system", Content: "你是剧本拆解助手"},
-			{Role: "user", Content: "请分析这份剧本", FileURL: "https://example.com/script.pdf", FileName: "script.pdf"},
+			{Role: "user", Content: "请分析这份剧本", FileURL: "https://example.com/script.pdf", Name: "script.pdf"},
 		},
 	})
 
@@ -77,45 +73,11 @@ func TestArkToChatReqIncludesFileURLPart(t *testing.T) {
 	if content.ListValue[0].Type != "text" || content.ListValue[0].Text != "请分析这份剧本" {
 		t.Fatalf("content.ListValue[0] = %#v, want text part", content.ListValue[0])
 	}
-	if content.ListValue[1].Type != "file_url" || content.ListValue[1].FileURL == nil {
-		t.Fatalf("content.ListValue[1] = %#v, want file_url part", content.ListValue[1])
+	if content.ListValue[1].Type != "input_file" || content.ListValue[1].FileURL == nil {
+		t.Fatalf("content.ListValue[1] = %#v, want input_file part", content.ListValue[1])
 	}
-	if content.ListValue[1].FileURL.URL != "https://example.com/script.pdf" {
-		t.Fatalf("file url = %q, want %q", content.ListValue[1].FileURL.URL, "https://example.com/script.pdf")
-	}
-	if content.ListValue[1].FileURL.FileName != "script.pdf" {
-		t.Fatalf("file name = %q, want %q", content.ListValue[1].FileURL.FileName, "script.pdf")
-	}
-}
-
-func TestArkToChatReqIncludesFileIDPartWithoutText(t *testing.T) {
-	adaptor := &ArkAdaptor{}
-	req := adaptor.toChatReq(&dto.MediaRequest{
-		Model: "doubao-1.5-pro",
-		Messages: []dto.Message{
-			{Role: "user", FileID: "file_123", FileName: "script.pdf", Name: "episode-script"},
-		},
-	})
-
-	typed, ok := req.(*arkChatRequest)
-	if !ok {
-		t.Fatalf("req type = %T, want *arkChatRequest", req)
-	}
-	if len(typed.Messages) != 1 {
-		t.Fatalf("messages len = %d, want 1", len(typed.Messages))
-	}
-	content := typed.Messages[0].Content
-	if content == nil || len(content.ListValue) != 1 {
-		t.Fatalf("content = %#v, want 1 part", content)
-	}
-	if content.ListValue[0].Type != "file_url" || content.ListValue[0].FileURL == nil {
-		t.Fatalf("content.ListValue[0] = %#v, want file_url part", content.ListValue[0])
-	}
-	if content.ListValue[0].FileURL.FileID != "file_123" {
-		t.Fatalf("file id = %q, want %q", content.ListValue[0].FileURL.FileID, "file_123")
-	}
-	if content.ListValue[0].FileURL.Name != "episode-script" {
-		t.Fatalf("name = %q, want %q", content.ListValue[0].FileURL.Name, "episode-script")
+	if *content.ListValue[1].FileURL != "https://example.com/script.pdf" {
+		t.Fatalf("file url = %q, want %q", *content.ListValue[1].FileURL, "https://example.com/script.pdf")
 	}
 }
 
@@ -151,123 +113,11 @@ func TestArkToChatReqSupportsTextPartWithFileURL(t *testing.T) {
 	if content.ListValue[0].Type != "text" || content.ListValue[0].Text != "请总结文档要点" {
 		t.Fatalf("content.ListValue[0] = %#v, want text part", content.ListValue[0])
 	}
-	if content.ListValue[1].Type != "file_url" || content.ListValue[1].FileURL == nil {
-		t.Fatalf("content.ListValue[1] = %#v, want file_url part", content.ListValue[1])
+	if content.ListValue[1].Type != "input_url" || content.ListValue[1].FileURL == nil {
+		t.Fatalf("content.ListValue[1] = %#v, want input_url part", content.ListValue[1])
 	}
-	if content.ListValue[1].FileURL.URL != "https://example.com/doc.pdf" {
-		t.Fatalf("file url = %q, want %q", content.ListValue[1].FileURL.URL, "https://example.com/doc.pdf")
-	}
-}
-
-func TestArkChatUploadsFileURLAndUsesFileID(t *testing.T) {
-	tmp, err := os.CreateTemp(t.TempDir(), "ark-doc-*.txt")
-	if err != nil {
-		t.Fatalf("create temp file: %v", err)
-	}
-	_, _ = tmp.WriteString("document body")
-	_ = tmp.Close()
-
-	fileURL := (&url.URL{Scheme: "file", Path: tmp.Name()}).String()
-	uploadCalled := 0
-	retrieveCalled := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/files":
-			uploadCalled++
-			if err := r.ParseMultipartForm(1 << 20); err != nil {
-				t.Fatalf("parse multipart: %v", err)
-			}
-			if got := r.FormValue("purpose"); got != "user_data" {
-				t.Fatalf("purpose = %q, want user_data", got)
-			}
-			file, _, err := r.FormFile("file")
-			if err != nil {
-				t.Fatalf("form file: %v", err)
-			}
-			defer file.Close()
-			body, _ := io.ReadAll(file)
-			if string(body) != "document body" {
-				t.Fatalf("upload file body = %q, want %q", string(body), "document body")
-			}
-			_, _ = w.Write([]byte(`{"object":"file","id":"file_uploaded_123","purpose":"user_data","filename":"doc.txt","created_at":1,"expire_at":2,"status":"processing"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/files/file_uploaded_123":
-			retrieveCalled++
-			_, _ = w.Write([]byte(`{"object":"file","id":"file_uploaded_123","purpose":"user_data","filename":"doc.txt","created_at":1,"expire_at":2,"status":"active"}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/chat/completions":
-			var payload map[string]interface{}
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				t.Fatalf("decode chat request: %v", err)
-			}
-			messages, ok := payload["messages"].([]interface{})
-			if !ok || len(messages) != 1 {
-				t.Fatalf("messages = %#v, want one message", payload["messages"])
-			}
-			msg, ok := messages[0].(map[string]interface{})
-			if !ok {
-				t.Fatalf("message = %#v, want map", messages[0])
-			}
-			content, ok := msg["content"].([]interface{})
-			if !ok || len(content) != 2 {
-				t.Fatalf("content = %#v, want two parts", msg["content"])
-			}
-			foundFilePart := false
-			for _, item := range content {
-				part, ok := item.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				if part["type"] != "file_url" {
-					continue
-				}
-				filePart, ok := part["file_url"].(map[string]interface{})
-				if !ok {
-					t.Fatalf("file_url = %#v, want map", part["file_url"])
-				}
-				if got := filePart["file_id"]; got != "file_uploaded_123" {
-					t.Fatalf("file_id = %#v, want file_uploaded_123", got)
-				}
-				if got := filePart["url"]; got != nil {
-					t.Fatalf("file url should be empty after upload, got %#v", got)
-				}
-				foundFilePart = true
-			}
-			if !foundFilePart {
-				t.Fatalf("chat request has no file_url part: %#v", content)
-			}
-			_, _ = w.Write([]byte(`{"id":"chat-1","object":"chat.completion","created":1,"model":"doubao-1.5-pro","choices":[{"index":0,"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`))
-		default:
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer server.Close()
-
-	resp, err := (&ArkAdaptor{}).Chat(context.Background(), &ProviderConfig{
-		APIKey:     "test",
-		Region:     "cn-beijing",
-		BaseURL:    server.URL,
-		HTTPClient: server.Client(),
-	}, &dto.MediaRequest{
-		Model: "doubao-1.5-pro",
-		Messages: []dto.Message{
-			{
-				Role: "user",
-				Content: []map[string]interface{}{
-					{"type": "text", "text": "请总结文档", "file_url": fileURL},
-				},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Chat error = %v", err)
-	}
-	if uploadCalled != 1 {
-		t.Fatalf("upload called = %d, want 1", uploadCalled)
-	}
-	if retrieveCalled < 1 {
-		t.Fatalf("retrieve called = %d, want >= 1", retrieveCalled)
-	}
-	if resp.Text != "done" {
-		t.Fatalf("resp.Text = %q, want done", resp.Text)
+	if *content.ListValue[1].FileURL != "https://example.com/doc.pdf" {
+		t.Fatalf("file url = %q, want %q", *content.ListValue[1].FileURL, "https://example.com/doc.pdf")
 	}
 }
 

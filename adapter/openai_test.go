@@ -45,7 +45,7 @@ func TestOpenAIChatUsesResponsesAPIForFileMessages(t *testing.T) {
 		Model: "gpt-4.1",
 		Messages: []dto.Message{
 			{Role: "system", Content: "你是拆解助手"},
-			{Role: "user", Content: "请分析这份剧本", FileURL: "https://example.com/script.pdf", FileName: "script.pdf"},
+			{Role: "user", Content: "请分析这份剧本", FileURL: "https://example.com/script.pdf", Name: "script.pdf"},
 		},
 		MaxTokens:   2048,
 		Temperature: 0.3,
@@ -109,7 +109,7 @@ func TestOpenAIChatUsesResponsesOutputContentFallback(t *testing.T) {
 	}, &dto.MediaRequest{
 		Model: "gpt-4.1",
 		Messages: []dto.Message{
-			{Role: "user", Content: "请读取文件", FileID: "file_123", FileName: "script.pdf"},
+			{Role: "user", Content: "请读取文件", FileURL: "https://example.com/script.pdf", Name: "script.pdf"},
 		},
 	})
 	if err != nil {

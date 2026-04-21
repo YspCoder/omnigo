@@ -240,7 +240,7 @@ func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *Provid
 
 func openAIUsesResponsesAPI(messages []dto.Message) bool {
 	for _, message := range messages {
-		if message.FileURL != "" || message.FileID != "" {
+		if message.FileURL != "" {
 			return true
 		}
 	}
@@ -261,12 +261,11 @@ func toOpenAIResponsesInput(messages []dto.Message) []openAIResponsesInputItem {
 				Text: text,
 			})
 		}
-		if message.FileURL != "" || message.FileID != "" {
+		if message.FileURL != "" {
 			content = append(content, openAIResponsesInputContentItem{
 				Type:     "input_file",
 				FileURL:  message.FileURL,
-				FileID:   message.FileID,
-				Filename: firstNonEmpty(message.FileName, message.Name),
+				Filename: message.Name,
 			})
 		}
 		if len(content) == 0 {

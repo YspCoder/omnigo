@@ -12,8 +12,6 @@ type Message struct {
 	VideoURL    string      `json:"video_url,omitempty"`
 	VideoFPS    float64     `json:"video_fps,omitempty"`
 	FileURL     string      `json:"file_url,omitempty"`
-	FileID      string      `json:"file_id,omitempty"`
-	FileName    string      `json:"file_name,omitempty"`
 	Name        string      `json:"name,omitempty"`
 }
 
