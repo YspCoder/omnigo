@@ -614,7 +614,7 @@ func stringValue(v interface{}) string {
 func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
 	req := model.GenerateImagesRequest{Model: r.Model, Prompt: mediaPromptWithSystem(r)}
 	if r.Size != "" {
-		req.Size = &r.Size
+		req.Size = &r.Resolution
 	}
 	if r.Seed != 0 {
 		req.Seed = volcengine.Int64(int64(r.Seed))
