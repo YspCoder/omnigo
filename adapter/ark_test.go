@@ -13,7 +13,7 @@ import (
 	"github.com/volcengine/volcengine-go-sdk/volcengine"
 )
 
-func TestArkToVidReqOmitsTextRoleAndUsesFirstFrame(t *testing.T) {
+func TestArkToVidReqKeepsResolutionAndUsesFirstFrame(t *testing.T) {
 	adaptor := &ArkAdaptor{}
 	req := adaptor.toVidReq(&dto.MediaRequest{
 		Model:      "seedance-1-0-pro-250528",
@@ -45,8 +45,8 @@ func TestArkToVidReqOmitsTextRoleAndUsesFirstFrame(t *testing.T) {
 	if req.Content[2].Role == nil || *req.Content[2].Role != "first_frame" {
 		t.Fatalf("content[2].role = %v, want first_frame", req.Content[2].Role)
 	}
-	if req.Resolution != nil {
-		t.Fatalf("resolution = %v, want nil for image-to-video", *req.Resolution)
+	if req.Resolution == nil || *req.Resolution != "2k" {
+		t.Fatalf("resolution = %v, want 2k for image-to-video", req.Resolution)
 	}
 }
 

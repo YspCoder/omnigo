@@ -664,7 +664,6 @@ func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
 func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGenerationTaskRequest {
 	content := make([]*model.CreateContentGenerationContentItem, 0, len(r.Messages))
 	customContent := make([]map[string]interface{}, 0, len(r.Messages))
-	hasImageInput := false
 	for _, message := range r.Messages {
 		text, ok := messageContentText(message.Content)
 		if !ok || strings.TrimSpace(text) == "" {
@@ -691,7 +690,6 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 			return
 		}
 		if contentType == "image_url" {
-			hasImageInput = true
 			item := &model.CreateContentGenerationContentItem{
 				Type: model.ContentGenerationContentItemTypeImage,
 				ImageURL: &model.ImageURL{
@@ -833,7 +831,7 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 	if len(customContent) > 0 {
 		req.ExtraBody["content"] = customContent
 	}
-	if r.Resolution != "" && !hasImageInput {
+	if r.Resolution != "" {
 		req.Resolution = &r.Resolution
 	}
 	return req
