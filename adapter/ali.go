@@ -410,7 +410,9 @@ func (a *AliAdaptor) buildVideoRequest(r *dto.MediaRequest) (string, map[string]
 	if len(refImages) == 0 && videoMode == aliVideoModeReference {
 		refImages = images
 	}
-	if len(refImages) > 0 {
+	if media := aliMediaInput(r, videoMode); len(media) > 0 {
+		input["media"] = media
+	} else if len(refImages) > 0 {
 		input["reference_urls"] = refImages
 	}
 
@@ -596,7 +598,11 @@ func aliImageParameters(r *dto.MediaRequest) map[string]interface{} {
 		parameters = map[string]interface{}{}
 	}
 	if r.Size != "" {
-		parameters["size"] = r.Size
+		if aliIsAspectRatio(r.Size) {
+			parameters["size"] = aliAspectRatioSize(r.Size)
+		} else {
+			parameters["size"] = r.Size
+		}
 	}
 	if r.N > 0 {
 		parameters["n"] = r.N
@@ -626,7 +632,11 @@ func aliVideoParameters(r *dto.MediaRequest) map[string]interface{} {
 		parameters = map[string]interface{}{}
 	}
 	if r.Size != "" {
-		parameters["size"] = r.Size
+		if aliIsAspectRatio(r.Size) {
+			parameters["size"] = aliAspectRatioSize(r.Size)
+		} else {
+			parameters["size"] = r.Size
+		}
 	}
 	if r.Duration > 0 {
 		parameters["duration"] = r.Duration
@@ -651,6 +661,9 @@ func aliVideoParameters(r *dto.MediaRequest) map[string]interface{} {
 		"last_frame_url":  {},
 		"reference_url":   {},
 		"reference_urls":  {},
+		"files":           {},
+		"media":           {},
+		"size":            {},
 	})
 	if len(parameters) == 0 {
 		return nil
@@ -700,6 +713,9 @@ var aliImageModelRoutes = []aliModelRoute{
 }
 
 var aliVideoModelRoutes = []aliModelRoute{
+	{match: "wan2.7-r2v", mode: aliVideoModeReference},
+	{match: "wan2.7-i2v", mode: aliVideoModeImage},
+	{match: "wan2.7-t2v", mode: aliVideoModeText},
 	{match: "wan2.2-r2v", mode: aliVideoModeReference},
 	{match: "wan2.2-kf2v", mode: aliVideoModeKeyframe},
 	{match: "wan2.2-i2v", mode: aliVideoModeImage},
@@ -707,6 +723,122 @@ var aliVideoModelRoutes = []aliModelRoute{
 	{match: "wanx2.1-kf2v", mode: aliVideoModeKeyframe},
 	{match: "wanx2.1-i2v", mode: aliVideoModeImage},
 	{match: "wanx2.1-t2v", mode: aliVideoModeText},
+}
+
+func aliMediaInput(r *dto.MediaRequest, videoMode string) []map[string]interface{} {
+	if r == nil {
+		return nil
+	}
+	if media := aliMediaObjectsFromExtra(r.Extra["media"]); len(media) > 0 {
+		return media
+	}
+	if !strings.Contains(strings.ToLower(strings.TrimSpace(r.Model)), "wan2.7") {
+		return nil
+	}
+	files := aliMediaObjectsFromExtra(r.Extra["files"])
+	if len(files) == 0 {
+		files = append(files, aliMediaObjectsFromMessages(r.Messages)...)
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, len(files))
+	firstFrameUsed := false
+	for _, file := range files {
+		urlValue, _ := file["url"].(string)
+		urlValue = strings.TrimSpace(urlValue)
+		if urlValue == "" {
+			continue
+		}
+		typ, _ := file["type"].(string)
+		typ = strings.ToLower(strings.TrimSpace(typ))
+		mediaType := ""
+		switch typ {
+		case "image":
+			if videoMode == aliVideoModeImage || videoMode == aliVideoModeKeyframe {
+				if firstFrameUsed && videoMode == aliVideoModeKeyframe {
+					mediaType = "last_frame"
+				} else {
+					mediaType = "first_frame"
+					firstFrameUsed = true
+				}
+			} else {
+				mediaType = "reference_image"
+			}
+		case "video":
+			if videoMode == aliVideoModeImage || videoMode == aliVideoModeKeyframe {
+				if firstFrameUsed {
+					continue
+				}
+				mediaType = "first_clip"
+				firstFrameUsed = true
+			} else {
+				mediaType = "reference_video"
+			}
+		default:
+			continue
+		}
+		out = append(out, map[string]interface{}{"type": mediaType, "url": urlValue})
+	}
+	return out
+}
+
+func aliMediaObjectsFromMessages(messages []dto.Message) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(messages))
+	for _, message := range messages {
+		if urlValue := strings.TrimSpace(message.ImageURL); urlValue != "" {
+			out = append(out, map[string]interface{}{"type": "image", "url": urlValue})
+		}
+		if urlValue := strings.TrimSpace(message.VideoURL); urlValue != "" {
+			out = append(out, map[string]interface{}{"type": "video", "url": urlValue})
+		}
+	}
+	return out
+}
+
+func aliMediaObjectsFromExtra(value interface{}) []map[string]interface{} {
+	switch typed := value.(type) {
+	case []map[string]interface{}:
+		return typed
+	case []interface{}:
+		out := make([]map[string]interface{}, 0, len(typed))
+		for _, item := range typed {
+			obj, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			out = append(out, obj)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func aliIsAspectRatio(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || !strings.Contains(value, ":") {
+		return false
+	}
+	parts := strings.Split(value, ":")
+	return len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != ""
+}
+
+func aliAspectRatioSize(value string) string {
+	switch strings.TrimSpace(value) {
+	case "16:9":
+		return "832*480"
+	case "9:16":
+		return "480*832"
+	case "1:1":
+		return "624*624"
+	case "4:3":
+		return "832*624"
+	case "3:4":
+		return "624*832"
+	default:
+		return value
+	}
 }
 
 func aliModelFamily(model string) string {

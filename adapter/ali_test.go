@@ -156,6 +156,41 @@ func TestAliBuildVideoRequestUsesModelToInferReferenceMode(t *testing.T) {
 	}
 }
 
+func TestAliBuildWan27VideoRequestUsesMediaAndConcreteSize(t *testing.T) {
+	adaptor := &AliAdaptor{}
+	endpoint, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
+		Type:     dto.MediaTypeVideo,
+		Model:    "wan2.7-r2v",
+		Messages: []dto.Message{{Role: "user", Content: "保持主体一致"}},
+		Size:     "16:9",
+		Extra: map[string]interface{}{
+			"files": []interface{}{
+				map[string]interface{}{"type": "video", "url": "https://example.com/source.mp4"},
+				map[string]interface{}{"type": "image", "url": "https://example.com/ref.png"},
+			},
+			"size": "16:9",
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVideoRequest error = %v", err)
+	}
+	if endpoint != aliVideoEndpoint {
+		t.Fatalf("endpoint = %q, want %q", endpoint, aliVideoEndpoint)
+	}
+	input := payload["input"].(map[string]interface{})
+	media, ok := input["media"].([]map[string]interface{})
+	if !ok || len(media) != 2 {
+		t.Fatalf("media = %#v, want two media items", input["media"])
+	}
+	params := payload["parameters"].(map[string]interface{})
+	if params["size"] != "832*480" {
+		t.Fatalf("size = %#v, want 832*480", params["size"])
+	}
+	if _, ok := params["ratio"]; ok {
+		t.Fatalf("ratio = %#v, want omitted", params["ratio"])
+	}
+}
+
 func TestAliBuildVideoRequestUsesModelToInferImageMode(t *testing.T) {
 	adaptor := &AliAdaptor{}
 	endpoint, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
