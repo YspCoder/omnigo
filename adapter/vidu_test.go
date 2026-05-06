@@ -85,8 +85,8 @@ func TestViduTaskStatusMapsCreationURL(t *testing.T) {
 		if r.URL.Path != "/ent/v2/tasks/task-123/creations" {
 			t.Fatalf("path = %q, want task creations endpoint", r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Token secret" {
-			t.Fatalf("authorization = %q, want Token secret", got)
+		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
+			t.Fatalf("authorization = %q, want Bearer secret", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"task-123","state":"success","creations":[{"id":"creation-1","url":"https://cdn.example.com/video.mp4","cover_url":"https://cdn.example.com/video.jpg"}]}`))

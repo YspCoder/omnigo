@@ -119,3 +119,101 @@ func TestOpenAIChatUsesResponsesOutputContentFallback(t *testing.T) {
 		t.Fatalf("resp.Text = %q", got)
 	}
 }
+
+func TestOpenAIMediaImageUsesEditWhenExtraImageProvided(t *testing.T) {
+	var gotPath string
+	var gotPrompt string
+	var gotImage string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		if gotPath != "/images/edits" {
+			t.Fatalf("path = %q, want /images/edits", gotPath)
+		}
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("parse multipart form: %v", err)
+		}
+		gotPrompt = r.FormValue("prompt")
+		file, _, err := r.FormFile("image")
+		if err != nil {
+			t.Fatalf("form file image: %v", err)
+		}
+		defer file.Close()
+		body, err := io.ReadAll(file)
+		if err != nil {
+			t.Fatalf("read form file: %v", err)
+		}
+		gotImage = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"b64_json":"edited-image"}]}`))
+	}))
+	defer srv.Close()
+
+	adaptor := &OpenAIAdaptor{}
+	resp, err := adaptor.Media(context.Background(), &ProviderConfig{
+		APIKey:  "test-key",
+		BaseURL: srv.URL,
+	}, &dto.MediaRequest{
+		Type:  dto.MediaTypeImage,
+		Model: "gpt-image-1",
+		Messages: []dto.Message{
+			{Role: "user", Content: "make it cinematic"},
+		},
+		Extra: map[string]interface{}{
+			"image": "data:image/png;base64,cmVmZXJlbmNlLWltYWdl",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Media() error = %v", err)
+	}
+	if gotPrompt != "make it cinematic" {
+		t.Fatalf("prompt = %q", gotPrompt)
+	}
+	if gotImage != "reference-image" {
+		t.Fatalf("image body = %q", gotImage)
+	}
+	if resp == nil || len(resp.Data) != 1 || resp.Data[0].B64JSON != "edited-image" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestOpenAIMediaImageUsesGenerateWithoutExtraImage(t *testing.T) {
+	var gotPath string
+	var gotPrompt string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		if gotPath != "/images/generations" {
+			t.Fatalf("path = %q, want /images/generations", gotPath)
+		}
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		gotPrompt, _ = body["prompt"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"url":"https://example.com/generated.png"}]}`))
+	}))
+	defer srv.Close()
+
+	adaptor := &OpenAIAdaptor{}
+	resp, err := adaptor.Media(context.Background(), &ProviderConfig{
+		APIKey:  "test-key",
+		BaseURL: srv.URL,
+	}, &dto.MediaRequest{
+		Type:  dto.MediaTypeImage,
+		Model: "gpt-image-1",
+		Messages: []dto.Message{
+			{Role: "user", Content: "make a poster"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Media() error = %v", err)
+	}
+	if gotPrompt != "make a poster" {
+		t.Fatalf("prompt = %q", gotPrompt)
+	}
+	if resp == nil || resp.URL != "https://example.com/generated.png" {
+		t.Fatalf("response = %#v", resp)
+	}
+}

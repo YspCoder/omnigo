@@ -4,18 +4,22 @@ package adapter
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
+	"os"
+	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/YspCoder/omnigo/dto"
-	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
-	"github.com/openai/openai-go/packages/ssestream"
-	"github.com/openai/openai-go/shared"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/ssestream"
 )
 
 type OpenAIAdaptor struct {
@@ -71,7 +75,7 @@ func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, reques
 	client := a.getClient(config)
 
 	params := openai.ChatCompletionNewParams{
-		Model:    shared.ChatModel(request.Model),
+		Model:    request.Model,
 		Messages: toOpenAIMessages(request.Messages),
 	}
 	if request.Temperature != 0 {
@@ -335,15 +339,6 @@ func openAIBaseURL(config *ProviderConfig) string {
 	return "https://api.openai.com/v1"
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
 type openAIStreamWrapper struct {
 	stream *ssestream.Stream[openai.ChatCompletionChunk]
 }
@@ -376,7 +371,7 @@ func (a *OpenAIAdaptor) Stream(ctx context.Context, config *ProviderConfig, requ
 	client := a.getClient(config)
 
 	params := openai.ChatCompletionNewParams{
-		Model:    shared.ChatModel(request.Model),
+		Model:    request.Model,
 		Messages: toOpenAIMessages(request.Messages),
 	}
 	if request.Temperature != 0 {
@@ -395,9 +390,39 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 
 	switch request.Type {
 	case dto.MediaTypeImage:
+		referenceImages, err := openAIImageReferenceReaders(ctx, a.getHTTPClient(config), request.Extra)
+		if err != nil {
+			return nil, err
+		}
+		if len(referenceImages) > 0 {
+			params := openai.ImageEditParams{
+				Prompt: mediaPromptWithSystem(request),
+				Model:  request.Model,
+				Image:  openAIImageEditInput(referenceImages),
+			}
+			if request.N > 0 {
+				params.N = openai.Int(int64(request.N))
+			}
+			if request.Size != "" {
+				params.Size = openai.ImageEditParamsSize(request.Size)
+			}
+			if request.ResponseFormat != "" {
+				params.ResponseFormat = openai.ImageEditParamsResponseFormat(request.ResponseFormat)
+			}
+			if request.Resolution != "" {
+				params.Quality = openai.ImageEditParamsQuality(request.Resolution)
+			}
+
+			resp, err := client.Images.Edit(ctx, params)
+			if err != nil {
+				return nil, err
+			}
+			return openAIImageResponse(resp), nil
+		}
+
 		params := openai.ImageGenerateParams{
 			Prompt: mediaPromptWithSystem(request),
-			Model:  openai.ImageModel(request.Model),
+			Model:  request.Model,
 		}
 		if request.N > 0 {
 			params.N = openai.Int(int64(request.N))
@@ -408,26 +433,166 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 		if request.ResponseFormat != "" {
 			params.ResponseFormat = openai.ImageGenerateParamsResponseFormat(request.ResponseFormat)
 		}
+		if request.Resolution != "" {
+			params.Quality = openai.ImageGenerateParamsQuality(request.Resolution)
+		}
 
 		resp, err := client.Images.Generate(ctx, params)
 		if err != nil {
 			return nil, err
 		}
 
-		res := &dto.MediaResponse{}
-		for _, img := range resp.Data {
-			res.Data = append(res.Data, dto.ImageData{
-				URL:     img.URL,
-				B64JSON: img.B64JSON,
-			})
-		}
-		if len(res.Data) > 0 {
-			res.URL = res.Data[0].URL
-		}
-		return res, nil
+		return openAIImageResponse(resp), nil
 	default:
 		return nil, fmt.Errorf("unsupported media mode: %s", request.Type)
 	}
+}
+
+func openAIImageResponse(resp *openai.ImagesResponse) *dto.MediaResponse {
+	res := &dto.MediaResponse{}
+	for _, img := range resp.Data {
+		res.Data = append(res.Data, dto.ImageData{
+			URL:     img.URL,
+			B64JSON: img.B64JSON,
+		})
+	}
+	if len(res.Data) > 0 {
+		res.URL = res.Data[0].URL
+	}
+	return res
+}
+
+func openAIImageEditInput(images []io.Reader) openai.ImageEditParamsImageUnion {
+	if len(images) == 1 {
+		return openai.ImageEditParamsImageUnion{OfFile: images[0]}
+	}
+	return openai.ImageEditParamsImageUnion{OfFileArray: images}
+}
+
+func openAIImageReferenceReaders(ctx context.Context, httpClient *http.Client, extra map[string]interface{}) ([]io.Reader, error) {
+	if extra == nil {
+		return nil, nil
+	}
+
+	inputs := make([]string, 0, 1)
+	if image, ok := contentImageURL(extra["image"]); ok {
+		inputs = append(inputs, image)
+	}
+	inputs = append(inputs, contentImageURLs(extra["images"])...)
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+
+	readers := make([]io.Reader, 0, len(inputs))
+	for i, input := range inputs {
+		reader, err := openAIImageReferenceReader(ctx, httpClient, input, i)
+		if err != nil {
+			return nil, err
+		}
+		readers = append(readers, reader)
+	}
+	return readers, nil
+}
+
+type openAIImageReader struct {
+	*bytes.Reader
+	filename    string
+	contentType string
+}
+
+func (r openAIImageReader) Filename() string {
+	return r.filename
+}
+
+func (r openAIImageReader) ContentType() string {
+	return r.contentType
+}
+
+func openAIImageReferenceReader(ctx context.Context, httpClient *http.Client, input string, index int) (io.Reader, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil, fmt.Errorf("openai image reference %d is empty", index)
+	}
+	if strings.HasPrefix(input, "data:") {
+		return openAIImageReaderFromDataURL(input, index)
+	}
+	if u, err := url.Parse(input); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+		return openAIImageReaderFromURL(ctx, httpClient, input)
+	}
+	if data, err := os.ReadFile(input); err == nil {
+		return newOpenAIImageReader(data, filepath.Base(input), ""), nil
+	}
+	if data, err := base64.StdEncoding.DecodeString(input); err == nil {
+		return newOpenAIImageReader(data, openAIImageFilename(index, http.DetectContentType(data)), ""), nil
+	}
+	return nil, fmt.Errorf("openai image reference %d must be a URL, data URL, base64 string, or readable file path", index)
+}
+
+func openAIImageReaderFromDataURL(input string, index int) (io.Reader, error) {
+	header, encoded, ok := strings.Cut(input, ",")
+	if !ok {
+		return nil, fmt.Errorf("openai image reference %d has invalid data URL", index)
+	}
+	contentType := strings.TrimPrefix(header, "data:")
+	if semi := strings.Index(contentType, ";"); semi >= 0 {
+		contentType = contentType[:semi]
+	}
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("openai image reference %d has invalid base64 data: %w", index, err)
+	}
+	return newOpenAIImageReader(data, openAIImageFilename(index, contentType), contentType), nil
+}
+
+func openAIImageReaderFromURL(ctx context.Context, httpClient *http.Client, input string) (io.Reader, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, input, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("openai image reference fetch failed: status=%d url=%s", resp.StatusCode, input)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 50<<20+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 50<<20 {
+		return nil, fmt.Errorf("openai image reference exceeds 50MB: %s", input)
+	}
+	contentType := resp.Header.Get("Content-Type")
+	parsed, _ := url.Parse(input)
+	filename := path.Base(parsed.Path)
+	if filename == "." || filename == "/" || filename == "" {
+		filename = openAIImageFilename(0, contentType)
+	}
+	return newOpenAIImageReader(data, filename, contentType), nil
+}
+
+func newOpenAIImageReader(data []byte, filename, contentType string) openAIImageReader {
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+	if filename == "" || filename == "." || filename == "/" {
+		filename = openAIImageFilename(0, contentType)
+	}
+	return openAIImageReader{
+		Reader:      bytes.NewReader(data),
+		filename:    filename,
+		contentType: contentType,
+	}
+}
+
+func openAIImageFilename(index int, contentType string) string {
+	ext := ".png"
+	if extensions, err := mime.ExtensionsByType(contentType); err == nil && len(extensions) > 0 {
+		ext = extensions[0]
+	}
+	return fmt.Sprintf("image-%d%s", index+1, ext)
 }
 
 func (a *OpenAIAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string, _ ...map[string]string) (*dto.TaskStatusResponse, error) {
