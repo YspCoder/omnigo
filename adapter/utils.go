@@ -1,9 +1,6 @@
 package adapter
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -80,27 +77,6 @@ func extractPayloadMap(extra map[string]interface{}) map[string]interface{} {
 		return nil
 	}
 	return payload
-}
-
-func marshalPayloadWithFallback(payload map[string]interface{}, fallback interface{}) ([]byte, error) {
-	if payload != nil {
-		if b, err := json.Marshal(payload); err == nil {
-			return b, nil
-		}
-	}
-	return json.Marshal(fallback)
-}
-
-func hashSHA256(data []byte) []byte {
-	h := sha256.New()
-	h.Write(data)
-	return h.Sum(nil)
-}
-
-func hmacSign(key []byte, content string) []byte {
-	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte(content))
-	return mac.Sum(nil)
 }
 
 func firstSystemMessage(messages []dto.Message) string {

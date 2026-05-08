@@ -586,11 +586,7 @@ func aliHTTPClient(cfg *ProviderConfig) *http.Client {
 	return client
 }
 
-func aliImageParameters(r *dto.MediaRequest) map[string]interface{} {
-	parameters := copyMap(extractPayloadMap(r.Extra))
-	if parameters == nil {
-		parameters = map[string]interface{}{}
-	}
+func aliImageParameters(r *dto.MediaRequest) (parameters map[string]interface{}) {
 	if r.Size != "" {
 		if aliIsAspectRatio(r.Size) {
 			parameters["size"] = aliAspectRatioSize(r.Size)
@@ -607,24 +603,13 @@ func aliImageParameters(r *dto.MediaRequest) map[string]interface{} {
 	if r.ResponseFormat != "" {
 		parameters["response_format"] = r.ResponseFormat
 	}
-	mergeExtraPayload(parameters, r.Extra, map[string]struct{}{
-		"payload":  {},
-		"mode":     {},
-		"async":    {},
-		"endpoint": {},
-		"prompt":   {},
-	})
 	if len(parameters) == 0 {
 		return nil
 	}
 	return parameters
 }
 
-func aliVideoParameters(r *dto.MediaRequest) map[string]interface{} {
-	parameters := copyMap(extractPayloadMap(r.Extra))
-	if parameters == nil {
-		parameters = map[string]interface{}{}
-	}
+func aliVideoParameters(r *dto.MediaRequest) (parameters map[string]interface{}) {
 	if r.Size != "" {
 		parameters["ratio"] = r.Size
 	}
@@ -640,21 +625,6 @@ func aliVideoParameters(r *dto.MediaRequest) map[string]interface{} {
 	if r.Seed != 0 {
 		parameters["seed"] = r.Seed
 	}
-	mergeExtraPayload(parameters, r.Extra, map[string]struct{}{
-		"payload":         {},
-		"mode":            {},
-		"async":           {},
-		"endpoint":        {},
-		"prompt":          {},
-		"img_url":         {},
-		"first_frame_url": {},
-		"last_frame_url":  {},
-		"reference_url":   {},
-		"reference_urls":  {},
-		"files":           {},
-		"media":           {},
-		"ratio":           {},
-	})
 	if len(parameters) == 0 {
 		return nil
 	}
