@@ -378,13 +378,6 @@ func (a *AliAdaptor) buildImageRequest(r *dto.MediaRequest) (string, map[string]
 
 func (a *AliAdaptor) buildVideoRequest(r *dto.MediaRequest) (string, map[string]interface{}, error) {
 	prompt := strings.TrimSpace(mediaPromptWithSystem(r))
-	if explicitPrompt := getStringExtra(r.Extra, "prompt"); explicitPrompt != "" {
-		prompt = explicitPrompt
-	}
-	if prompt == "" {
-		return "", nil, fmt.Errorf("ali video request requires a prompt")
-	}
-
 	input := map[string]interface{}{
 		"prompt": prompt,
 	}
@@ -417,8 +410,9 @@ func (a *AliAdaptor) buildVideoRequest(r *dto.MediaRequest) (string, map[string]
 	}
 
 	payload := map[string]interface{}{
-		"model": r.Model,
-		"input": input,
+		"model":     r.Model,
+		"input":     input,
+		"watermark": false,
 	}
 	parameters := aliVideoParameters(r)
 	if len(parameters) > 0 {
@@ -633,9 +627,9 @@ func aliVideoParameters(r *dto.MediaRequest) map[string]interface{} {
 	}
 	if r.Size != "" {
 		if aliIsAspectRatio(r.Size) {
-			parameters["size"] = aliAspectRatioSize(r.Size)
+			parameters["ratio"] = aliAspectRatioSize(r.Size)
 		} else {
-			parameters["size"] = r.Size
+			parameters["ratio"] = r.Size
 		}
 	}
 	if r.Duration > 0 {
@@ -663,7 +657,7 @@ func aliVideoParameters(r *dto.MediaRequest) map[string]interface{} {
 		"reference_urls":  {},
 		"files":           {},
 		"media":           {},
-		"size":            {},
+		"ratio":           {},
 	})
 	if len(parameters) == 0 {
 		return nil
@@ -699,31 +693,6 @@ const (
 	aliModelFamilyQwenImage          = "qwen-image"
 	aliModelFamilyWanImageGeneration = "wan-image-generation"
 )
-
-type aliModelRoute struct {
-	match string
-	mode  string
-}
-
-var aliImageModelRoutes = []aliModelRoute{
-	{match: "qwen-image", mode: aliImageModeSync},
-	{match: "wan2.2-t2i", mode: aliImageModeAsyncV2},
-	{match: "wan2.1-t2i", mode: aliImageModeAsyncV2},
-	{match: "wanx2.1-t2i", mode: aliImageModeAsyncV1},
-}
-
-var aliVideoModelRoutes = []aliModelRoute{
-	{match: "wan2.7-r2v", mode: aliVideoModeReference},
-	{match: "wan2.7-i2v", mode: aliVideoModeImage},
-	{match: "wan2.7-t2v", mode: aliVideoModeText},
-	{match: "wan2.2-r2v", mode: aliVideoModeReference},
-	{match: "wan2.2-kf2v", mode: aliVideoModeKeyframe},
-	{match: "wan2.2-i2v", mode: aliVideoModeImage},
-	{match: "wan2.2-t2v", mode: aliVideoModeText},
-	{match: "wanx2.1-kf2v", mode: aliVideoModeKeyframe},
-	{match: "wanx2.1-i2v", mode: aliVideoModeImage},
-	{match: "wanx2.1-t2v", mode: aliVideoModeText},
-}
 
 func aliMediaInput(r *dto.MediaRequest, videoMode string) []map[string]interface{} {
 	if r == nil {
@@ -860,7 +829,7 @@ func aliResolveImageMode(r *dto.MediaRequest) string {
 	if mode := normalizeAliImageMode(getStringExtra(r.Extra, "mode")); mode != "" {
 		return mode
 	}
-	if mode := aliRouteModeByModel(r.Model, aliImageModelRoutes); mode != "" {
+	if mode := normalizeAliImageMode(r.Model); mode != "" {
 		return mode
 	}
 	switch aliModelFamily(r.Model) {
@@ -883,15 +852,21 @@ func normalizeAliImageMode(mode string) string {
 	case "text2image", "image-synthesis", "async-v1":
 		return aliImageModeAsyncV1
 	default:
+		switch {
+		case strings.Contains(mode, "qwen-image"):
+			return aliImageModeSync
+		// wanx2.1 t2i still uses old text2image endpoint.
+		case strings.Contains(mode, "wanx2.1") && (strings.Contains(mode, "t2i") || strings.Contains(mode, "text2image")):
+			return aliImageModeAsyncV1
+		case strings.Contains(mode, "t2i"), strings.Contains(mode, "text2image"):
+			return aliImageModeAsyncV2
+		}
 		return ""
 	}
 }
 
 func aliResolveVideoMode(r *dto.MediaRequest) string {
 	if mode := normalizeAliVideoMode(getStringExtra(r.Extra, "mode")); mode != "" {
-		return mode
-	}
-	if mode := aliRouteModeByModel(r.Model, aliVideoModelRoutes); mode != "" {
 		return mode
 	}
 	if mode := normalizeAliVideoMode(r.Model); mode != "" {
@@ -918,22 +893,6 @@ func normalizeAliVideoMode(mode string) string {
 		}
 		return ""
 	}
-}
-
-func aliRouteModeByModel(model string, routes []aliModelRoute) string {
-	model = strings.ToLower(strings.TrimSpace(model))
-	if model == "" {
-		return ""
-	}
-	for _, route := range routes {
-		if route.match == "" {
-			continue
-		}
-		if strings.Contains(model, route.match) {
-			return route.mode
-		}
-	}
-	return ""
 }
 
 func aliFirstResultURL(results []map[string]interface{}) string {
