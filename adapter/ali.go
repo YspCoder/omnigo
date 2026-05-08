@@ -626,11 +626,7 @@ func aliVideoParameters(r *dto.MediaRequest) map[string]interface{} {
 		parameters = map[string]interface{}{}
 	}
 	if r.Size != "" {
-		if aliIsAspectRatio(r.Size) {
-			parameters["ratio"] = aliAspectRatioSize(r.Size)
-		} else {
-			parameters["ratio"] = r.Size
-		}
+		parameters["ratio"] = r.Size
 	}
 	if r.Duration > 0 {
 		parameters["duration"] = r.Duration
@@ -796,15 +792,15 @@ func aliIsAspectRatio(value string) bool {
 func aliAspectRatioSize(value string) string {
 	switch strings.TrimSpace(value) {
 	case "16:9":
-		return "832*480"
+		return "1696*960"
 	case "9:16":
-		return "480*832"
+		return "960*1696"
 	case "1:1":
-		return "624*624"
+		return "1280*1280"
 	case "4:3":
-		return "832*624"
+		return "1472*1104"
 	case "3:4":
-		return "624*832"
+		return "1104*1472"
 	default:
 		return value
 	}
