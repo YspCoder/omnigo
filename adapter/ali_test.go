@@ -82,8 +82,8 @@ func TestAliMediaSyncImageMapsURL(t *testing.T) {
 
 func TestAliMediaVideoUsesAsyncTaskEndpoint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != aliImageToVideoEndpoint {
-			t.Fatalf("path = %q, want %q", r.URL.Path, aliImageToVideoEndpoint)
+		if r.URL.Path != aliVideoEndpoint {
+			t.Fatalf("path = %q, want %q", r.URL.Path, aliVideoEndpoint)
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
 			t.Fatalf("authorization = %q, want Bearer secret", got)
@@ -96,11 +96,20 @@ func TestAliMediaVideoUsesAsyncTaskEndpoint(t *testing.T) {
 			t.Fatalf("decode body: %v", err)
 		}
 		input := body["input"].(map[string]interface{})
-		if input["first_frame_url"] != "https://example.com/start.png" {
-			t.Fatalf("first_frame_url = %#v, want start image", input["first_frame_url"])
+		if _, ok := input["first_frame_url"]; ok {
+			t.Fatalf("first_frame_url = %#v, want media protocol only", input["first_frame_url"])
 		}
-		if input["last_frame_url"] != "https://example.com/end.png" {
-			t.Fatalf("last_frame_url = %#v, want end image", input["last_frame_url"])
+		media, ok := input["media"].([]interface{})
+		if !ok || len(media) != 2 {
+			t.Fatalf("media = %#v, want first/last frame media", input["media"])
+		}
+		first, _ := media[0].(map[string]interface{})
+		last, _ := media[1].(map[string]interface{})
+		if first["type"] != "first_frame" || first["url"] != "https://example.com/start.png" {
+			t.Fatalf("media[0] = %#v, want first frame", first)
+		}
+		if last["type"] != "last_frame" || last["url"] != "https://example.com/end.png" {
+			t.Fatalf("media[1] = %#v, want last frame", last)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -148,11 +157,20 @@ func TestAliBuildVideoRequestUsesModelToInferReferenceMode(t *testing.T) {
 		t.Fatalf("endpoint = %q, want %q", endpoint, aliVideoEndpoint)
 	}
 	input := payload["input"].(map[string]interface{})
-	if _, ok := input["reference_urls"]; !ok {
-		t.Fatalf("reference_urls missing from payload: %#v", input)
+	if _, ok := input["reference_urls"]; ok {
+		t.Fatalf("reference_urls = %#v, want media protocol only", input["reference_urls"])
 	}
 	if _, ok := input["first_frame_url"]; ok {
 		t.Fatalf("first_frame_url = %#v, want omitted for reference mode", input["first_frame_url"])
+	}
+	media, ok := input["media"].([]map[string]interface{})
+	if !ok || len(media) != 2 {
+		t.Fatalf("media = %#v, want reference image media", input["media"])
+	}
+	for i, item := range media {
+		if item["type"] != "reference_image" {
+			t.Fatalf("media[%d] = %#v, want reference_image", i, item)
+		}
 	}
 }
 
@@ -164,12 +182,11 @@ func TestAliBuildWan27VideoRequestUsesMediaAndRatio(t *testing.T) {
 		Messages: []dto.Message{{Role: "user", Content: "保持主体一致"}},
 		Size:     "16:9",
 		Extra: map[string]interface{}{
-			"files": []interface{}{
-				map[string]interface{}{"type": "video", "url": "https://example.com/source.mp4", "reference_voice": "https://example.com/voice.mp3"},
-				map[string]interface{}{"type": "image", "url": "https://example.com/ref.png"},
-			},
-			"prompt_extend": false,
-			"watermark":     true,
+			"image":           "https://example.com/ref.png",
+			"video":           "https://example.com/source.mp4",
+			"reference_voice": "https://example.com/voice.mp3",
+			"prompt_extend":   false,
+			"watermark":       true,
 		},
 	})
 	if err != nil {
@@ -183,11 +200,14 @@ func TestAliBuildWan27VideoRequestUsesMediaAndRatio(t *testing.T) {
 	if !ok || len(media) != 2 {
 		t.Fatalf("media = %#v, want two media items", input["media"])
 	}
-	if media[0]["type"] != "reference_video" || media[0]["reference_voice"] != "https://example.com/voice.mp3" {
-		t.Fatalf("media[0] = %#v, want reference video with voice", media[0])
+	if media[0]["type"] != "reference_image" || media[0]["url"] != "https://example.com/ref.png" {
+		t.Fatalf("media[0] = %#v, want reference image", media[0])
 	}
-	if media[1]["type"] != "reference_image" {
-		t.Fatalf("media[1] = %#v, want reference image", media[1])
+	if media[1]["type"] != "reference_video" || media[1]["url"] != "https://example.com/source.mp4" {
+		t.Fatalf("media[1] = %#v, want reference video", media[1])
+	}
+	if input["reference_voice"] != "https://example.com/voice.mp3" {
+		t.Fatalf("reference_voice = %#v, want input reference_voice", input["reference_voice"])
 	}
 	params := payload["parameters"].(map[string]interface{})
 	if params["ratio"] != "16:9" {
@@ -201,7 +221,7 @@ func TestAliBuildWan27VideoRequestUsesMediaAndRatio(t *testing.T) {
 	}
 }
 
-func TestAliBuildWan27ReferenceVideoKeepsExplicitMedia(t *testing.T) {
+func TestAliBuildWan27ReferenceVideoUsesImageAndVideoInputs(t *testing.T) {
 	adaptor := &AliAdaptor{}
 	_, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
 		Type:       dto.MediaTypeVideo,
@@ -211,17 +231,11 @@ func TestAliBuildWan27ReferenceVideoKeepsExplicitMedia(t *testing.T) {
 		Resolution: "720P",
 		Duration:   10,
 		Extra: map[string]interface{}{
-			"media": []interface{}{
-				map[string]interface{}{
-					"type":            "reference_image",
-					"url":             "https://example.com/girl.jpg",
-					"reference_voice": "https://example.com/girl.mp3",
-				},
-				map[string]interface{}{
-					"type":            "reference_video",
-					"url":             "https://example.com/boy.mp4",
-					"reference_voice": "https://example.com/boy.mp3",
-				},
+			"images": []interface{}{
+				"https://example.com/girl.jpg",
+			},
+			"videos": []interface{}{
+				"https://example.com/boy.mp4",
 			},
 			"prompt_extend": false,
 			"watermark":     true,
@@ -233,13 +247,13 @@ func TestAliBuildWan27ReferenceVideoKeepsExplicitMedia(t *testing.T) {
 	input := payload["input"].(map[string]interface{})
 	media, ok := input["media"].([]map[string]interface{})
 	if !ok || len(media) != 2 {
-		t.Fatalf("media = %#v, want explicit media", input["media"])
+		t.Fatalf("media = %#v, want image/video media", input["media"])
 	}
-	if media[0]["type"] != "reference_image" || media[0]["reference_voice"] != "https://example.com/girl.mp3" {
-		t.Fatalf("media[0] = %#v, want explicit reference image with voice", media[0])
+	if media[0]["type"] != "reference_image" || media[0]["url"] != "https://example.com/girl.jpg" {
+		t.Fatalf("media[0] = %#v, want reference image", media[0])
 	}
-	if media[1]["type"] != "reference_video" || media[1]["reference_voice"] != "https://example.com/boy.mp3" {
-		t.Fatalf("media[1] = %#v, want explicit reference video with voice", media[1])
+	if media[1]["type"] != "reference_video" || media[1]["url"] != "https://example.com/boy.mp4" {
+		t.Fatalf("media[1] = %#v, want reference video", media[1])
 	}
 	params := payload["parameters"].(map[string]interface{})
 	if params["resolution"] != "720P" || params["ratio"] != "16:9" || params["duration"] != 10 || params["prompt_extend"] != false || params["watermark"] != true {
@@ -273,9 +287,38 @@ func TestAliBuildVideoRequestKeepsModelAndPassesParameters(t *testing.T) {
 	if _, ok := payload["watermark"]; ok {
 		t.Fatalf("top-level watermark = %#v, want omitted", payload["watermark"])
 	}
+	input := payload["input"].(map[string]interface{})
+	if _, ok := input["audio_url"]; ok {
+		t.Fatalf("audio_url = %#v, want omitted when not provided", input["audio_url"])
+	}
 	params := payload["parameters"].(map[string]interface{})
 	if params["duration"] != 5 || params["prompt_extend"] != true || params["watermark"] != false || params["shot_type"] != "dolly" || params["audio"] != true {
 		t.Fatalf("parameters = %#v, want video options passed through", params)
+	}
+}
+
+func TestAliBuildWanTextVideoPassesAudioURLInInput(t *testing.T) {
+	adaptor := &AliAdaptor{}
+	endpoint, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
+		Type:     dto.MediaTypeVideo,
+		Model:    "wan2.5-t2v-preview",
+		Messages: []dto.Message{{Role: "user", Content: "城市夜景延时摄影"}},
+		Extra: map[string]interface{}{
+			"audio_url": "https://example.com/music.mp3",
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVideoRequest error = %v", err)
+	}
+	if endpoint != aliVideoEndpoint {
+		t.Fatalf("endpoint = %q, want %q", endpoint, aliVideoEndpoint)
+	}
+	input := payload["input"].(map[string]interface{})
+	if input["audio_url"] != "https://example.com/music.mp3" {
+		t.Fatalf("audio_url = %#v, want input audio_url", input["audio_url"])
+	}
+	if _, ok := input["media"]; ok {
+		t.Fatalf("media = %#v, want omitted for t2v", input["media"])
 	}
 }
 
@@ -322,7 +365,7 @@ func TestAliBuildWan27ImageVideoUsesVideoEndpointAndMedia(t *testing.T) {
 	}
 }
 
-func TestAliBuildWan27ImageVideoConvertsFrameExtrasToMedia(t *testing.T) {
+func TestAliBuildWan27ImageVideoConvertsImagesToMedia(t *testing.T) {
 	adaptor := &AliAdaptor{}
 	_, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
 		Type:  dto.MediaTypeVideo,
@@ -331,8 +374,10 @@ func TestAliBuildWan27ImageVideoConvertsFrameExtrasToMedia(t *testing.T) {
 			{Role: "user", Content: "镜头推进"},
 		},
 		Extra: map[string]interface{}{
-			"first_frame_url": "https://example.com/start.png",
-			"last_frame_url":  "https://example.com/end.png",
+			"images": []interface{}{
+				"https://example.com/start.png",
+				"https://example.com/end.png",
+			},
 		},
 	})
 	if err != nil {
@@ -351,6 +396,129 @@ func TestAliBuildWan27ImageVideoConvertsFrameExtrasToMedia(t *testing.T) {
 	}
 	if media[0]["type"] != "first_frame" || media[1]["type"] != "last_frame" {
 		t.Fatalf("media = %#v, want first_frame and last_frame", media)
+	}
+}
+
+func TestAliBuildHappyHorseImageVideoUsesFirstFrameMedia(t *testing.T) {
+	adaptor := &AliAdaptor{}
+	endpoint, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
+		Type:     dto.MediaTypeVideo,
+		Model:    "happyhorse-1.0-i2v",
+		Messages: []dto.Message{{Role: "user", Content: "镜头推进"}},
+		Extra: map[string]interface{}{
+			"image": "https://example.com/start.png",
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVideoRequest error = %v", err)
+	}
+	if endpoint != aliVideoEndpoint {
+		t.Fatalf("endpoint = %q, want %q", endpoint, aliVideoEndpoint)
+	}
+	input := payload["input"].(map[string]interface{})
+	if _, ok := input["first_frame_url"]; ok {
+		t.Fatalf("first_frame_url = %#v, want media protocol only", input["first_frame_url"])
+	}
+	if _, ok := input["img_url"]; ok {
+		t.Fatalf("img_url = %#v, want media protocol only", input["img_url"])
+	}
+	media, ok := input["media"].([]map[string]interface{})
+	if !ok || len(media) != 1 {
+		t.Fatalf("media = %#v, want one media item", input["media"])
+	}
+	if media[0]["type"] != "first_frame" || media[0]["url"] != "https://example.com/start.png" {
+		t.Fatalf("media[0] = %#v, want first_frame media", media[0])
+	}
+}
+
+func TestAliBuildHappyHorseImageVideoKeepsOnlyOneFirstFrame(t *testing.T) {
+	adaptor := &AliAdaptor{}
+	_, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
+		Type:     dto.MediaTypeVideo,
+		Model:    "happyhorse-1.0-i2v",
+		Messages: []dto.Message{{Role: "user", Content: "镜头推进"}},
+		Extra: map[string]interface{}{
+			"images": []interface{}{
+				"https://example.com/start.png",
+				"https://example.com/end.png",
+			},
+			"videos": []interface{}{
+				"https://example.com/source.mp4",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVideoRequest error = %v", err)
+	}
+	input := payload["input"].(map[string]interface{})
+	media, ok := input["media"].([]map[string]interface{})
+	if !ok || len(media) != 1 {
+		t.Fatalf("media = %#v, want one first_frame item", input["media"])
+	}
+	if media[0]["type"] != "first_frame" || media[0]["url"] != "https://example.com/start.png" {
+		t.Fatalf("media[0] = %#v, want only first_frame image", media[0])
+	}
+}
+
+func TestAliBuildHappyHorseReferenceVideoUsesReferenceImageMedia(t *testing.T) {
+	adaptor := &AliAdaptor{}
+	endpoint, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
+		Type:     dto.MediaTypeVideo,
+		Model:    "happyhorse-1.0-r2v",
+		Messages: []dto.Message{{Role: "user", Content: "保持主体一致"}},
+		Extra: map[string]interface{}{
+			"images": []interface{}{
+				"https://example.com/girl.jpg",
+				"https://example.com/fan.jpg",
+				"https://example.com/earrings.jpg",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVideoRequest error = %v", err)
+	}
+	if endpoint != aliVideoEndpoint {
+		t.Fatalf("endpoint = %q, want %q", endpoint, aliVideoEndpoint)
+	}
+	input := payload["input"].(map[string]interface{})
+	if _, ok := input["reference_urls"]; ok {
+		t.Fatalf("reference_urls = %#v, want media protocol only", input["reference_urls"])
+	}
+	media, ok := input["media"].([]map[string]interface{})
+	if !ok || len(media) != 3 {
+		t.Fatalf("media = %#v, want three reference images", input["media"])
+	}
+	for i, item := range media {
+		if item["type"] != "reference_image" {
+			t.Fatalf("media[%d] = %#v, want reference_image", i, item)
+		}
+	}
+}
+
+func TestAliBuildHappyHorseReferenceVideoSkipsNonImageMedia(t *testing.T) {
+	adaptor := &AliAdaptor{}
+	_, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
+		Type:     dto.MediaTypeVideo,
+		Model:    "happyhorse-1.0-r2v",
+		Messages: []dto.Message{{Role: "user", Content: "保持主体一致"}},
+		Extra: map[string]interface{}{
+			"image": "https://example.com/ref.jpg",
+			"videos": []interface{}{
+				"https://example.com/ref.mp4",
+				"https://example.com/source.mp4",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVideoRequest error = %v", err)
+	}
+	input := payload["input"].(map[string]interface{})
+	media, ok := input["media"].([]map[string]interface{})
+	if !ok || len(media) != 1 {
+		t.Fatalf("media = %#v, want one reference_image item", input["media"])
+	}
+	if media[0]["type"] != "reference_image" || media[0]["url"] != "https://example.com/ref.jpg" {
+		t.Fatalf("media[0] = %#v, want only reference_image", media[0])
 	}
 }
 
@@ -424,12 +592,19 @@ func TestAliBuildVideoRequestUsesModelToInferImageMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildVideoRequest error = %v", err)
 	}
-	if endpoint != aliImageToVideoEndpoint {
-		t.Fatalf("endpoint = %q, want %q", endpoint, aliImageToVideoEndpoint)
+	if endpoint != aliVideoEndpoint {
+		t.Fatalf("endpoint = %q, want %q", endpoint, aliVideoEndpoint)
 	}
 	input := payload["input"].(map[string]interface{})
-	if input["first_frame_url"] != "https://example.com/input.png" {
-		t.Fatalf("first_frame_url = %#v, want single input image", input["first_frame_url"])
+	if _, ok := input["first_frame_url"]; ok {
+		t.Fatalf("first_frame_url = %#v, want media protocol only", input["first_frame_url"])
+	}
+	media, ok := input["media"].([]map[string]interface{})
+	if !ok || len(media) != 1 {
+		t.Fatalf("media = %#v, want first frame media", input["media"])
+	}
+	if media[0]["type"] != "first_frame" || media[0]["url"] != "https://example.com/input.png" {
+		t.Fatalf("media[0] = %#v, want first_frame input image", media[0])
 	}
 }
 

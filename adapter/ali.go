@@ -383,7 +383,7 @@ func (a *AliAdaptor) buildImageRequest(r *dto.MediaRequest) (string, map[string]
 func (a *AliAdaptor) buildVideoRequest(r *dto.MediaRequest) (string, map[string]interface{}, error) {
 	videoMode := aliResolveVideoMode(r)
 	model := strings.TrimSpace(r.Model)
-	if videoMode == aliVideoModeAnimate || aliIsAnimateMixModel(model) {
+	if videoMode == aliVideoModeAnimate {
 		return a.buildAnimateMixVideoRequest(r, model)
 	}
 	if videoMode == aliVideoModeAvatar || aliIsAvatarVideoModel(model) {
@@ -395,38 +395,10 @@ func (a *AliAdaptor) buildVideoRequest(r *dto.MediaRequest) (string, map[string]
 		"prompt": prompt,
 	}
 
-	images := aliCollectImages(r)
-	mediaProtocol := aliUsesMediaProtocol(model, r)
-	if firstFrame := getStringExtra(r.Extra, "first_frame_url"); firstFrame != "" {
-		if !mediaProtocol {
-			input["first_frame_url"] = firstFrame
-		}
-	} else if len(images) > 0 && !mediaProtocol && (videoMode == aliVideoModeKeyframe || videoMode == aliVideoModeImage) {
-		input["first_frame_url"] = images[0]
-	}
-	if lastFrame := getStringExtra(r.Extra, "last_frame_url"); lastFrame != "" {
-		if !mediaProtocol {
-			input["last_frame_url"] = lastFrame
-		}
-	} else if len(images) > 1 && !mediaProtocol && videoMode == aliVideoModeKeyframe {
-		input["last_frame_url"] = images[1]
-	}
-	if imgURL := getStringExtra(r.Extra, "img_url"); imgURL != "" {
-		if !mediaProtocol {
-			input["img_url"] = imgURL
-		}
-	} else if input["first_frame_url"] == nil && len(images) > 0 && !mediaProtocol && videoMode == aliVideoModeImage {
-		input["img_url"] = images[0]
-	}
+	mediaProtocol := aliUsesMediaProtocol(model, r, videoMode)
 	aliCopyInputExtras(input, r.Extra)
-	refImages := aliReferenceImages(r)
-	if len(refImages) == 0 && videoMode == aliVideoModeReference {
-		refImages = images
-	}
 	if media := aliMediaInput(r, videoMode); len(media) > 0 {
 		input["media"] = media
-	} else if len(refImages) > 0 && !mediaProtocol {
-		input["reference_urls"] = refImages
 	}
 
 	payload := map[string]interface{}{
@@ -732,20 +704,25 @@ func aliCollectImages(r *dto.MediaRequest) []string {
 			out = append(out, message.ImageURL)
 		}
 	}
-	if len(out) == 0 {
-		out = append(out, getStringSliceExtra(r.Extra, "images")...)
+	if image := getStringExtra(r.Extra, "image"); image != "" {
+		out = append(out, image)
 	}
+	out = append(out, getStringSliceExtra(r.Extra, "images")...)
 	return compactStrings(out)
 }
 
-func aliReferenceImages(r *dto.MediaRequest) []string {
-	if urls := getStringSliceExtra(r.Extra, "reference_urls"); len(urls) > 0 {
-		return urls
+func aliCollectVideos(r *dto.MediaRequest) []string {
+	out := make([]string, 0, len(r.Messages))
+	for _, message := range r.Messages {
+		if message.VideoURL != "" {
+			out = append(out, message.VideoURL)
+		}
 	}
-	if url := getStringExtra(r.Extra, "reference_url"); url != "" {
-		return []string{url}
+	if video := getStringExtra(r.Extra, "video"); video != "" {
+		out = append(out, video)
 	}
-	return nil
+	out = append(out, getStringSliceExtra(r.Extra, "videos")...)
+	return compactStrings(out)
 }
 
 const (
@@ -758,37 +735,16 @@ func aliMediaInput(r *dto.MediaRequest, videoMode string) []map[string]interface
 	if r == nil {
 		return nil
 	}
-	if media := aliMediaObjectsFromExtra(r.Extra["media"]); len(media) > 0 {
-		return media
-	}
-	if !aliUsesMediaProtocol(r.Model, r) {
+	if !aliUsesMediaProtocol(r.Model, r, videoMode) {
 		return nil
 	}
-	files := aliMediaObjectsFromExtra(r.Extra["files"])
-	if len(files) == 0 {
-		files = append(files, aliMediaObjectsFromMessages(r.Messages)...)
-	}
-	if len(files) == 0 {
-		if firstFrame := getStringExtra(r.Extra, "first_frame_url"); firstFrame != "" {
-			files = append(files, map[string]interface{}{"type": "first_frame", "url": firstFrame})
-		}
-		if lastFrame := getStringExtra(r.Extra, "last_frame_url"); lastFrame != "" {
-			files = append(files, map[string]interface{}{"type": "last_frame", "url": lastFrame})
-		}
-		if imgURL := getStringExtra(r.Extra, "img_url"); imgURL != "" {
-			files = append(files, map[string]interface{}{"type": "first_frame", "url": imgURL})
-		}
-	}
-	if len(files) == 0 {
-		for _, urlValue := range aliReferenceImages(r) {
-			files = append(files, map[string]interface{}{"type": "image", "url": urlValue})
-		}
-	}
+	files := aliMediaObjectsFromRequest(r)
 	if len(files) == 0 {
 		return nil
 	}
 	out := make([]map[string]interface{}, 0, len(files))
 	firstFrameUsed := false
+	happyHorse := aliIsHappyHorseModel(r.Model)
 	for _, file := range files {
 		urlValue, _ := file["url"].(string)
 		urlValue = strings.TrimSpace(urlValue)
@@ -798,6 +754,35 @@ func aliMediaInput(r *dto.MediaRequest, videoMode string) []map[string]interface
 		typ, _ := file["type"].(string)
 		typ = strings.ToLower(strings.TrimSpace(typ))
 		mediaType := ""
+		if happyHorse {
+			switch videoMode {
+			case aliVideoModeImage, aliVideoModeKeyframe:
+				switch typ {
+				case "first_frame", "image":
+					if firstFrameUsed {
+						continue
+					}
+					mediaType = "first_frame"
+					firstFrameUsed = true
+				default:
+					continue
+				}
+			case aliVideoModeReference:
+				switch typ {
+				case "reference_image", "image":
+					mediaType = "reference_image"
+				default:
+					continue
+				}
+			default:
+				continue
+			}
+			item := copyMap(file)
+			item["type"] = mediaType
+			item["url"] = urlValue
+			out = append(out, item)
+			continue
+		}
 		switch typ {
 		case "reference_image", "reference_video", "first_frame", "last_frame", "first_clip":
 			mediaType = typ
@@ -835,36 +820,24 @@ func aliMediaInput(r *dto.MediaRequest, videoMode string) []map[string]interface
 	return out
 }
 
-func aliMediaObjectsFromMessages(messages []dto.Message) []map[string]interface{} {
-	out := make([]map[string]interface{}, 0, len(messages))
-	for _, message := range messages {
-		if urlValue := strings.TrimSpace(message.ImageURL); urlValue != "" {
-			out = append(out, map[string]interface{}{"type": "image", "url": urlValue})
+func aliMediaObjectsFromRequest(r *dto.MediaRequest) []map[string]interface{} {
+	files := aliMediaObjectsFromImages(aliCollectImages(r))
+	for _, video := range aliCollectVideos(r) {
+		if urlValue := strings.TrimSpace(video); urlValue != "" {
+			files = append(files, map[string]interface{}{"type": "video", "url": urlValue})
 		}
-		if urlValue := strings.TrimSpace(message.VideoURL); urlValue != "" {
-			out = append(out, map[string]interface{}{"type": "video", "url": urlValue})
+	}
+	return files
+}
+
+func aliMediaObjectsFromImages(images []string) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(images))
+	for _, image := range images {
+		if urlValue := strings.TrimSpace(image); urlValue != "" {
+			out = append(out, map[string]interface{}{"type": "image", "url": urlValue})
 		}
 	}
 	return out
-}
-
-func aliMediaObjectsFromExtra(value interface{}) []map[string]interface{} {
-	switch typed := value.(type) {
-	case []map[string]interface{}:
-		return typed
-	case []interface{}:
-		out := make([]map[string]interface{}, 0, len(typed))
-		for _, item := range typed {
-			obj, ok := item.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			out = append(out, obj)
-		}
-		return out
-	default:
-		return nil
-	}
 }
 
 func aliIsAspectRatio(value string) bool {
@@ -982,29 +955,39 @@ func normalizeAliVideoMode(mode string) string {
 	}
 }
 
-func aliUsesMediaProtocol(model string, r *dto.MediaRequest) bool {
-	model = strings.ToLower(strings.TrimSpace(model))
-	if strings.Contains(model, "wan2.7") {
-		return true
-	}
-	return r != nil && r.Extra != nil && r.Extra["media"] != nil
-}
-
-func aliIsAnimateMixModel(model string) bool {
-	return strings.Contains(strings.ToLower(strings.TrimSpace(model)), "animate-mix")
-}
-
 func aliIsAvatarVideoModel(model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
 	return strings.Contains(model, "s2v") || strings.Contains(model, "avatar")
 }
 
 func aliCopyInputExtras(input, extra map[string]interface{}) {
-	for _, key := range []string{"negative_prompt", "audio_url"} {
+	for _, key := range []string{"negative_prompt", "audio_url", "reference_voice"} {
 		if value, ok := extra[key]; ok && value != nil {
 			input[key] = value
 		}
 	}
+}
+
+func aliUsesMediaProtocol(model string, r *dto.MediaRequest, videoMode string) bool {
+	if !aliIsWanModel(model) && !aliIsHappyHorseModel(model) {
+		return false
+	}
+	switch videoMode {
+	case aliVideoModeImage, aliVideoModeKeyframe, aliVideoModeReference:
+		return true
+	default:
+		return false
+	}
+}
+
+func aliIsWanModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(model, "wan") || strings.Contains(model, "/wan")
+}
+
+func aliIsHappyHorseModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(model, "happyhorse") || strings.Contains(model, "/happyhorse")
 }
 
 func aliEndpointOverride(r *dto.MediaRequest, fallback string) string {
@@ -1028,19 +1011,8 @@ func firstAliVideoURL(r *dto.MediaRequest) string {
 	if r == nil {
 		return ""
 	}
-	for _, message := range r.Messages {
-		if videoURL := strings.TrimSpace(message.VideoURL); videoURL != "" {
-			return videoURL
-		}
-	}
-	if files := aliMediaObjectsFromExtra(r.Extra["files"]); len(files) > 0 {
-		for _, file := range files {
-			typ, _ := file["type"].(string)
-			urlValue, _ := file["url"].(string)
-			if strings.EqualFold(strings.TrimSpace(typ), "video") && strings.TrimSpace(urlValue) != "" {
-				return strings.TrimSpace(urlValue)
-			}
-		}
+	if videos := aliCollectVideos(r); len(videos) > 0 {
+		return videos[0]
 	}
 	return ""
 }
