@@ -35,6 +35,8 @@ const (
 	aliVideoModeImage     = "image-to-video"
 	aliVideoModeKeyframe  = "keyframe-to-video"
 	aliVideoModeReference = "reference-to-video"
+	aliVideoModeAnimate   = "animate-mix"
+	aliVideoModeAvatar    = "speech-to-video"
 )
 
 var aliImageModeEndpoint = map[string]string{
@@ -48,6 +50,8 @@ var aliVideoModeEndpoint = map[string]string{
 	aliVideoModeImage:     aliImageToVideoEndpoint,
 	aliVideoModeKeyframe:  aliImageToVideoEndpoint,
 	aliVideoModeReference: aliVideoEndpoint,
+	aliVideoModeAnimate:   aliImageToVideoEndpoint,
+	aliVideoModeAvatar:    aliImageToVideoEndpoint,
 }
 
 // AliAdaptor converts requests and responses for DashScope APIs.
@@ -377,42 +381,57 @@ func (a *AliAdaptor) buildImageRequest(r *dto.MediaRequest) (string, map[string]
 }
 
 func (a *AliAdaptor) buildVideoRequest(r *dto.MediaRequest) (string, map[string]interface{}, error) {
+	videoMode := aliResolveVideoMode(r)
+	model := strings.TrimSpace(r.Model)
+	if videoMode == aliVideoModeAnimate || aliIsAnimateMixModel(model) {
+		return a.buildAnimateMixVideoRequest(r, model)
+	}
+	if videoMode == aliVideoModeAvatar || aliIsAvatarVideoModel(model) {
+		return a.buildAvatarVideoRequest(r, model)
+	}
+
 	prompt := strings.TrimSpace(mediaPromptWithSystem(r))
 	input := map[string]interface{}{
 		"prompt": prompt,
 	}
 
 	images := aliCollectImages(r)
-	videoMode := aliResolveVideoMode(r)
+	mediaProtocol := aliUsesMediaProtocol(model, r)
 	if firstFrame := getStringExtra(r.Extra, "first_frame_url"); firstFrame != "" {
-		input["first_frame_url"] = firstFrame
-	} else if len(images) > 0 && (videoMode == aliVideoModeKeyframe || videoMode == aliVideoModeImage) {
+		if !mediaProtocol {
+			input["first_frame_url"] = firstFrame
+		}
+	} else if len(images) > 0 && !mediaProtocol && (videoMode == aliVideoModeKeyframe || videoMode == aliVideoModeImage) {
 		input["first_frame_url"] = images[0]
 	}
 	if lastFrame := getStringExtra(r.Extra, "last_frame_url"); lastFrame != "" {
-		input["last_frame_url"] = lastFrame
-	} else if len(images) > 1 && videoMode == aliVideoModeKeyframe {
+		if !mediaProtocol {
+			input["last_frame_url"] = lastFrame
+		}
+	} else if len(images) > 1 && !mediaProtocol && videoMode == aliVideoModeKeyframe {
 		input["last_frame_url"] = images[1]
 	}
 	if imgURL := getStringExtra(r.Extra, "img_url"); imgURL != "" {
-		input["img_url"] = imgURL
-	} else if input["first_frame_url"] == nil && len(images) > 0 && videoMode == aliVideoModeImage {
+		if !mediaProtocol {
+			input["img_url"] = imgURL
+		}
+	} else if input["first_frame_url"] == nil && len(images) > 0 && !mediaProtocol && videoMode == aliVideoModeImage {
 		input["img_url"] = images[0]
 	}
+	aliCopyInputExtras(input, r.Extra)
 	refImages := aliReferenceImages(r)
 	if len(refImages) == 0 && videoMode == aliVideoModeReference {
 		refImages = images
 	}
 	if media := aliMediaInput(r, videoMode); len(media) > 0 {
 		input["media"] = media
-	} else if len(refImages) > 0 {
+	} else if len(refImages) > 0 && !mediaProtocol {
 		input["reference_urls"] = refImages
 	}
 
 	payload := map[string]interface{}{
-		"model":     r.Model,
-		"input":     input,
-		"watermark": false,
+		"model": model,
+		"input": input,
 	}
 	parameters := aliVideoParameters(r)
 	if len(parameters) > 0 {
@@ -420,10 +439,72 @@ func (a *AliAdaptor) buildVideoRequest(r *dto.MediaRequest) (string, map[string]
 	}
 
 	endpoint := aliVideoModeEndpoint[videoMode]
+	if mediaProtocol {
+		endpoint = aliVideoEndpoint
+	}
 	if path := getStringExtra(r.Extra, "endpoint"); path != "" {
 		endpoint = path
 	}
 	return endpoint, payload, nil
+}
+
+func (a *AliAdaptor) buildAnimateMixVideoRequest(r *dto.MediaRequest, model string) (string, map[string]interface{}, error) {
+	input := map[string]interface{}{}
+	if imageURL := firstNonEmptyString(getStringExtra(r.Extra, "image_url"), getStringExtra(r.Extra, "image"), firstAliImageURL(r)); imageURL != "" {
+		input["image_url"] = imageURL
+	}
+	if videoURL := firstNonEmptyString(getStringExtra(r.Extra, "video_url"), getStringExtra(r.Extra, "video"), firstAliVideoURL(r)); videoURL != "" {
+		input["video_url"] = videoURL
+	}
+	if watermark, ok := getBoolExtra(r.Extra, "watermark"); ok {
+		input["watermark"] = watermark
+	}
+
+	parameters := map[string]interface{}{}
+	mode := firstNonEmptyString(getStringExtra(r.Extra, "animate_mode"), getStringExtra(r.Extra, "service_mode"))
+	if rawMode := getStringExtra(r.Extra, "mode"); rawMode == "wan-std" || rawMode == "wan-pro" {
+		mode = rawMode
+	}
+	if mode == "" {
+		mode = "wan-std"
+	}
+	parameters["mode"] = mode
+
+	payload := map[string]interface{}{
+		"model":      model,
+		"input":      input,
+		"parameters": parameters,
+	}
+	return aliEndpointOverride(r, aliImageToVideoEndpoint), payload, nil
+}
+
+func (a *AliAdaptor) buildAvatarVideoRequest(r *dto.MediaRequest, model string) (string, map[string]interface{}, error) {
+	input := map[string]interface{}{}
+	if imageURL := firstNonEmptyString(getStringExtra(r.Extra, "image_url"), getStringExtra(r.Extra, "image"), firstAliImageURL(r)); imageURL != "" {
+		input["image_url"] = imageURL
+	}
+	if audioURL := firstNonEmptyString(getStringExtra(r.Extra, "audio_url"), getStringExtra(r.Extra, "audio")); audioURL != "" {
+		input["audio_url"] = audioURL
+	}
+
+	parameters := map[string]interface{}{}
+	if r.Resolution != "" {
+		parameters["resolution"] = r.Resolution
+	}
+	for _, key := range []string{"resolution", "style"} {
+		if value, ok := r.Extra[key]; ok && value != nil {
+			parameters[key] = value
+		}
+	}
+
+	payload := map[string]interface{}{
+		"model": model,
+		"input": input,
+	}
+	if len(parameters) > 0 {
+		payload["parameters"] = parameters
+	}
+	return aliEndpointOverride(r, aliImageToVideoEndpoint), payload, nil
 }
 
 func (a *AliAdaptor) doJSON(ctx context.Context, cfg *ProviderConfig, method, path string, payload interface{}, extraHeaders map[string]string, out interface{}) error {
@@ -610,6 +691,7 @@ func aliImageParameters(r *dto.MediaRequest) (parameters map[string]interface{})
 }
 
 func aliVideoParameters(r *dto.MediaRequest) (parameters map[string]interface{}) {
+	parameters = map[string]interface{}{}
 	if r.Size != "" {
 		parameters["ratio"] = r.Size
 	}
@@ -624,6 +706,18 @@ func aliVideoParameters(r *dto.MediaRequest) (parameters map[string]interface{})
 	}
 	if r.Seed != 0 {
 		parameters["seed"] = r.Seed
+	}
+	for _, key := range []string{
+		"negative_prompt",
+		"prompt_extend",
+		"watermark",
+		"shot_type",
+		"audio",
+		"template",
+	} {
+		if value, ok := r.Extra[key]; ok && value != nil {
+			parameters[key] = value
+		}
 	}
 	if len(parameters) == 0 {
 		return nil
@@ -667,12 +761,28 @@ func aliMediaInput(r *dto.MediaRequest, videoMode string) []map[string]interface
 	if media := aliMediaObjectsFromExtra(r.Extra["media"]); len(media) > 0 {
 		return media
 	}
-	if !strings.Contains(strings.ToLower(strings.TrimSpace(r.Model)), "wan2.7") {
+	if !aliUsesMediaProtocol(r.Model, r) {
 		return nil
 	}
 	files := aliMediaObjectsFromExtra(r.Extra["files"])
 	if len(files) == 0 {
 		files = append(files, aliMediaObjectsFromMessages(r.Messages)...)
+	}
+	if len(files) == 0 {
+		if firstFrame := getStringExtra(r.Extra, "first_frame_url"); firstFrame != "" {
+			files = append(files, map[string]interface{}{"type": "first_frame", "url": firstFrame})
+		}
+		if lastFrame := getStringExtra(r.Extra, "last_frame_url"); lastFrame != "" {
+			files = append(files, map[string]interface{}{"type": "last_frame", "url": lastFrame})
+		}
+		if imgURL := getStringExtra(r.Extra, "img_url"); imgURL != "" {
+			files = append(files, map[string]interface{}{"type": "first_frame", "url": imgURL})
+		}
+	}
+	if len(files) == 0 {
+		for _, urlValue := range aliReferenceImages(r) {
+			files = append(files, map[string]interface{}{"type": "image", "url": urlValue})
+		}
 	}
 	if len(files) == 0 {
 		return nil
@@ -689,9 +799,13 @@ func aliMediaInput(r *dto.MediaRequest, videoMode string) []map[string]interface
 		typ = strings.ToLower(strings.TrimSpace(typ))
 		mediaType := ""
 		switch typ {
+		case "reference_image", "reference_video", "first_frame", "last_frame", "first_clip":
+			mediaType = typ
 		case "image":
 			if videoMode == aliVideoModeImage || videoMode == aliVideoModeKeyframe {
 				if firstFrameUsed && videoMode == aliVideoModeKeyframe {
+					mediaType = "last_frame"
+				} else if firstFrameUsed && videoMode == aliVideoModeImage {
 					mediaType = "last_frame"
 				} else {
 					mediaType = "first_frame"
@@ -713,7 +827,10 @@ func aliMediaInput(r *dto.MediaRequest, videoMode string) []map[string]interface
 		default:
 			continue
 		}
-		out = append(out, map[string]interface{}{"type": mediaType, "url": urlValue})
+		item := copyMap(file)
+		item["type"] = mediaType
+		item["url"] = urlValue
+		out = append(out, item)
 	}
 	return out
 }
@@ -847,6 +964,10 @@ func normalizeAliVideoMode(mode string) string {
 		return ""
 	}
 	switch {
+	case strings.Contains(mode, "animate"), strings.Contains(mode, "换人"), strings.Contains(mode, "replace-person"), strings.Contains(mode, "video-replace"):
+		return aliVideoModeAnimate
+	case strings.Contains(mode, "s2v"), strings.Contains(mode, "avatar"), strings.Contains(mode, "数字人"):
+		return aliVideoModeAvatar
 	case strings.Contains(mode, "r2v"), strings.Contains(mode, "reference"):
 		return aliVideoModeReference
 	case strings.Contains(mode, "kf2v"), strings.Contains(mode, "keyframe"):
@@ -859,6 +980,69 @@ func normalizeAliVideoMode(mode string) string {
 		}
 		return ""
 	}
+}
+
+func aliUsesMediaProtocol(model string, r *dto.MediaRequest) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if strings.Contains(model, "wan2.7") {
+		return true
+	}
+	return r != nil && r.Extra != nil && r.Extra["media"] != nil
+}
+
+func aliIsAnimateMixModel(model string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(model)), "animate-mix")
+}
+
+func aliIsAvatarVideoModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return strings.Contains(model, "s2v") || strings.Contains(model, "avatar")
+}
+
+func aliCopyInputExtras(input, extra map[string]interface{}) {
+	for _, key := range []string{"negative_prompt", "audio_url"} {
+		if value, ok := extra[key]; ok && value != nil {
+			input[key] = value
+		}
+	}
+}
+
+func aliEndpointOverride(r *dto.MediaRequest, fallback string) string {
+	if path := getStringExtra(r.Extra, "endpoint"); path != "" {
+		return path
+	}
+	return fallback
+}
+
+func firstAliImageURL(r *dto.MediaRequest) string {
+	if r == nil {
+		return ""
+	}
+	if images := aliCollectImages(r); len(images) > 0 {
+		return images[0]
+	}
+	return ""
+}
+
+func firstAliVideoURL(r *dto.MediaRequest) string {
+	if r == nil {
+		return ""
+	}
+	for _, message := range r.Messages {
+		if videoURL := strings.TrimSpace(message.VideoURL); videoURL != "" {
+			return videoURL
+		}
+	}
+	if files := aliMediaObjectsFromExtra(r.Extra["files"]); len(files) > 0 {
+		for _, file := range files {
+			typ, _ := file["type"].(string)
+			urlValue, _ := file["url"].(string)
+			if strings.EqualFold(strings.TrimSpace(typ), "video") && strings.TrimSpace(urlValue) != "" {
+				return strings.TrimSpace(urlValue)
+			}
+		}
+	}
+	return ""
 }
 
 func aliFirstResultURL(results []map[string]interface{}) string {

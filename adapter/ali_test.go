@@ -156,7 +156,7 @@ func TestAliBuildVideoRequestUsesModelToInferReferenceMode(t *testing.T) {
 	}
 }
 
-func TestAliBuildWan27VideoRequestUsesMediaAndConcreteSize(t *testing.T) {
+func TestAliBuildWan27VideoRequestUsesMediaAndRatio(t *testing.T) {
 	adaptor := &AliAdaptor{}
 	endpoint, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
 		Type:     dto.MediaTypeVideo,
@@ -165,10 +165,11 @@ func TestAliBuildWan27VideoRequestUsesMediaAndConcreteSize(t *testing.T) {
 		Size:     "16:9",
 		Extra: map[string]interface{}{
 			"files": []interface{}{
-				map[string]interface{}{"type": "video", "url": "https://example.com/source.mp4"},
+				map[string]interface{}{"type": "video", "url": "https://example.com/source.mp4", "reference_voice": "https://example.com/voice.mp3"},
 				map[string]interface{}{"type": "image", "url": "https://example.com/ref.png"},
 			},
-			"size": "16:9",
+			"prompt_extend": false,
+			"watermark":     true,
 		},
 	})
 	if err != nil {
@@ -182,12 +183,232 @@ func TestAliBuildWan27VideoRequestUsesMediaAndConcreteSize(t *testing.T) {
 	if !ok || len(media) != 2 {
 		t.Fatalf("media = %#v, want two media items", input["media"])
 	}
-	params := payload["parameters"].(map[string]interface{})
-	if params["size"] != "832*480" {
-		t.Fatalf("size = %#v, want 832*480", params["size"])
+	if media[0]["type"] != "reference_video" || media[0]["reference_voice"] != "https://example.com/voice.mp3" {
+		t.Fatalf("media[0] = %#v, want reference video with voice", media[0])
 	}
-	if _, ok := params["ratio"]; ok {
-		t.Fatalf("ratio = %#v, want omitted", params["ratio"])
+	if media[1]["type"] != "reference_image" {
+		t.Fatalf("media[1] = %#v, want reference image", media[1])
+	}
+	params := payload["parameters"].(map[string]interface{})
+	if params["ratio"] != "16:9" {
+		t.Fatalf("ratio = %#v, want 16:9", params["ratio"])
+	}
+	if _, ok := params["size"]; ok {
+		t.Fatalf("size = %#v, want omitted", params["size"])
+	}
+	if params["prompt_extend"] != false || params["watermark"] != true {
+		t.Fatalf("parameters = %#v, want prompt_extend false and watermark true", params)
+	}
+}
+
+func TestAliBuildWan27ReferenceVideoKeepsExplicitMedia(t *testing.T) {
+	adaptor := &AliAdaptor{}
+	_, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
+		Type:       dto.MediaTypeVideo,
+		Model:      "wan2.7-r2v",
+		Messages:   []dto.Message{{Role: "user", Content: "参考角色生成视频"}},
+		Size:       "16:9",
+		Resolution: "720P",
+		Duration:   10,
+		Extra: map[string]interface{}{
+			"media": []interface{}{
+				map[string]interface{}{
+					"type":            "reference_image",
+					"url":             "https://example.com/girl.jpg",
+					"reference_voice": "https://example.com/girl.mp3",
+				},
+				map[string]interface{}{
+					"type":            "reference_video",
+					"url":             "https://example.com/boy.mp4",
+					"reference_voice": "https://example.com/boy.mp3",
+				},
+			},
+			"prompt_extend": false,
+			"watermark":     true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVideoRequest error = %v", err)
+	}
+	input := payload["input"].(map[string]interface{})
+	media, ok := input["media"].([]map[string]interface{})
+	if !ok || len(media) != 2 {
+		t.Fatalf("media = %#v, want explicit media", input["media"])
+	}
+	if media[0]["type"] != "reference_image" || media[0]["reference_voice"] != "https://example.com/girl.mp3" {
+		t.Fatalf("media[0] = %#v, want explicit reference image with voice", media[0])
+	}
+	if media[1]["type"] != "reference_video" || media[1]["reference_voice"] != "https://example.com/boy.mp3" {
+		t.Fatalf("media[1] = %#v, want explicit reference video with voice", media[1])
+	}
+	params := payload["parameters"].(map[string]interface{})
+	if params["resolution"] != "720P" || params["ratio"] != "16:9" || params["duration"] != 10 || params["prompt_extend"] != false || params["watermark"] != true {
+		t.Fatalf("parameters = %#v, want wan2.7-r2v parameters", params)
+	}
+}
+
+func TestAliBuildVideoRequestKeepsModelAndPassesParameters(t *testing.T) {
+	adaptor := &AliAdaptor{}
+	endpoint, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
+		Type:     dto.MediaTypeVideo,
+		Model:    "wan2.5-t2v-preview",
+		Messages: []dto.Message{{Role: "user", Content: "城市夜景延时摄影"}},
+		Duration: 5,
+		Extra: map[string]interface{}{
+			"prompt_extend": true,
+			"watermark":     false,
+			"shot_type":     "dolly",
+			"audio":         true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVideoRequest error = %v", err)
+	}
+	if endpoint != aliVideoEndpoint {
+		t.Fatalf("endpoint = %q, want %q", endpoint, aliVideoEndpoint)
+	}
+	if payload["model"] != "wan2.5-t2v-preview" {
+		t.Fatalf("model = %#v, want request model", payload["model"])
+	}
+	if _, ok := payload["watermark"]; ok {
+		t.Fatalf("top-level watermark = %#v, want omitted", payload["watermark"])
+	}
+	params := payload["parameters"].(map[string]interface{})
+	if params["duration"] != 5 || params["prompt_extend"] != true || params["watermark"] != false || params["shot_type"] != "dolly" || params["audio"] != true {
+		t.Fatalf("parameters = %#v, want video options passed through", params)
+	}
+}
+
+func TestAliBuildVideoRequestDoesNotDefaultModel(t *testing.T) {
+	adaptor := &AliAdaptor{}
+	_, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
+		Type:     dto.MediaTypeVideo,
+		Messages: []dto.Message{{Role: "user", Content: "城市夜景延时摄影"}},
+	})
+	if err != nil {
+		t.Fatalf("buildVideoRequest error = %v", err)
+	}
+	if payload["model"] != "" {
+		t.Fatalf("model = %#v, want empty request model preserved", payload["model"])
+	}
+}
+
+func TestAliBuildWan27ImageVideoUsesVideoEndpointAndMedia(t *testing.T) {
+	adaptor := &AliAdaptor{}
+	endpoint, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
+		Type:  dto.MediaTypeVideo,
+		Model: "wan2.7-i2v",
+		Messages: []dto.Message{
+			{Role: "user", Content: "镜头推进", ImageURL: "https://example.com/start.png"},
+			{Role: "user", ImageURL: "https://example.com/end.png"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVideoRequest error = %v", err)
+	}
+	if endpoint != aliVideoEndpoint {
+		t.Fatalf("endpoint = %q, want %q", endpoint, aliVideoEndpoint)
+	}
+	input := payload["input"].(map[string]interface{})
+	if _, ok := input["first_frame_url"]; ok {
+		t.Fatalf("first_frame_url = %#v, want media protocol only", input["first_frame_url"])
+	}
+	media, ok := input["media"].([]map[string]interface{})
+	if !ok || len(media) != 2 {
+		t.Fatalf("media = %#v, want first/last frame media", input["media"])
+	}
+	if media[0]["type"] != "first_frame" || media[1]["type"] != "last_frame" {
+		t.Fatalf("media = %#v, want first_frame and last_frame", media)
+	}
+}
+
+func TestAliBuildWan27ImageVideoConvertsFrameExtrasToMedia(t *testing.T) {
+	adaptor := &AliAdaptor{}
+	_, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
+		Type:  dto.MediaTypeVideo,
+		Model: "wan2.7-i2v",
+		Messages: []dto.Message{
+			{Role: "user", Content: "镜头推进"},
+		},
+		Extra: map[string]interface{}{
+			"first_frame_url": "https://example.com/start.png",
+			"last_frame_url":  "https://example.com/end.png",
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVideoRequest error = %v", err)
+	}
+	input := payload["input"].(map[string]interface{})
+	if _, ok := input["first_frame_url"]; ok {
+		t.Fatalf("first_frame_url = %#v, want omitted for media protocol", input["first_frame_url"])
+	}
+	if _, ok := input["last_frame_url"]; ok {
+		t.Fatalf("last_frame_url = %#v, want omitted for media protocol", input["last_frame_url"])
+	}
+	media, ok := input["media"].([]map[string]interface{})
+	if !ok || len(media) != 2 {
+		t.Fatalf("media = %#v, want frame media", input["media"])
+	}
+	if media[0]["type"] != "first_frame" || media[1]["type"] != "last_frame" {
+		t.Fatalf("media = %#v, want first_frame and last_frame", media)
+	}
+}
+
+func TestAliBuildAnimateMixVideoRequest(t *testing.T) {
+	adaptor := &AliAdaptor{}
+	endpoint, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
+		Type:  dto.MediaTypeVideo,
+		Model: "wan2.2-animate-mix",
+		Messages: []dto.Message{
+			{Role: "user", ImageURL: "https://example.com/person.png", VideoURL: "https://example.com/source.mp4"},
+		},
+		Extra: map[string]interface{}{
+			"mode":      "wan-pro",
+			"watermark": true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVideoRequest error = %v", err)
+	}
+	if endpoint != aliImageToVideoEndpoint {
+		t.Fatalf("endpoint = %q, want %q", endpoint, aliImageToVideoEndpoint)
+	}
+	input := payload["input"].(map[string]interface{})
+	if input["image_url"] != "https://example.com/person.png" || input["video_url"] != "https://example.com/source.mp4" || input["watermark"] != true {
+		t.Fatalf("input = %#v, want animate mix image/video/watermark", input)
+	}
+	params := payload["parameters"].(map[string]interface{})
+	if params["mode"] != "wan-pro" {
+		t.Fatalf("mode = %#v, want wan-pro", params["mode"])
+	}
+}
+
+func TestAliBuildAvatarVideoRequest(t *testing.T) {
+	adaptor := &AliAdaptor{}
+	endpoint, payload, err := adaptor.buildVideoRequest(&dto.MediaRequest{
+		Type:  dto.MediaTypeVideo,
+		Model: "wan2.2-s2v",
+		Messages: []dto.Message{
+			{Role: "user", ImageURL: "https://example.com/avatar.png"},
+		},
+		Extra: map[string]interface{}{
+			"audio_url":  "https://example.com/audio.wav",
+			"resolution": "720P",
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVideoRequest error = %v", err)
+	}
+	if endpoint != aliImageToVideoEndpoint {
+		t.Fatalf("endpoint = %q, want %q", endpoint, aliImageToVideoEndpoint)
+	}
+	input := payload["input"].(map[string]interface{})
+	if input["image_url"] != "https://example.com/avatar.png" || input["audio_url"] != "https://example.com/audio.wav" {
+		t.Fatalf("input = %#v, want avatar image/audio", input)
+	}
+	params := payload["parameters"].(map[string]interface{})
+	if params["resolution"] != "720P" {
+		t.Fatalf("resolution = %#v, want 720P", params["resolution"])
 	}
 }
 
