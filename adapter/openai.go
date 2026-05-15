@@ -14,7 +14,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/YspCoder/omnigo/dto"
 	"github.com/openai/openai-go/v3"
@@ -165,6 +167,25 @@ type openAIResponsesUsage struct {
 
 type openAIResponsesError struct {
 	Message string `json:"message"`
+	Code    string `json:"code,omitempty"`
+}
+
+type openAIImageTaskResult struct {
+	URL     string `json:"url,omitempty"`
+	B64JSON string `json:"b64_json,omitempty"`
+}
+
+type openAIImageTaskStatusResponse struct {
+	ID          string                  `json:"id,omitempty"`
+	RequestID   string                  `json:"request_id,omitempty"`
+	Status      string                  `json:"status,omitempty"`
+	TaskStatus  string                  `json:"task_status,omitempty"`
+	CreatedAt   int64                   `json:"created_at,omitempty"`
+	CompletedAt int64                   `json:"completed_at,omitempty"`
+	Data        []openAIImageTaskResult `json:"data,omitempty"`
+	Error       *openAIResponsesError   `json:"error,omitempty"`
+	Code        string                  `json:"code,omitempty"`
+	Message     string                  `json:"message,omitempty"`
 }
 
 func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
@@ -412,6 +433,11 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 			if request.Resolution != "" {
 				params.Quality = openai.ImageEditParamsQuality(request.Resolution)
 			}
+			if async, ok := getBoolExtra(request.Extra, "async"); ok {
+				params.SetExtraFields(map[string]interface{}{
+					"async": async,
+				})
+			}
 
 			resp, err := client.Images.Edit(ctx, params)
 			if err != nil {
@@ -435,6 +461,11 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 		}
 		if request.Resolution != "" {
 			params.Quality = openai.ImageGenerateParamsQuality(request.Resolution)
+		}
+		if async, ok := getBoolExtra(request.Extra, "async"); ok {
+			params.SetExtraFields(map[string]interface{}{
+				"async": async,
+			})
 		}
 
 		resp, err := client.Images.Generate(ctx, params)
@@ -596,7 +627,62 @@ func openAIImageFilename(index int, contentType string) string {
 }
 
 func (a *OpenAIAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string, _ ...map[string]string) (*dto.TaskStatusResponse, error) {
-	return nil, fmt.Errorf("task status not supported by OpenAI")
+	if strings.TrimSpace(taskID) == "" {
+		return nil, fmt.Errorf("task id is required")
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		strings.TrimRight(openAIBaseURL(config), "/")+"/images/"+url.PathEscape(taskID)+"/result",
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+config.APIKey)
+	if config.Organization != "" {
+		req.Header.Set("OpenAI-Organization", config.Organization)
+	}
+	for key, value := range config.Headers {
+		req.Header.Set(key, value)
+	}
+
+	httpResp, err := a.getHTTPClient(config).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer httpResp.Body.Close()
+
+	rawBody, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		return nil, fmt.Errorf("openai image task status error: status=%d body=%s", httpResp.StatusCode, strings.TrimSpace(string(rawBody)))
+	}
+
+	var parsed openAIImageTaskStatusResponse
+	if err := json.Unmarshal(rawBody, &parsed); err != nil {
+		return nil, err
+	}
+	if parsed.Error != nil && parsed.Error.Message != "" {
+		return nil, fmt.Errorf("openai image task status error: %s", parsed.Error.Message)
+	}
+
+	resp := &dto.TaskStatusResponse{
+		RequestID: firstNonEmptyString(parsed.RequestID, parsed.ID),
+		Output: dto.TaskStatusOutput{
+			TaskID:     firstNonEmptyString(parsed.ID, taskID),
+			TaskStatus: firstNonEmptyString(parsed.TaskStatus, parsed.Status),
+			SubmitTime: openAIUnixTimeString(parsed.CreatedAt),
+			EndTime:    openAIUnixTimeString(parsed.CompletedAt),
+			URL:        openAIFirstTaskResultURL(parsed.Data),
+			Code:       firstNonEmptyString(parsed.Code, parsed.ErrorCode()),
+			Message:    firstNonEmptyString(parsed.Message, parsed.ErrorMessage()),
+		},
+	}
+	return resp, nil
 }
 
 func (a *OpenAIAdaptor) ListTasks(ctx context.Context, config *ProviderConfig, query map[string]string) (*dto.TaskListResponse, error) {
@@ -605,4 +691,34 @@ func (a *OpenAIAdaptor) ListTasks(ctx context.Context, config *ProviderConfig, q
 
 func (a *OpenAIAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
 	return nil, fmt.Errorf("streaming media not supported by OpenAI adaptor")
+}
+
+func (r *openAIImageTaskStatusResponse) ErrorCode() string {
+	if r == nil || r.Error == nil {
+		return ""
+	}
+	return r.Error.Code
+}
+
+func (r *openAIImageTaskStatusResponse) ErrorMessage() string {
+	if r == nil || r.Error == nil {
+		return ""
+	}
+	return r.Error.Message
+}
+
+func openAIFirstTaskResultURL(items []openAIImageTaskResult) string {
+	for _, item := range items {
+		if item.URL != "" {
+			return item.URL
+		}
+	}
+	return ""
+}
+
+func openAIUnixTimeString(ts int64) string {
+	if ts <= 0 {
+		return ""
+	}
+	return strconv.FormatInt(ts, 10) + " (" + time.Unix(ts, 0).UTC().Format(time.RFC3339) + ")"
 }
