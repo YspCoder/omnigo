@@ -175,6 +175,18 @@ type openAIImageTaskResult struct {
 	B64JSON string `json:"b64_json,omitempty"`
 }
 
+type openAIImageAsyncResponse struct {
+	ID         string                  `json:"id,omitempty"`
+	TaskID     string                  `json:"task_id,omitempty"`
+	RequestID  string                  `json:"request_id,omitempty"`
+	Status     string                  `json:"status,omitempty"`
+	TaskStatus string                  `json:"task_status,omitempty"`
+	Data       []openAIImageTaskResult `json:"data,omitempty"`
+	Error      *openAIResponsesError   `json:"error,omitempty"`
+	Code       string                  `json:"code,omitempty"`
+	Message    string                  `json:"message,omitempty"`
+}
+
 type openAIImageTaskStatusResponse struct {
 	ID          string                  `json:"id,omitempty"`
 	RequestID   string                  `json:"request_id,omitempty"`
@@ -408,6 +420,7 @@ func (a *OpenAIAdaptor) Stream(ctx context.Context, config *ProviderConfig, requ
 
 func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	client := a.getClient(config)
+	async, hasAsync := getBoolExtra(request.Extra, "async")
 
 	switch request.Type {
 	case dto.MediaTypeImage:
@@ -433,15 +446,18 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 			if request.Resolution != "" {
 				params.Quality = openai.ImageEditParamsQuality(request.Resolution)
 			}
-			if async, ok := getBoolExtra(request.Extra, "async"); ok {
+			if hasAsync {
 				params.SetExtraFields(map[string]interface{}{
-					"async": async,
+					"async": strconv.FormatBool(async),
 				})
 			}
 
 			resp, err := client.Images.Edit(ctx, params)
 			if err != nil {
 				return nil, err
+			}
+			if async {
+				return openAIAsyncImageResponse(resp), nil
 			}
 			return openAIImageResponse(resp), nil
 		}
@@ -462,7 +478,7 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 		if request.Resolution != "" {
 			params.Quality = openai.ImageGenerateParamsQuality(request.Resolution)
 		}
-		if async, ok := getBoolExtra(request.Extra, "async"); ok {
+		if hasAsync {
 			params.SetExtraFields(map[string]interface{}{
 				"async": async,
 			})
@@ -471,6 +487,9 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 		resp, err := client.Images.Generate(ctx, params)
 		if err != nil {
 			return nil, err
+		}
+		if async {
+			return openAIAsyncImageResponse(resp), nil
 		}
 
 		return openAIImageResponse(resp), nil
@@ -491,6 +510,54 @@ func openAIImageResponse(resp *openai.ImagesResponse) *dto.MediaResponse {
 		res.URL = res.Data[0].URL
 	}
 	return res
+}
+
+func openAIAsyncImageResponse(resp *openai.ImagesResponse) *dto.MediaResponse {
+	if resp == nil {
+		return &dto.MediaResponse{}
+	}
+
+	var parsed openAIImageAsyncResponse
+	if raw := strings.TrimSpace(resp.RawJSON()); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
+			res := &dto.MediaResponse{
+				ID:           parsed.ID,
+				RequestID:    firstNonEmptyString(parsed.RequestID, parsed.ID),
+				TaskID:       firstNonEmptyString(parsed.TaskID, parsed.ID),
+				Status:       firstNonEmptyString(parsed.TaskStatus, parsed.Status),
+				ErrorCode:    firstNonEmptyString(parsed.Code, openAIResponsesErrorCode(parsed.Error)),
+				ErrorMessage: firstNonEmptyString(parsed.Message, openAIResponsesErrorMessage(parsed.Error)),
+			}
+			for _, img := range parsed.Data {
+				res.Data = append(res.Data, dto.ImageData{
+					URL:     img.URL,
+					B64JSON: img.B64JSON,
+				})
+			}
+			if len(res.Data) > 0 {
+				res.URL = res.Data[0].URL
+			}
+			if res.TaskID != "" || res.Status != "" || res.RequestID != "" || res.ErrorCode != "" || res.ErrorMessage != "" {
+				return res
+			}
+		}
+	}
+
+	return openAIImageResponse(resp)
+}
+
+func openAIResponsesErrorCode(err *openAIResponsesError) string {
+	if err == nil {
+		return ""
+	}
+	return err.Code
+}
+
+func openAIResponsesErrorMessage(err *openAIResponsesError) string {
+	if err == nil {
+		return ""
+	}
+	return err.Message
 }
 
 func openAIImageEditInput(images []io.Reader) openai.ImageEditParamsImageUnion {
@@ -634,7 +701,7 @@ func (a *OpenAIAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, 
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodGet,
-		strings.TrimRight(openAIBaseURL(config), "/")+"/images/"+url.PathEscape(taskID)+"/result",
+		strings.TrimRight(openAIBaseURL(config), "/")+"/v1/gpt/images/"+url.PathEscape(taskID),
 		nil,
 	)
 	if err != nil {
