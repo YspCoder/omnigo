@@ -120,6 +120,63 @@ func TestOpenAIChatUsesResponsesOutputContentFallback(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatUsesResponsesAPIForMultiImageContent(t *testing.T) {
+	var gotBody map[string]interface{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("unmarshal body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_multi_img",
+			"model":"gpt-4.1",
+			"output_text":"ok"
+		}`))
+	}))
+	defer srv.Close()
+
+	adaptor := &OpenAIAdaptor{}
+	_, err := adaptor.Chat(context.Background(), &ProviderConfig{
+		APIKey:  "test-key",
+		BaseURL: srv.URL,
+	}, &dto.MediaRequest{
+		Model: "gpt-4.1",
+		Messages: []dto.Message{
+			{
+				Role:    "user",
+				Content: []interface{}{"https://example.com/a.png", "https://example.com/b.png"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	input, ok := gotBody["input"].([]interface{})
+	if !ok || len(input) != 1 {
+		t.Fatalf("input = %#v", gotBody["input"])
+	}
+	first, _ := input[0].(map[string]interface{})
+	content, _ := first["content"].([]interface{})
+	if len(content) != 2 {
+		t.Fatalf("content = %#v", first["content"])
+	}
+	for i, want := range []string{"https://example.com/a.png", "https://example.com/b.png"} {
+		part, _ := content[i].(map[string]interface{})
+		if part["type"] != "input_image" {
+			t.Fatalf("content[%d].type = %#v, want input_image", i, part["type"])
+		}
+		if part["image_url"] != want {
+			t.Fatalf("content[%d].image_url = %#v, want %q", i, part["image_url"], want)
+		}
+	}
+}
+
 func TestOpenAIMediaImageUsesEditWhenExtraImageProvided(t *testing.T) {
 	var gotPath string
 	var gotPrompt string
@@ -171,6 +228,74 @@ func TestOpenAIMediaImageUsesEditWhenExtraImageProvided(t *testing.T) {
 	}
 	if gotImage != "reference-image" {
 		t.Fatalf("image body = %q", gotImage)
+	}
+	if resp == nil || len(resp.Data) != 1 || resp.Data[0].B64JSON != "edited-image" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestOpenAIMediaImageUsesEditWhenExtraImageArrayProvided(t *testing.T) {
+	var gotPrompt string
+	var gotImages []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/images/edits" {
+			t.Fatalf("path = %q, want /images/edits", r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("parse multipart form: %v", err)
+		}
+		gotPrompt = r.FormValue("prompt")
+		for _, headers := range r.MultipartForm.File {
+			for _, header := range headers {
+				if header == nil {
+					continue
+				}
+				file, err := header.Open()
+				if err != nil {
+					t.Fatalf("open form file: %v", err)
+				}
+				body, err := io.ReadAll(file)
+				file.Close()
+				if err != nil {
+					t.Fatalf("read form file: %v", err)
+				}
+				gotImages = append(gotImages, string(body))
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"b64_json":"edited-image"}]}`))
+	}))
+	defer srv.Close()
+
+	adaptor := &OpenAIAdaptor{}
+	resp, err := adaptor.Media(context.Background(), &ProviderConfig{
+		APIKey:  "test-key",
+		BaseURL: srv.URL,
+	}, &dto.MediaRequest{
+		Type:  dto.MediaTypeImage,
+		Model: "gpt-image-1",
+		Messages: []dto.Message{
+			{Role: "user", Content: "make it cinematic"},
+		},
+		Extra: map[string]interface{}{
+			"image": []string{
+				"data:image/png;base64,Zmlyc3QtaW1hZ2U=",
+				"data:image/png;base64,c2Vjb25kLWltYWdl",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Media() error = %v", err)
+	}
+	if gotPrompt != "make it cinematic" {
+		t.Fatalf("prompt = %q", gotPrompt)
+	}
+	if len(gotImages) != 2 {
+		t.Fatalf("got %d images, want 2", len(gotImages))
+	}
+	if gotImages[0] != "first-image" || gotImages[1] != "second-image" {
+		t.Fatalf("image bodies = %#v", gotImages)
 	}
 	if resp == nil || len(resp.Data) != 1 || resp.Data[0].B64JSON != "edited-image" {
 		t.Fatalf("response = %#v", resp)

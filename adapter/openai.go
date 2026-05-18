@@ -132,11 +132,13 @@ type openAIResponsesInputItem struct {
 }
 
 type openAIResponsesInputContentItem struct {
-	Type     string `json:"type"`
-	Text     string `json:"text,omitempty"`
-	FileURL  string `json:"file_url,omitempty"`
-	FileID   string `json:"file_id,omitempty"`
-	Filename string `json:"filename,omitempty"`
+	Type        string `json:"type"`
+	Text        string `json:"text,omitempty"`
+	FileURL     string `json:"file_url,omitempty"`
+	FileID      string `json:"file_id,omitempty"`
+	Filename    string `json:"filename,omitempty"`
+	ImageURL    string `json:"image_url,omitempty"`
+	ImageDetail string `json:"detail,omitempty"`
 }
 
 type openAIResponsesResponse struct {
@@ -277,7 +279,7 @@ func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *Provid
 
 func openAIUsesResponsesAPI(messages []dto.Message) bool {
 	for _, message := range messages {
-		if message.FileURL != "" {
+		if message.FileURL != "" || len(openAIMessageImageURLs(message)) > 0 {
 			return true
 		}
 	}
@@ -292,10 +294,17 @@ func toOpenAIResponsesInput(messages []dto.Message) []openAIResponsesInputItem {
 			role = "user"
 		}
 		content := make([]openAIResponsesInputContentItem, 0, 2)
-		if text := strings.TrimSpace(fmt.Sprint(message.Content)); text != "" && text != "<nil>" {
+		if text := openAIMessageTextContent(message); text != "" {
 			content = append(content, openAIResponsesInputContentItem{
 				Type: "input_text",
 				Text: text,
+			})
+		}
+		for _, imageURL := range openAIMessageImageURLs(message) {
+			content = append(content, openAIResponsesInputContentItem{
+				Type:        "input_image",
+				ImageURL:    imageURL,
+				ImageDetail: message.ImageDetail,
 			})
 		}
 		if message.FileURL != "" {
@@ -332,19 +341,75 @@ func extractOpenAIResponsesText(items []openAIResponsesOutputItem) string {
 func toOpenAIMessages(messages []dto.Message) []openai.ChatCompletionMessageParamUnion {
 	res := make([]openai.ChatCompletionMessageParamUnion, len(messages))
 	for i, m := range messages {
-		content := fmt.Sprint(m.Content)
+		content := openAIMessageTextContent(m)
+		parts := openAIChatMessageParts(m)
 		switch m.Role {
 		case "system":
 			res[i] = openai.SystemMessage(content)
 		case "user":
-			res[i] = openai.UserMessage(content)
+			if len(parts) > 0 {
+				res[i] = openai.UserMessage(parts)
+			} else {
+				res[i] = openai.UserMessage(content)
+			}
 		case "assistant":
 			res[i] = openai.AssistantMessage(content)
 		default:
-			res[i] = openai.UserMessage(content)
+			if len(parts) > 0 {
+				res[i] = openai.UserMessage(parts)
+			} else {
+				res[i] = openai.UserMessage(content)
+			}
 		}
 	}
 	return res
+}
+
+func openAIChatMessageParts(message dto.Message) []openai.ChatCompletionContentPartUnionParam {
+	parts := make([]openai.ChatCompletionContentPartUnionParam, 0, 1+len(openAIMessageImageURLs(message)))
+	if text := openAIMessageTextContent(message); text != "" {
+		parts = append(parts, openai.TextContentPart(text))
+	}
+	for _, imageURL := range openAIMessageImageURLs(message) {
+		parts = append(parts, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+			URL:    imageURL,
+			Detail: message.ImageDetail,
+		}))
+	}
+	return parts
+}
+
+func openAIMessageImageURLs(message dto.Message) []string {
+	urls := make([]string, 0, 2)
+	if imageURL := strings.TrimSpace(message.ImageURL); imageURL != "" {
+		urls = append(urls, imageURL)
+	}
+	if extraImages := openAIContentImageURLs(message.Content); len(extraImages) > 0 {
+		urls = append(urls, extraImages...)
+	}
+	return urls
+}
+
+func openAIMessageTextContent(message dto.Message) string {
+	switch message.Content.(type) {
+	case nil, []interface{}, []string, map[string]interface{}, map[string]string:
+		return ""
+	default:
+		text := strings.TrimSpace(fmt.Sprint(message.Content))
+		if text == "" || text == "<nil>" {
+			return ""
+		}
+		return text
+	}
+}
+
+func openAIContentImageURLs(content interface{}) []string {
+	switch content.(type) {
+	case []interface{}, []string, map[string]interface{}, map[string]string:
+		return contentImageURLs(content)
+	default:
+		return nil
+	}
 }
 
 func (a *OpenAIAdaptor) getHTTPClient(config *ProviderConfig) *http.Client {
@@ -572,11 +637,7 @@ func openAIImageReferenceReaders(ctx context.Context, httpClient *http.Client, e
 		return nil, nil
 	}
 
-	inputs := make([]string, 0, 1)
-	if image, ok := contentImageURL(extra["image"]); ok {
-		inputs = append(inputs, image)
-	}
-	inputs = append(inputs, contentImageURLs(extra["images"])...)
+	inputs := openAIExtraImageInputs(extra)
 	if len(inputs) == 0 {
 		return nil, nil
 	}
@@ -590,6 +651,19 @@ func openAIImageReferenceReaders(ctx context.Context, httpClient *http.Client, e
 		readers = append(readers, reader)
 	}
 	return readers, nil
+}
+
+func openAIExtraImageInputs(extra map[string]interface{}) []string {
+	if extra == nil {
+		return nil
+	}
+
+	inputs := contentImageURLs(extra["image"])
+	inputs = append(inputs, contentImageURLs(extra["images"])...)
+	if len(inputs) == 0 {
+		return nil
+	}
+	return inputs
 }
 
 type openAIImageReader struct {
