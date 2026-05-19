@@ -202,6 +202,19 @@ type openAIImageTaskStatusResponse struct {
 	Message     string                  `json:"message,omitempty"`
 }
 
+type openAIImageEditRequest struct {
+	Model  string                        `json:"model"`
+	Prompt string                        `json:"prompt"`
+	Images []openAIImageEditRequestImage `json:"images,omitempty"`
+	Async  bool                          `json:"async,omitempty"`
+	N      int                           `json:"n,omitempty"`
+	Size   string                        `json:"size,omitempty"`
+}
+
+type openAIImageEditRequestImage struct {
+	ImageURL string `json:"image_url,omitempty"`
+}
+
 func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	payload := openAIResponsesRequest{
 		Model: request.Model,
@@ -437,6 +450,14 @@ func openAIBaseURL(config *ProviderConfig) string {
 	return "https://api.openai.com/v1"
 }
 
+func openAIReferenceImageEditURL(config *ProviderConfig) string {
+	base := strings.TrimRight(openAIBaseURL(config), "/")
+	if strings.HasSuffix(base, "/v1") {
+		base = strings.TrimSuffix(base, "/v1")
+	}
+	return base + "/images/edits"
+}
+
 type openAIStreamWrapper struct {
 	stream *ssestream.Stream[openai.ChatCompletionChunk]
 }
@@ -494,6 +515,10 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 			return nil, err
 		}
 		if len(referenceImages) > 0 {
+			if status, ok := getIntExtra(request.Extra, "status"); ok && status == 1 {
+				return a.editImageWithReference(ctx, config, request, async)
+			}
+
 			params := openai.ImageEditParams{
 				Prompt: mediaPromptWithSystem(request),
 				Model:  request.Model,
@@ -609,6 +634,96 @@ func openAIAsyncImageResponse(resp *openai.ImagesResponse) *dto.MediaResponse {
 	}
 
 	return openAIImageResponse(resp)
+}
+
+func (a *OpenAIAdaptor) editImageWithReference(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest, async bool) (*dto.MediaResponse, error) {
+	inputs := openAIExtraImageInputs(request.Extra)
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("openai image reference edit requires image input")
+	}
+
+	payload := openAIImageEditRequest{
+		Model:  request.Model,
+		Prompt: mediaPromptWithSystem(request),
+		Async:  async,
+		Images: make([]openAIImageEditRequestImage, 0, len(inputs)),
+	}
+	if request.N > 0 {
+		payload.N = request.N
+	}
+	if request.Size != "" {
+		payload.Size = request.Size
+	}
+	for _, input := range inputs {
+		if imageURL := strings.TrimSpace(input); imageURL != "" {
+			payload.Images = append(payload.Images, openAIImageEditRequestImage{ImageURL: imageURL})
+		}
+	}
+	if len(payload.Images) == 0 {
+		return nil, fmt.Errorf("openai image reference edit requires image input")
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, openAIReferenceImageEditURL(config), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+config.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	if config.Organization != "" {
+		req.Header.Set("OpenAI-Organization", config.Organization)
+	}
+	for key, value := range config.Headers {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := a.getHTTPClient(config).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("openai image edit error: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(rawBody)))
+	}
+
+	var parsed openAIImageAsyncResponse
+	if err := json.Unmarshal(rawBody, &parsed); err != nil {
+		return nil, err
+	}
+	if parsed.Error != nil && parsed.Error.Message != "" {
+		return nil, fmt.Errorf("openai image edit error: %s", parsed.Error.Message)
+	}
+	if parsed.Message != "" && parsed.Code != "" {
+		return nil, fmt.Errorf("openai image edit error: %s", parsed.Message)
+	}
+
+	result := &dto.MediaResponse{
+		ID:           firstNonEmptyString(parsed.ID, parsed.TaskID),
+		RequestID:    firstNonEmptyString(parsed.RequestID, parsed.ID, parsed.TaskID),
+		TaskID:       firstNonEmptyString(parsed.TaskID, parsed.ID),
+		Status:       firstNonEmptyString(parsed.TaskStatus, parsed.Status),
+		ErrorCode:    firstNonEmptyString(parsed.Code, openAIResponsesErrorCode(parsed.Error)),
+		ErrorMessage: firstNonEmptyString(parsed.Message, openAIResponsesErrorMessage(parsed.Error)),
+	}
+	for _, img := range parsed.Data {
+		result.Data = append(result.Data, dto.ImageData{
+			URL:     img.URL,
+			B64JSON: img.B64JSON,
+		})
+	}
+	if len(result.Data) > 0 {
+		result.URL = result.Data[0].URL
+	}
+	return result, nil
 }
 
 func openAIResponsesErrorCode(err *openAIResponsesError) string {

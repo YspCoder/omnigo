@@ -7,7 +7,7 @@ require (
 	github.com/go-playground/validator/v10 v10.30.2
 	github.com/invopop/jsonschema v0.14.0
 	github.com/liushuangls/go-anthropic/v2 v2.19.0
-	github.com/openai/openai-go/v3 v3.34.0
+	github.com/openai/openai-go/v3 v3.36.0
 	github.com/volcengine/volcengine-go-sdk v1.2.26
 	google.golang.org/genai v1.56.0
 )

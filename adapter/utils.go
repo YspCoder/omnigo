@@ -1,7 +1,9 @@
 package adapter
 
 import (
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/YspCoder/omnigo/dto"
@@ -29,6 +31,47 @@ func getBoolExtra(extra map[string]interface{}, key string) (bool, bool) {
 	}
 	typed, ok := value.(bool)
 	return typed, ok
+}
+
+func getIntExtra(extra map[string]interface{}, key string) (int, bool) {
+	if extra == nil {
+		return 0, false
+	}
+	value, ok := extra[key]
+	if !ok || value == nil {
+		return 0, false
+	}
+
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int8:
+		return int(typed), true
+	case int16:
+		return int(typed), true
+	case int32:
+		return int(typed), true
+	case int64:
+		return int(typed), true
+	case float32:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	case json.Number:
+		n, err := typed.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(n), true
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err != nil {
+			return 0, false
+		}
+		return n, true
+	default:
+		return 0, false
+	}
 }
 
 func getStringSliceExtra(extra map[string]interface{}, key string) []string {
