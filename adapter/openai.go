@@ -515,7 +515,7 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 			return nil, err
 		}
 		if len(referenceImages) > 0 {
-			if status, ok := getIntExtra(request.Extra, "status"); ok && status == 1 {
+			if thirdParty, ok := getBoolExtra(request.Extra, "third_party"); ok && thirdParty {
 				return a.editImageWithReference(ctx, config, request, async)
 			}
 
