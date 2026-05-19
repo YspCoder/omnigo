@@ -775,6 +775,7 @@ func openAIExtraImageInputs(extra map[string]interface{}) []string {
 
 	inputs := contentImageURLs(extra["image"])
 	inputs = append(inputs, contentImageURLs(extra["images"])...)
+	inputs = append(inputs, contentImageURLs(extra["files"])...)
 	if len(inputs) == 0 {
 		return nil
 	}
