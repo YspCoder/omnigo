@@ -510,8 +510,8 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 
 	switch request.Type {
 	case dto.MediaTypeImage:
-
 		inputs := openAIExtraImageInputs(request.Extra)
+		fmt.Println(fmt.Sprintf("-------------------------%d--------------------------%v", len(inputs), request.Extra))
 		if len(inputs) > 0 {
 			if thirdParty, ok := getBoolExtra(request.Extra, "third_party"); ok && thirdParty {
 				return a.editImageWithReference(ctx, config, request, async, inputs)
