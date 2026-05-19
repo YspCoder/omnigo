@@ -510,13 +510,16 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 
 	switch request.Type {
 	case dto.MediaTypeImage:
-		referenceImages, err := openAIImageReferenceReaders(ctx, a.getHTTPClient(config), request.Extra)
-		if err != nil {
-			return nil, err
-		}
-		if len(referenceImages) > 0 {
+
+		inputs := openAIExtraImageInputs(request.Extra)
+		if len(inputs) > 0 {
 			if thirdParty, ok := getBoolExtra(request.Extra, "third_party"); ok && thirdParty {
-				return a.editImageWithReference(ctx, config, request, async)
+				return a.editImageWithReference(ctx, config, request, async, inputs)
+			}
+
+			referenceImages, err := openAIImageReferenceReaders(ctx, a.getHTTPClient(config), inputs)
+			if err != nil {
+				return nil, err
 			}
 
 			params := openai.ImageEditParams{
@@ -636,11 +639,7 @@ func openAIAsyncImageResponse(resp *openai.ImagesResponse) *dto.MediaResponse {
 	return openAIImageResponse(resp)
 }
 
-func (a *OpenAIAdaptor) editImageWithReference(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest, async bool) (*dto.MediaResponse, error) {
-	inputs := openAIExtraImageInputs(request.Extra)
-	if len(inputs) == 0 {
-		return nil, fmt.Errorf("openai image reference edit requires image input")
-	}
+func (a *OpenAIAdaptor) editImageWithReference(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest, async bool, inputs []string) (*dto.MediaResponse, error) {
 
 	payload := openAIImageEditRequest{
 		Model:  request.Model,
@@ -747,16 +746,7 @@ func openAIImageEditInput(images []io.Reader) openai.ImageEditParamsImageUnion {
 	return openai.ImageEditParamsImageUnion{OfFileArray: images}
 }
 
-func openAIImageReferenceReaders(ctx context.Context, httpClient *http.Client, extra map[string]interface{}) ([]io.Reader, error) {
-	if extra == nil {
-		return nil, nil
-	}
-
-	inputs := openAIExtraImageInputs(extra)
-	if len(inputs) == 0 {
-		return nil, nil
-	}
-
+func openAIImageReferenceReaders(ctx context.Context, httpClient *http.Client, inputs []string) ([]io.Reader, error) {
 	readers := make([]io.Reader, 0, len(inputs))
 	for i, input := range inputs {
 		reader, err := openAIImageReferenceReader(ctx, httpClient, input, i)
