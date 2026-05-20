@@ -302,6 +302,63 @@ func TestOpenAIMediaImageUsesEditWhenExtraImageArrayProvided(t *testing.T) {
 	}
 }
 
+func TestOpenAIMediaImageUsesEditWhenExtraFilesMapArrayProvided(t *testing.T) {
+	var gotPrompt string
+	var gotImage string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/images/edits" {
+			t.Fatalf("path = %q, want /images/edits", r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("parse multipart form: %v", err)
+		}
+		gotPrompt = r.FormValue("prompt")
+		file, _, err := r.FormFile("image")
+		if err != nil {
+			t.Fatalf("read form file: %v", err)
+		}
+		body, err := io.ReadAll(file)
+		file.Close()
+		if err != nil {
+			t.Fatalf("read form file: %v", err)
+		}
+		gotImage = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"b64_json":"edited-image"}]}`))
+	}))
+	defer srv.Close()
+
+	adaptor := &OpenAIAdaptor{}
+	resp, err := adaptor.Media(context.Background(), &ProviderConfig{
+		APIKey:  "test-key",
+		BaseURL: srv.URL,
+	}, &dto.MediaRequest{
+		Type:  dto.MediaTypeImage,
+		Model: "gpt-image-1",
+		Messages: []dto.Message{
+			{Role: "user", Content: "make it cinematic"},
+		},
+		Extra: map[string]interface{}{
+			"files": []map[string]interface{}{
+				{"index": 1, "type": "image", "url": "data:image/png;base64,cmVmZXJlbmNlLWltYWdl"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Media() error = %v", err)
+	}
+	if gotPrompt != "make it cinematic" {
+		t.Fatalf("prompt = %q", gotPrompt)
+	}
+	if gotImage != "reference-image" {
+		t.Fatalf("image body = %q", gotImage)
+	}
+	if resp == nil || len(resp.Data) != 1 || resp.Data[0].B64JSON != "edited-image" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
 func TestOpenAIMediaImageUsesGenerateWithoutExtraImage(t *testing.T) {
 	var gotPath string
 	var gotPrompt string
