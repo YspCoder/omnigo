@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/YspCoder/omnigo/dto"
+	"github.com/YspCoder/omnigo/utils"
 )
 
 func TestMediaPromptWithSystem(t *testing.T) {
@@ -14,7 +15,7 @@ func TestMediaPromptWithSystem(t *testing.T) {
 		},
 	}
 
-	got := mediaPromptWithSystem(request)
+	got := utils.MediaPromptWithSystem(request)
 	want := "be concise\n\ndraw a cat"
 	if got != want {
 		t.Fatalf("expected combined prompt %q, got %q", want, got)

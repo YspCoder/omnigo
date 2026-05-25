@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/YspCoder/omnigo/dto"
+	"github.com/YspCoder/omnigo/utils"
 )
 
 const (
@@ -316,8 +317,8 @@ func (a *AliAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, re
 }
 
 func (a *AliAdaptor) buildImageRequest(r *dto.MediaRequest) (string, map[string]interface{}, bool, error) {
-	prompt := strings.TrimSpace(mediaPromptWithSystem(r))
-	if explicitPrompt := getStringExtra(r.Extra, "prompt"); explicitPrompt != "" {
+	prompt := strings.TrimSpace(utils.MediaPromptWithSystem(r))
+	if explicitPrompt := utils.GetStringExtra(r.Extra, "prompt"); explicitPrompt != "" {
 		prompt = explicitPrompt
 	}
 	if prompt == "" {
@@ -390,7 +391,7 @@ func (a *AliAdaptor) buildVideoRequest(r *dto.MediaRequest) (string, map[string]
 		return a.buildAvatarVideoRequest(r, model)
 	}
 
-	prompt := strings.TrimSpace(mediaPromptWithSystem(r))
+	prompt := strings.TrimSpace(utils.MediaPromptWithSystem(r))
 	input := map[string]interface{}{
 		"prompt": prompt,
 	}
@@ -414,7 +415,7 @@ func (a *AliAdaptor) buildVideoRequest(r *dto.MediaRequest) (string, map[string]
 	if mediaProtocol {
 		endpoint = aliVideoEndpoint
 	}
-	if path := getStringExtra(r.Extra, "endpoint"); path != "" {
+	if path := utils.GetStringExtra(r.Extra, "endpoint"); path != "" {
 		endpoint = path
 	}
 	return endpoint, payload, nil
@@ -422,19 +423,19 @@ func (a *AliAdaptor) buildVideoRequest(r *dto.MediaRequest) (string, map[string]
 
 func (a *AliAdaptor) buildAnimateMixVideoRequest(r *dto.MediaRequest, model string) (string, map[string]interface{}, error) {
 	input := map[string]interface{}{}
-	if imageURL := firstNonEmptyString(getStringExtra(r.Extra, "image_url"), getStringExtra(r.Extra, "image"), firstAliImageURL(r)); imageURL != "" {
+	if imageURL := firstNonEmptyString(utils.GetStringExtra(r.Extra, "image_url"), utils.GetStringExtra(r.Extra, "image"), firstAliImageURL(r)); imageURL != "" {
 		input["image_url"] = imageURL
 	}
-	if videoURL := firstNonEmptyString(getStringExtra(r.Extra, "video_url"), getStringExtra(r.Extra, "video"), firstAliVideoURL(r)); videoURL != "" {
+	if videoURL := firstNonEmptyString(utils.GetStringExtra(r.Extra, "video_url"), utils.GetStringExtra(r.Extra, "video"), firstAliVideoURL(r)); videoURL != "" {
 		input["video_url"] = videoURL
 	}
-	if watermark, ok := getBoolExtra(r.Extra, "watermark"); ok {
+	if watermark, ok := utils.GetBoolExtra(r.Extra, "watermark"); ok {
 		input["watermark"] = watermark
 	}
 
 	parameters := map[string]interface{}{}
-	mode := firstNonEmptyString(getStringExtra(r.Extra, "animate_mode"), getStringExtra(r.Extra, "service_mode"))
-	if rawMode := getStringExtra(r.Extra, "mode"); rawMode == "wan-std" || rawMode == "wan-pro" {
+	mode := firstNonEmptyString(utils.GetStringExtra(r.Extra, "animate_mode"), utils.GetStringExtra(r.Extra, "service_mode"))
+	if rawMode := utils.GetStringExtra(r.Extra, "mode"); rawMode == "wan-std" || rawMode == "wan-pro" {
 		mode = rawMode
 	}
 	if mode == "" {
@@ -452,10 +453,10 @@ func (a *AliAdaptor) buildAnimateMixVideoRequest(r *dto.MediaRequest, model stri
 
 func (a *AliAdaptor) buildAvatarVideoRequest(r *dto.MediaRequest, model string) (string, map[string]interface{}, error) {
 	input := map[string]interface{}{}
-	if imageURL := firstNonEmptyString(getStringExtra(r.Extra, "image_url"), getStringExtra(r.Extra, "image"), firstAliImageURL(r)); imageURL != "" {
+	if imageURL := firstNonEmptyString(utils.GetStringExtra(r.Extra, "image_url"), utils.GetStringExtra(r.Extra, "image"), firstAliImageURL(r)); imageURL != "" {
 		input["image_url"] = imageURL
 	}
-	if audioURL := firstNonEmptyString(getStringExtra(r.Extra, "audio_url"), getStringExtra(r.Extra, "audio")); audioURL != "" {
+	if audioURL := firstNonEmptyString(utils.GetStringExtra(r.Extra, "audio_url"), utils.GetStringExtra(r.Extra, "audio")); audioURL != "" {
 		input["audio_url"] = audioURL
 	}
 
@@ -704,10 +705,7 @@ func aliCollectImages(r *dto.MediaRequest) []string {
 			out = append(out, message.ImageURL)
 		}
 	}
-	if image := getStringExtra(r.Extra, "image"); image != "" {
-		out = append(out, image)
-	}
-	out = append(out, getStringSliceExtra(r.Extra, "images")...)
+	out = append(out, utils.ParseExtraImageInputs(r.Extra)...)
 	return compactStrings(out)
 }
 
@@ -718,10 +716,10 @@ func aliCollectVideos(r *dto.MediaRequest) []string {
 			out = append(out, message.VideoURL)
 		}
 	}
-	if video := getStringExtra(r.Extra, "video"); video != "" {
+	if video := utils.GetStringExtra(r.Extra, "video"); video != "" {
 		out = append(out, video)
 	}
-	out = append(out, getStringSliceExtra(r.Extra, "videos")...)
+	out = append(out, utils.GetStringSliceExtra(r.Extra, "videos")...)
 	return compactStrings(out)
 }
 
@@ -879,10 +877,10 @@ func aliModelFamily(model string) string {
 }
 
 func aliResolveImageMode(r *dto.MediaRequest) string {
-	if async, ok := getBoolExtra(r.Extra, "async"); ok && !async {
+	if async, ok := utils.GetBoolExtra(r.Extra, "async"); ok && !async {
 		return aliImageModeSync
 	}
-	if mode := normalizeAliImageMode(getStringExtra(r.Extra, "mode")); mode != "" {
+	if mode := normalizeAliImageMode(utils.GetStringExtra(r.Extra, "mode")); mode != "" {
 		return mode
 	}
 	if mode := normalizeAliImageMode(r.Model); mode != "" {
@@ -922,7 +920,7 @@ func normalizeAliImageMode(mode string) string {
 }
 
 func aliResolveVideoMode(r *dto.MediaRequest) string {
-	if mode := normalizeAliVideoMode(getStringExtra(r.Extra, "mode")); mode != "" {
+	if mode := normalizeAliVideoMode(utils.GetStringExtra(r.Extra, "mode")); mode != "" {
 		return mode
 	}
 	if mode := normalizeAliVideoMode(r.Model); mode != "" {
@@ -991,7 +989,7 @@ func aliIsHappyHorseModel(model string) bool {
 }
 
 func aliEndpointOverride(r *dto.MediaRequest, fallback string) string {
-	if path := getStringExtra(r.Extra, "endpoint"); path != "" {
+	if path := utils.GetStringExtra(r.Extra, "endpoint"); path != "" {
 		return path
 	}
 	return fallback

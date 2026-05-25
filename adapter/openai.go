@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/YspCoder/omnigo/dto"
+	"github.com/YspCoder/omnigo/utils"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/ssestream"
@@ -419,7 +420,7 @@ func openAIMessageTextContent(message dto.Message) string {
 func openAIContentImageURLs(content interface{}) []string {
 	switch content.(type) {
 	case []interface{}, []string, map[string]interface{}, map[string]string:
-		return contentImageURLs(content)
+		return utils.ContentImageURLs(content)
 	default:
 		return nil
 	}
@@ -506,14 +507,14 @@ func (a *OpenAIAdaptor) Stream(ctx context.Context, config *ProviderConfig, requ
 
 func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	client := a.getClient(config)
-	async, hasAsync := getBoolExtra(request.Extra, "async")
+	async, hasAsync := utils.GetBoolExtra(request.Extra, "async")
 
 	switch request.Type {
 	case dto.MediaTypeImage:
-		inputs := openAIExtraImageInputs(request.Extra)
+		inputs := utils.ParseExtraImageInputs(request.Extra)
 		fmt.Println(fmt.Sprintf("-------------------------%d--------------------------%v", len(inputs), request.Extra))
 		if len(inputs) > 0 {
-			if thirdParty, ok := getBoolExtra(request.Extra, "third_party"); ok && thirdParty {
+			if thirdParty, ok := utils.GetBoolExtra(request.Extra, "third_party"); ok && thirdParty {
 				return a.editImageWithReference(ctx, config, request, async, inputs)
 			}
 
@@ -523,7 +524,7 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 			}
 
 			params := openai.ImageEditParams{
-				Prompt: mediaPromptWithSystem(request),
+				Prompt: utils.MediaPromptWithSystem(request),
 				Model:  request.Model,
 				Image:  openAIImageEditInput(referenceImages),
 			}
@@ -556,7 +557,7 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 		}
 
 		params := openai.ImageGenerateParams{
-			Prompt: mediaPromptWithSystem(request),
+			Prompt: utils.MediaPromptWithSystem(request),
 			Model:  request.Model,
 		}
 		if request.N > 0 {
@@ -643,7 +644,7 @@ func (a *OpenAIAdaptor) editImageWithReference(ctx context.Context, config *Prov
 
 	payload := openAIImageEditRequest{
 		Model:  request.Model,
-		Prompt: mediaPromptWithSystem(request),
+		Prompt: utils.MediaPromptWithSystem(request),
 		Async:  async,
 		Images: make([]openAIImageEditRequestImage, 0, len(inputs)),
 	}
@@ -756,20 +757,6 @@ func openAIImageReferenceReaders(ctx context.Context, httpClient *http.Client, i
 		readers = append(readers, reader)
 	}
 	return readers, nil
-}
-
-func openAIExtraImageInputs(extra map[string]interface{}) []string {
-	if extra == nil {
-		return nil
-	}
-
-	inputs := contentImageURLs(extra["image"])
-	inputs = append(inputs, contentImageURLs(extra["images"])...)
-	inputs = append(inputs, contentImageURLs(extra["files"])...)
-	if len(inputs) == 0 {
-		return nil
-	}
-	return inputs
 }
 
 type openAIImageReader struct {

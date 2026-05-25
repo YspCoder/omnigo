@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"github.com/YspCoder/omnigo/dto"
+	"github.com/YspCoder/omnigo/utils"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
-	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/utils"
+	arkutils "github.com/volcengine/volcengine-go-sdk/service/arkruntime/utils"
 	"github.com/volcengine/volcengine-go-sdk/volcengine"
 )
 
@@ -612,7 +613,7 @@ func stringValue(v interface{}) string {
 }
 
 func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
-	req := model.GenerateImagesRequest{Model: r.Model, Prompt: mediaPromptWithSystem(r)}
+	req := model.GenerateImagesRequest{Model: r.Model, Prompt: utils.MediaPromptWithSystem(r)}
 	if r.Size != "" {
 		req.Size = &r.Resolution
 	}
@@ -623,10 +624,10 @@ func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
 		req.ResponseFormat = &r.ResponseFormat
 	}
 	if r.Extra != nil {
-		images := contentImageURLs(r.Extra["images"])
+		images := utils.ContentImageURLs(r.Extra["images"])
 		if len(images) > 0 {
 			req.Image = images
-		} else if image, ok := contentImageURL(r.Extra["image"]); ok {
+		} else if image, ok := utils.ContentImageURL(r.Extra["image"]); ok {
 			req.Image = image
 		}
 		if v, ok := r.Extra["guidance_scale"].(float64); ok {
@@ -768,11 +769,11 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 				req.Frames = volcengine.Int64(n)
 			}
 		case "image":
-			if url, ok := contentImageURL(v); ok {
+			if url, ok := utils.ContentImageURL(v); ok {
 				appendCustomMediaContent("image_url", "first_frame", "image_url", url)
 			}
 		case "images":
-			urls := contentImageURLs(v)
+			urls := utils.ContentImageURLs(v)
 			if len(urls) > 0 {
 				appendCustomMediaContent("image_url", "first_frame", "image_url", urls[0])
 			}
@@ -780,11 +781,11 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 				appendCustomMediaContent("image_url", "last_frame", "image_url", urls[1])
 			}
 		case "reference_image":
-			if url, ok := contentImageURL(v); ok {
+			if url, ok := utils.ContentImageURL(v); ok {
 				appendReferenceImages([]string{url})
 			}
 		case "reference_images":
-			urls := contentImageURLs(v)
+			urls := utils.ContentImageURLs(v)
 			appendReferenceImages(urls)
 		case "files":
 			files := contentReferenceFiles(v)
@@ -977,7 +978,7 @@ func formatUnixMillis(ts int64) string {
 }
 
 type arkStream struct {
-	r *utils.ResponsesStreamReader
+	r *arkutils.ResponsesStreamReader
 }
 
 func (w *arkStream) Next(ctx context.Context) (*dto.StreamToken, error) {
@@ -1017,7 +1018,7 @@ func (w *arkStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 func (w *arkStream) Close() error { return w.r.Close() }
 
 type arkMediaStream struct {
-	r *utils.ImageGenerationStreamReader
+	r *arkutils.ImageGenerationStreamReader
 }
 
 func (w *arkMediaStream) Next(ctx context.Context) (*dto.StreamToken, error) {

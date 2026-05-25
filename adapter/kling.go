@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/YspCoder/omnigo/dto"
+	"github.com/YspCoder/omnigo/utils"
 )
 
 const (
@@ -318,13 +319,13 @@ func (a *KlingAdaptor) listTasksForMode(ctx context.Context, cfg *ProviderConfig
 }
 
 func (a *KlingAdaptor) resolveMode(r *dto.MediaRequest) (string, string, error) {
-	if mode := normalizeKlingMode(getStringExtra(r.Extra, "mode")); mode != "" {
+	if mode := normalizeKlingMode(utils.GetStringExtra(r.Extra, "mode")); mode != "" {
 		return mode, klingModeEndpoint[mode], nil
 	}
-	if mode := normalizeKlingMode(getStringExtra(r.Extra, "task_type")); mode != "" {
+	if mode := normalizeKlingMode(utils.GetStringExtra(r.Extra, "task_type")); mode != "" {
 		return mode, klingModeEndpoint[mode], nil
 	}
-	if path := getStringExtra(r.Extra, "endpoint"); path != "" {
+	if path := utils.GetStringExtra(r.Extra, "endpoint"); path != "" {
 		mode := normalizeKlingMode(path)
 		if mode != "" {
 			return mode, klingModeEndpoint[mode], nil
@@ -591,7 +592,7 @@ func isKnownKlingImageModel(model string) bool {
 }
 
 func (a *KlingAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[string]interface{}, error) {
-	payload := copyMap(extractPayloadMap(r.Extra))
+	payload := copyMap(utils.ExtractPayloadMap(r.Extra))
 	if payload == nil {
 		payload = map[string]interface{}{}
 	}
@@ -602,11 +603,11 @@ func (a *KlingAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[strin
 		"endpoint":  {},
 	})
 
-	prompt := strings.TrimSpace(mediaPromptWithSystem(r))
-	if explicitPrompt := getStringExtra(r.Extra, "prompt"); explicitPrompt != "" {
+	prompt := strings.TrimSpace(utils.MediaPromptWithSystem(r))
+	if explicitPrompt := utils.GetStringExtra(r.Extra, "prompt"); explicitPrompt != "" {
 		prompt = explicitPrompt
 	}
-	if text := getStringExtra(r.Extra, "text"); text != "" && mode == klingModeTTS {
+	if text := utils.GetStringExtra(r.Extra, "text"); text != "" && mode == klingModeTTS {
 		payload["text"] = text
 	}
 
@@ -1010,14 +1011,8 @@ func klingImageInputs(r *dto.MediaRequest) []string {
 	for _, imageURL := range allImageURLs(r.Messages) {
 		appendURL(imageURL)
 	}
-	appendURL(getStringExtra(r.Extra, "image"))
-	for _, imageURL := range getStringSliceExtra(r.Extra, "images") {
+	for _, imageURL := range utils.ParseExtraImageInputs(r.Extra) {
 		appendURL(imageURL)
-	}
-	for _, file := range contentReferenceFiles(r.Extra["files"]) {
-		if file.Type == "image" {
-			appendURL(file.URL)
-		}
 	}
 
 	if len(out) == 0 {

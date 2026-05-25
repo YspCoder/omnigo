@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/YspCoder/omnigo/dto"
+	"github.com/YspCoder/omnigo/utils"
 	"google.golang.org/genai"
 )
 
@@ -109,7 +110,7 @@ func (a *GoogleAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.M
 			}
 			return a.toImgContentResp(resp), nil
 		}
-		resp, err := c.Models.GenerateImages(ctx, model, mediaPromptWithSystem(r), a.toImgCfg(r))
+		resp, err := c.Models.GenerateImages(ctx, model, utils.MediaPromptWithSystem(r), a.toImgCfg(r))
 		if err != nil {
 			return nil, err
 		}
@@ -132,7 +133,7 @@ func (a *GoogleAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.M
 		}
 		return res, nil
 	case dto.MediaTypeVideo:
-		op, err := c.Models.GenerateVideos(ctx, r.Model, mediaPromptWithSystem(r), nil, a.toVidCfg(r))
+		op, err := c.Models.GenerateVideos(ctx, r.Model, utils.MediaPromptWithSystem(r), nil, a.toVidCfg(r))
 		if err != nil {
 			return nil, err
 		}
@@ -191,7 +192,7 @@ func (a *GoogleAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig,
 
 // Helpers
 func (a *GoogleAdaptor) toContents(ctx context.Context, c *genai.Client, r *dto.MediaRequest) ([]*genai.Content, error) {
-	messages := nonSystemMessages(r.Messages)
+	messages := utils.NonSystemMessages(r.Messages)
 	lastUserIdx := lastGoogleUserMessageIndex(messages)
 	res := make([]*genai.Content, 0, len(messages))
 	for idx, m := range messages {
@@ -209,7 +210,7 @@ func (a *GoogleAdaptor) toContents(ctx context.Context, c *genai.Client, r *dto.
 
 func (a *GoogleAdaptor) toMediaPromptContents(ctx context.Context, c *genai.Client, r *dto.MediaRequest) ([]*genai.Content, error) {
 	parts := make([]*genai.Part, 0, 1+len(googleAllImageInputs(r)))
-	if prompt := strings.TrimSpace(mediaPromptWithSystem(r)); prompt != "" {
+	if prompt := strings.TrimSpace(utils.MediaPromptWithSystem(r)); prompt != "" {
 		parts = append(parts, genai.NewPartFromText(prompt))
 	}
 	imageParts, err := googleImagePartsFromInputs(ctx, googleHTTPClient(c), googleAllImageInputs(r))
@@ -225,7 +226,7 @@ func (a *GoogleAdaptor) toMediaPromptContents(ctx context.Context, c *genai.Clie
 
 func (a *GoogleAdaptor) toGenCfg(r *dto.MediaRequest) *genai.GenerateContentConfig {
 	cfg := &genai.GenerateContentConfig{}
-	if systemPrompt := firstSystemMessage(r.Messages); systemPrompt != "" {
+	if systemPrompt := utils.FirstSystemMessage(r.Messages); systemPrompt != "" {
 		cfg.SystemInstruction = &genai.Content{
 			Role:  "system",
 			Parts: []*genai.Part{genai.NewPartFromText(systemPrompt)},
@@ -549,9 +550,7 @@ func googleExtraImageInputs(r *dto.MediaRequest) []string {
 	if r == nil {
 		return nil
 	}
-	out := []string{getStringExtra(r.Extra, "image")}
-	out = append(out, getStringSliceExtra(r.Extra, "images")...)
-	return compactGoogleImageInputs(out)
+	return compactGoogleImageInputs(utils.ParseExtraImageInputs(r.Extra))
 }
 
 func compactGoogleImageInputs(values []string) []string {

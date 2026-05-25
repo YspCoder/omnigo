@@ -1,4 +1,4 @@
-package adapter
+package utils
 
 import (
 	"encoding/json"
@@ -9,7 +9,7 @@ import (
 	"github.com/YspCoder/omnigo/dto"
 )
 
-func getStringExtra(extra map[string]interface{}, key string) string {
+func GetStringExtra(extra map[string]interface{}, key string) string {
 	if extra == nil {
 		return ""
 	}
@@ -21,7 +21,7 @@ func getStringExtra(extra map[string]interface{}, key string) string {
 	return ""
 }
 
-func getBoolExtra(extra map[string]interface{}, key string) (bool, bool) {
+func GetBoolExtra(extra map[string]interface{}, key string) (bool, bool) {
 	if extra == nil {
 		return false, false
 	}
@@ -33,7 +33,7 @@ func getBoolExtra(extra map[string]interface{}, key string) (bool, bool) {
 	return typed, ok
 }
 
-func getIntExtra(extra map[string]interface{}, key string) (int, bool) {
+func GetIntExtra(extra map[string]interface{}, key string) (int, bool) {
 	if extra == nil {
 		return 0, false
 	}
@@ -74,7 +74,7 @@ func getIntExtra(extra map[string]interface{}, key string) (int, bool) {
 	}
 }
 
-func getStringSliceExtra(extra map[string]interface{}, key string) []string {
+func GetStringSliceExtra(extra map[string]interface{}, key string) []string {
 	if extra == nil {
 		return nil
 	}
@@ -107,7 +107,7 @@ func getStringSliceExtra(extra map[string]interface{}, key string) []string {
 	}
 }
 
-func extractPayloadMap(extra map[string]interface{}) map[string]interface{} {
+func ExtractPayloadMap(extra map[string]interface{}) map[string]interface{} {
 	if extra == nil {
 		return nil
 	}
@@ -122,7 +122,7 @@ func extractPayloadMap(extra map[string]interface{}) map[string]interface{} {
 	return payload
 }
 
-func firstSystemMessage(messages []dto.Message) string {
+func FirstSystemMessage(messages []dto.Message) string {
 	parts := make([]string, 0, len(messages))
 	for _, message := range messages {
 		if message.Role != "system" {
@@ -135,7 +135,7 @@ func firstSystemMessage(messages []dto.Message) string {
 	return strings.Join(parts, "\n\n")
 }
 
-func nonSystemMessages(messages []dto.Message) []dto.Message {
+func NonSystemMessages(messages []dto.Message) []dto.Message {
 	result := make([]dto.Message, 0, len(messages))
 	for _, message := range messages {
 		if message.Role == "system" {
@@ -146,13 +146,13 @@ func nonSystemMessages(messages []dto.Message) []dto.Message {
 	return result
 }
 
-func mediaPromptWithSystem(request *dto.MediaRequest) string {
+func MediaPromptWithSystem(request *dto.MediaRequest) string {
 	if request == nil {
 		return ""
 	}
 
-	prompt := firstUserMessage(request.Messages)
-	systemPrompt := firstSystemMessage(request.Messages)
+	prompt := FirstUserMessage(request.Messages)
+	systemPrompt := FirstSystemMessage(request.Messages)
 	if systemPrompt == "" {
 		return prompt
 	}
@@ -162,7 +162,7 @@ func mediaPromptWithSystem(request *dto.MediaRequest) string {
 	return systemPrompt + "\n\n" + prompt
 }
 
-func firstUserMessage(messages []dto.Message) string {
+func FirstUserMessage(messages []dto.Message) string {
 	parts := make([]string, 0, len(messages))
 	for _, message := range messages {
 		if message.Role != "user" {
@@ -175,7 +175,7 @@ func firstUserMessage(messages []dto.Message) string {
 	return strings.Join(parts, "\n\n")
 }
 
-func contentImageURLs(v interface{}) []string {
+func ContentImageURLs(v interface{}) []string {
 	switch arr := v.(type) {
 	case []string:
 		var out []string
@@ -188,7 +188,7 @@ func contentImageURLs(v interface{}) []string {
 	case []map[string]interface{}:
 		var out []string
 		for _, item := range arr {
-			if url, ok := contentImageURL(item); ok {
+			if url, ok := ContentImageURL(item); ok {
 				out = append(out, url)
 			}
 		}
@@ -196,7 +196,7 @@ func contentImageURLs(v interface{}) []string {
 	case []map[string]string:
 		var out []string
 		for _, item := range arr {
-			if url, ok := contentImageURL(item); ok {
+			if url, ok := ContentImageURL(item); ok {
 				out = append(out, url)
 			}
 		}
@@ -204,20 +204,20 @@ func contentImageURLs(v interface{}) []string {
 	case []interface{}:
 		var out []string
 		for _, item := range arr {
-			if url, ok := contentImageURL(item); ok {
+			if url, ok := ContentImageURL(item); ok {
 				out = append(out, url)
 			}
 		}
 		return out
 	default:
-		if url, ok := contentImageURL(v); ok {
+		if url, ok := ContentImageURL(v); ok {
 			return []string{url}
 		}
 	}
 	return nil
 }
 
-func contentImageURL(v interface{}) (string, bool) {
+func ContentImageURL(v interface{}) (string, bool) {
 	switch item := v.(type) {
 	case string:
 		if item == "" {

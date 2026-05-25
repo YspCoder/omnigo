@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/YspCoder/omnigo/dto"
+	"github.com/YspCoder/omnigo/utils"
 )
 
 const (
@@ -223,13 +224,13 @@ func (a *ViduAdaptor) ListTasks(ctx context.Context, cfg *ProviderConfig, query 
 }
 
 func (a *ViduAdaptor) resolveMode(r *dto.MediaRequest) (string, string, error) {
-	if mode := normalizeViduMode(getStringExtra(r.Extra, "mode")); mode != "" {
+	if mode := normalizeViduMode(utils.GetStringExtra(r.Extra, "mode")); mode != "" {
 		return mode, viduModeEndpoint[mode], nil
 	}
-	if mode := normalizeViduMode(getStringExtra(r.Extra, "task_type")); mode != "" {
+	if mode := normalizeViduMode(utils.GetStringExtra(r.Extra, "task_type")); mode != "" {
 		return mode, viduModeEndpoint[mode], nil
 	}
-	if mode := normalizeViduMode(getStringExtra(r.Extra, "endpoint")); mode != "" {
+	if mode := normalizeViduMode(utils.GetStringExtra(r.Extra, "endpoint")); mode != "" {
 		return mode, viduModeEndpoint[mode], nil
 	}
 	if mode := viduModelMode(r.Model, r.Type); mode != "" {
@@ -246,7 +247,7 @@ func (a *ViduAdaptor) resolveMode(r *dto.MediaRequest) (string, string, error) {
 		if rawFrames, ok := r.Extra["frames"]; ok && rawFrames != nil {
 			return viduModeMulti, viduModeEndpoint[viduModeMulti], nil
 		}
-		if getStringExtra(r.Extra, "start_image") != "" || getStringExtra(r.Extra, "end_image") != "" {
+		if utils.GetStringExtra(r.Extra, "start_image") != "" || utils.GetStringExtra(r.Extra, "end_image") != "" {
 			return viduModeStartEnd, viduModeEndpoint[viduModeStartEnd], nil
 		}
 		images := a.collectImages(r)
@@ -355,11 +356,11 @@ func (a *ViduAdaptor) looksLikeTextToSpeech(r *dto.MediaRequest) bool {
 	if r == nil || r.Extra == nil {
 		return false
 	}
-	if getStringExtra(r.Extra, "text") == "" {
+	if utils.GetStringExtra(r.Extra, "text") == "" {
 		return false
 	}
 	for _, key := range []string{"voice", "voice_id", "speaker", "speaker_id"} {
-		if getStringExtra(r.Extra, key) != "" {
+		if utils.GetStringExtra(r.Extra, key) != "" {
 			return true
 		}
 	}
@@ -371,7 +372,7 @@ func (a *ViduAdaptor) looksLikeVoiceClone(r *dto.MediaRequest) bool {
 		return false
 	}
 	for _, key := range []string{"audio_url", "audio_file_url", "sample_audio_url", "reference_audio_url"} {
-		if getStringExtra(r.Extra, key) != "" {
+		if utils.GetStringExtra(r.Extra, key) != "" {
 			return true
 		}
 	}
@@ -382,8 +383,8 @@ func (a *ViduAdaptor) looksLikeLipSync(r *dto.MediaRequest) bool {
 	if r == nil || r.Extra == nil {
 		return false
 	}
-	hasVideo := getStringExtra(r.Extra, "video_url") != "" || getStringExtra(r.Extra, "input_video") != ""
-	hasAudio := getStringExtra(r.Extra, "audio_url") != "" || getStringExtra(r.Extra, "voice_url") != ""
+	hasVideo := utils.GetStringExtra(r.Extra, "video_url") != "" || utils.GetStringExtra(r.Extra, "input_video") != ""
+	hasAudio := utils.GetStringExtra(r.Extra, "audio_url") != "" || utils.GetStringExtra(r.Extra, "voice_url") != ""
 	return hasVideo && hasAudio
 }
 
@@ -393,8 +394,8 @@ func (a *ViduAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[string
 	if r.Model != "" {
 		payload["model"] = r.Model
 	}
-	prompt := strings.TrimSpace(mediaPromptWithSystem(r))
-	if explicitPrompt := getStringExtra(r.Extra, "prompt"); explicitPrompt != "" {
+	prompt := strings.TrimSpace(utils.MediaPromptWithSystem(r))
+	if explicitPrompt := utils.GetStringExtra(r.Extra, "prompt"); explicitPrompt != "" {
 		prompt = explicitPrompt
 	}
 	if prompt != "" && mode != viduModeMulti {
@@ -412,15 +413,15 @@ func (a *ViduAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[string
 	if r.Size != "" {
 		payload["aspect_ratio"] = r.Size
 	}
-	if style := getStringExtra(r.Extra, "style"); style != "" {
+	if style := utils.GetStringExtra(r.Extra, "style"); style != "" {
 		payload["style"] = style
 		consumed["style"] = struct{}{}
 	}
-	if movement := getStringExtra(r.Extra, "movement_amplitude"); movement != "" {
+	if movement := utils.GetStringExtra(r.Extra, "movement_amplitude"); movement != "" {
 		payload["movement_amplitude"] = movement
 		consumed["movement_amplitude"] = struct{}{}
 	}
-	if callbackURL := getStringExtra(r.Extra, "callback_url"); callbackURL != "" {
+	if callbackURL := utils.GetStringExtra(r.Extra, "callback_url"); callbackURL != "" {
 		payload["callback_url"] = callbackURL
 		consumed["callback_url"] = struct{}{}
 	}
@@ -433,7 +434,7 @@ func (a *ViduAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[string
 		consumed["payload"] = struct{}{}
 	}
 	for _, key := range []string{"bgm", "off_peak", "watermark"} {
-		if value, ok := getBoolExtra(r.Extra, key); ok {
+		if value, ok := utils.GetBoolExtra(r.Extra, key); ok {
 			payload[key] = value
 			consumed[key] = struct{}{}
 		}
@@ -442,7 +443,7 @@ func (a *ViduAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[string
 		payload["wm_position"] = pos
 		consumed["wm_position"] = struct{}{}
 	}
-	if wmURL := getStringExtra(r.Extra, "wm_url"); wmURL != "" {
+	if wmURL := utils.GetStringExtra(r.Extra, "wm_url"); wmURL != "" {
 		payload["wm_url"] = wmURL
 		consumed["wm_url"] = struct{}{}
 	}
@@ -523,7 +524,7 @@ func (a *ViduAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[string
 		mergeExtraPayload(payload, r.Extra, consumed)
 		return payload, nil
 	case viduModeTextToSpeech:
-		if text := getStringExtra(r.Extra, "text"); text != "" {
+		if text := utils.GetStringExtra(r.Extra, "text"); text != "" {
 			payload["text"] = text
 			consumed["text"] = struct{}{}
 		} else if prompt != "" {
@@ -543,11 +544,11 @@ func (a *ViduAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[string
 }
 
 func (a *ViduAdaptor) collectImages(r *dto.MediaRequest) []string {
-	if urls := contentImageURLs(r.Extra["images"]); len(urls) > 0 {
+	if urls := utils.ParseExtraImageInputs(map[string]interface{}{"images": r.Extra["images"]}); len(urls) > 0 {
 		return urls
 	}
-	if url, ok := contentImageURL(r.Extra["image"]); ok {
-		return []string{url}
+	if urls := utils.ParseExtraImageInputs(map[string]interface{}{"image": r.Extra["image"]}); len(urls) > 0 {
+		return urls
 	}
 	var out []string
 	for _, message := range r.Messages {
@@ -559,8 +560,8 @@ func (a *ViduAdaptor) collectImages(r *dto.MediaRequest) []string {
 }
 
 func (a *ViduAdaptor) collectStartEndImages(r *dto.MediaRequest) []string {
-	start := getStringExtra(r.Extra, "start_image")
-	end := getStringExtra(r.Extra, "end_image")
+	start := utils.GetStringExtra(r.Extra, "start_image")
+	end := utils.GetStringExtra(r.Extra, "end_image")
 	if start != "" || end != "" {
 		return compactStrings([]string{start, end})
 	}
