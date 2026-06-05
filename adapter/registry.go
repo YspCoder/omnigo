@@ -108,6 +108,14 @@ func NewRegistry(providerNames ...string) *Registry {
 				return &KlingAdaptor{}
 			},
 		},
+		"pai": {
+			Name:     "pai",
+			Type:     TypeCustom,
+			Endpoint: "https://app-api.pixverseai.cn",
+			AdaptorFactory: func() Adaptor {
+				return &PaiAdaptor{}
+			},
+		},
 	}
 
 	if len(providerNames) == 0 {

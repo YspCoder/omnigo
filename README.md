@@ -39,6 +39,7 @@
 - Google / Gemini (`google`)
 - Vidu (`vidu`)
 - Kling AI (`kling`)
+- Pai / PixVerse (`pai`)
 
 > 说明：以上名称为 `SetProvider(...)` 传入值。
 
@@ -65,6 +66,54 @@ llm, err := omnigo.NewLLM(
     omnigo.SetAPIKey(os.Getenv("KLING_API_KEY")),
 )
 ```
+
+### Pai / PixVerse 示例
+
+```go
+videoReq := &dto.MediaRequest{
+    Type:     dto.MediaTypeVideo,
+    Model:    "v6",
+    Duration: 5,
+    Size:     "16:9",
+    Messages: []dto.Message{
+        {Role: "user", Content: "一只机械狐狸在雪夜森林里奔跑，镜头跟拍"},
+    },
+    Extra: map[string]interface{}{
+        "quality":    "540p",
+        "water_mark": false,
+    },
+}
+
+llm, err := omnigo.NewLLM(
+    omnigo.SetProvider("pai"),
+    omnigo.SetModel("v6"),
+    omnigo.SetAPIKey(os.Getenv("PAI_API_KEY")),
+)
+```
+
+当前 `pai` 适配已支持这些视频能力：
+
+- `text-to-video`
+- `image-to-video`
+- `transition`
+- `extend`
+- `swap`
+- `multi-transition`
+- `mimic`
+- `lip-sync`
+- `mask-selection`
+- `sound-effect`
+- `restyle`
+- `restyle` list query
+- `modify`
+
+说明：
+- `image-to-video`、`transition`、`mimic`、`multi-transition` 在缺少 `img_id` 时会自动上传图片。
+- `extend`、`swap`、`mimic`、`lip-sync` 需要通过 `extra` 传入官方接口要求的 `source_video_id` 或 `video_media_id`。
+- `mask-selection` 是同步辅助接口，当前会把官方返回 JSON 放到 `MediaResponse.Text`，并把 `keyframe_url` 映射到 `MediaResponse.URL`。
+- `swap` 支持 `extra.auto_mask_selection=true`，会先调用 `mask-selection` 自动补 `keyframe_id` 和首个 `mask_id`。
+- `ListTasks(..., map[string]string{\"mode\": \"restyle\"})` 现在会返回 Pai 官方 `restyle/list` 中的可用风格项。
+- `modify` 已接入，但官方文档目前仍标记为 `developing`，建议优先在真实环境做一次验证后再在生产路径使用。
 
 ## 安装
 
