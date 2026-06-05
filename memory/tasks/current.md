@@ -13,3 +13,4 @@
 - 增加 Pai mask-selection、sound-effect、restyle 支持
 - 增加 Pai restyle/list 查询封装与 modify 支持
 - 增加 Pai 适配器测试与示例
+- 清理 OpenAI 适配器残留调试输出
