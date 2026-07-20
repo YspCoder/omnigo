@@ -127,7 +127,7 @@ client, err := omnigo.NewLLM(
     omnigo.SetProvider("custom"),
     omnigo.SetModel("seedance-2.0-fast-480p"),
     omnigo.SetEndpoint("https://ai.xxxx.cn/v1/videos"),
-    omnigo.SetAPIKey(os.Getenv("CANGYUAN_API_KEY")),
+    omnigo.SetAPIKey(os.Getenv("API_KEY")),
 )
 if err != nil {
     log.Fatal(err)
