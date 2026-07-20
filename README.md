@@ -1,6 +1,7 @@
 # omnigo - Go 语言 LLM 集成工具包
 
 `omnigo` 是一个面向 Go 的 LLM 集成工具包，核心是统一的 adapter/relay 架构：
+
 - 对外提供稳定统一的调用接口
 - 对内隔离不同模型服务的差异
 - 支持流式输出、结构化输出、工具调用等常见能力
@@ -109,6 +110,7 @@ llm, err := omnigo.NewLLM(
 - `modify`
 
 说明：
+
 - `image-to-video`、`transition`、`mimic`、`multi-transition` 在缺少 `img_id` 时会自动上传图片。
 - `extend`、`swap`、`mimic`、`lip-sync` 需要通过 `extra` 传入官方接口要求的 `source_video_id` 或 `video_media_id`。
 - `mask-selection` 是同步辅助接口，当前会把官方返回 JSON 放到 `MediaResponse.Text`，并把 `keyframe_url` 映射到 `MediaResponse.URL`。
@@ -124,7 +126,7 @@ llm, err := omnigo.NewLLM(
 client, err := omnigo.NewLLM(
     omnigo.SetProvider("custom"),
     omnigo.SetModel("seedance-2.0-fast-480p"),
-    omnigo.SetEndpoint("https://ai.cangyuansuanli.cn/v1/videos"),
+    omnigo.SetEndpoint("https://ai.xxxx.cn/v1/videos"),
     omnigo.SetAPIKey(os.Getenv("CANGYUAN_API_KEY")),
 )
 if err != nil {
@@ -286,6 +288,7 @@ for {
 ```
 
 补充说明：
+
 1. 流式响应统一按 OpenAI 的事件格式解析（适用于兼容 OpenAI stream 的服务）。
 2. `omnigo` 会在流式请求体中自动加入：
    - `"stream": true`
@@ -508,6 +511,7 @@ func main() {
     log.Println("image url:", resp.URL)
 }
 ```
+
 ### 视频生成示例（Ali / DashScope）
 
 ```go
@@ -918,6 +922,7 @@ func main() {
 ### 图像生成示例 (Google / Gemini)
 
 Google 适配器对不同模型使用不同接口：
+
 - `imagen-*` 图像模型走 `GenerateImages` / `predict`
 - `gemini-*` 原生图像生成模型走 `GenerateContent`，并通过 `responseModalities=["TEXT","IMAGE"]` 返回图像
 - 视频模型继续走 `GenerateVideos`
