@@ -116,6 +116,13 @@ func NewRegistry(providerNames ...string) *Registry {
 				return &PaiAdaptor{}
 			},
 		},
+		"custom": {
+			Name: "custom",
+			Type: TypeCustom,
+			AdaptorFactory: func() Adaptor {
+				return &CustomAdaptor{}
+			},
+		},
 	}
 
 	if len(providerNames) == 0 {

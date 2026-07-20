@@ -71,6 +71,7 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 		Model:        cfg.Model,
 		BaseURL:      cfg.Endpoint,
 		Organization: cfg.APIKeys["organization"],
+		Headers:      cfg.ExtraHeaders,
 		Timeout:      cfg.Timeout,
 	}
 

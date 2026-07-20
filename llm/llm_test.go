@@ -29,6 +29,25 @@ func TestNewLLM_AllowsAKSKWithoutAPIKey(t *testing.T) {
 	}
 }
 
+func TestNewLLMPassesExtraHeadersToAdaptor(t *testing.T) {
+	cfg := &config.Config{
+		Provider:     "custom",
+		Model:        "test-model",
+		Endpoint:     "https://example.com/v1/videos",
+		APIKeys:      map[string]string{"custom": "test-api-key"},
+		ExtraHeaders: map[string]string{"X-Tenant-ID": "tenant-1"},
+	}
+
+	client, err := NewLLM(cfg, utils.NewLogger(utils.LogLevelOff), adapter.NewRegistry("custom"))
+	if err != nil {
+		t.Fatalf("NewLLM error = %v", err)
+	}
+	impl := client.(*LLMImpl)
+	if got := impl.adaptorCfg.Headers["X-Tenant-ID"]; got != "tenant-1" {
+		t.Fatalf("X-Tenant-ID = %q, want tenant-1", got)
+	}
+}
+
 func TestEffectivePromptUsesConfiguredSystemPrompt(t *testing.T) {
 	client := &LLMImpl{
 		config: &config.Config{

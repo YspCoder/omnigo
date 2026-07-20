@@ -40,6 +40,7 @@
 - Vidu (`vidu`)
 - Kling AI (`kling`)
 - Pai / PixVerse (`pai`)
+- 第三方完整 URL (`custom`)
 
 > 说明：以上名称为 `SetProvider(...)` 传入值。
 
@@ -114,6 +115,46 @@ llm, err := omnigo.NewLLM(
 - `swap` 支持 `extra.auto_mask_selection=true`，会先调用 `mask-selection` 自动补 `keyframe_id` 和首个 `mask_id`。
 - `ListTasks(..., map[string]string{\"mode\": \"restyle\"})` 现在会返回 Pai 官方 `restyle/list` 中的可用风格项。
 - `modify` 已接入，但官方文档目前仍标记为 `developing`，建议优先在真实环境做一次验证后再在生产路径使用。
+
+### 第三方完整 URL 示例
+
+协议为扁平 JSON、使用 Bearer Token 的异步任务接口，可以统一走 `custom`，无需为每个服务商新增 adapter。`SetEndpoint` 必须传创建任务的完整 URL，而不是只传域名：
+
+```go
+client, err := omnigo.NewLLM(
+    omnigo.SetProvider("custom"),
+    omnigo.SetModel("seedance-2.0-fast-480p"),
+    omnigo.SetEndpoint("https://ai.cangyuansuanli.cn/v1/videos"),
+    omnigo.SetAPIKey(os.Getenv("CANGYUAN_API_KEY")),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+resp, err := client.Media(context.Background(), &dto.MediaRequest{
+    Type:     dto.MediaTypeVideo,
+    Prompt:   "雨夜霓虹街道，镜头缓慢推进，电影感光影",
+    Duration: 8,
+    Extra: map[string]interface{}{
+        "aspect_ratio": "16:9",
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+status, err := client.TaskStatus(context.Background(), resp.TaskID)
+```
+
+`TaskStatus` 默认查询 `SetEndpoint` 后追加 `/{task_id}` 的地址。查询路径不符合该规则时，传入包含 `{task_id}` 的完整 URL 模板：
+
+```go
+status, err := client.TaskStatus(context.Background(), resp.TaskID, map[string]string{
+    "endpoint": "https://api.example.com/tasks/{task_id}/result",
+})
+```
+
+`MediaRequest.Extra` 会平铺到请求 JSON，并覆盖同名通用字段。额外鉴权或租户 Header 可通过 `SetExtraHeaders` 设置；其中的 `Authorization` 会覆盖默认的 `Bearer <APIKey>`。完整示例见 `examples/custom/generate_video.go`。
 
 ## 安装
 
