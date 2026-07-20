@@ -148,6 +148,27 @@ if err != nil {
 status, err := client.TaskStatus(context.Background(), resp.TaskID)
 ```
 
+任务状态可以统一归一化，业务端无需维护不同服务商的字符串白名单：
+
+```go
+normalized, err := dto.NormalizeTaskStatus(status.Output.TaskStatus)
+if err != nil {
+    // normalized 仍保留上游原始值，可记录后再决定兼容策略。
+    log.Fatalf("unsupported task status %q: %v", normalized, err)
+}
+
+switch normalized {
+case dto.TaskStatusQueued, dto.TaskStatusInProgress:
+    // 继续轮询
+case dto.TaskStatusSucceeded:
+    log.Println(status.Output.VideoURL)
+case dto.TaskStatusFailed:
+    log.Fatal(status.Output.Message)
+}
+```
+
+`NormalizeTaskStatus` 会将 `pending/submitted` 映射为 `queued`，将 `running/processing/in_progress` 映射为 `in_progress`，将 `success/completed` 映射为 `succeeded`，并将 `failure/error/rejected/cancelled/canceled` 映射为 `failed`。也可直接使用 `dto.IsPending`、`dto.IsSucceeded`、`dto.IsFailed`。未知状态会保留原始值，并返回可通过 `errors.Is(err, dto.ErrUnsupportedTaskStatus)` 判断的兼容性错误。
+
 `TaskStatus` 默认查询 `SetEndpoint` 后追加 `/{task_id}` 的地址。查询路径不符合该规则时，传入包含 `{task_id}` 的完整 URL 模板：
 
 ```go

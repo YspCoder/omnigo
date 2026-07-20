@@ -47,13 +47,17 @@ func main() {
 		if err != nil {
 			log.Fatalf("query task failed: %v", err)
 		}
-		switch status.Output.TaskStatus {
-		case "completed":
+		normalized, err := dto.NormalizeTaskStatus(status.Output.TaskStatus)
+		if err != nil {
+			log.Fatalf("unsupported task status %q: %v", status.Output.TaskStatus, err)
+		}
+		switch normalized {
+		case dto.TaskStatusSucceeded:
 			log.Println("video_url:", status.Output.VideoURL)
 			return
-		case "failed":
+		case dto.TaskStatusFailed:
 			log.Fatalf("video failed: code=%s message=%s", status.Output.Code, status.Output.Message)
-		default:
+		case dto.TaskStatusQueued, dto.TaskStatusInProgress:
 			log.Println("status:", status.Output.TaskStatus)
 			time.Sleep(5 * time.Second)
 		}

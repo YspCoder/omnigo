@@ -131,6 +131,28 @@ func TestCustomAdaptorTaskStatusAppendsTaskID(t *testing.T) {
 	}
 }
 
+func TestCustomAdaptorTaskStatusPreservesInProgress(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"task-1","status":"in_progress"}`))
+	}))
+	defer server.Close()
+
+	adaptor := &CustomAdaptor{}
+	resp, err := adaptor.TaskStatus(context.Background(), &ProviderConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1/videos",
+	}, "task-1")
+	if err != nil {
+		t.Fatalf("TaskStatus error = %v", err)
+	}
+	if resp.Output.TaskStatus != "in_progress" {
+		t.Fatalf("task status = %q, want raw in_progress", resp.Output.TaskStatus)
+	}
+	if !dto.IsPending(resp.Output.TaskStatus) {
+		t.Fatalf("IsPending(%q) = false, want true", resp.Output.TaskStatus)
+	}
+}
+
 func TestCustomAdaptorTaskStatusEscapesTaskID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.EscapedPath() != "/v1/videos/task%2F1" {
