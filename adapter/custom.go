@@ -7,11 +7,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strings"
 
 	"github.com/YspCoder/omnigo/dto"
+	"github.com/YspCoder/omnigo/utils"
 )
 
 // CustomAdaptor calls third-party JSON APIs using complete endpoint URLs.
@@ -26,10 +30,13 @@ type customAPIResponse struct {
 	ID        string          `json:"id"`
 	TaskID    string          `json:"task_id"`
 	RequestID string          `json:"request_id"`
+	Object    string          `json:"object"`
+	Model     string          `json:"model"`
 	Status    string          `json:"status"`
 	State     string          `json:"state"`
 	URL       string          `json:"url"`
 	VideoURL  string          `json:"video_url"`
+	Data      []dto.ImageData `json:"data"`
 	Code      interface{}     `json:"code"`
 	ErrorCode interface{}     `json:"error_code"`
 	Message   string          `json:"message"`
@@ -55,21 +62,29 @@ func (a *CustomAdaptor) Media(ctx context.Context, cfg *ProviderConfig, request 
 	}
 
 	var out customAPIResponse
-	if err := a.doJSON(ctx, cfg, http.MethodPost, endpoint.String(), payload, &out); err != nil {
+	if request.Type == dto.MediaTypeImage && customIsImageEditEndpoint(endpoint) {
+		err = a.doMultipartImage(ctx, cfg, endpoint.String(), request, payload, &out)
+	} else {
+		err = a.doJSON(ctx, cfg, http.MethodPost, endpoint.String(), payload, &out)
+	}
+	if err != nil {
 		return nil, err
 	}
 
-	videoURL := firstNonEmptyString(out.VideoURL, out.URL)
+	resultURL := firstNonEmptyString(out.URL, customFirstImageURL(out.Data), out.VideoURL)
 	resp := &dto.MediaResponse{
 		ID:           out.ID,
+		Object:       out.Object,
+		Model:        out.Model,
+		Data:         append([]dto.ImageData(nil), out.Data...),
 		RequestID:    out.RequestID,
 		TaskID:       firstNonEmptyString(out.TaskID, out.ID),
 		Status:       firstNonEmptyString(out.Status, out.State),
-		URL:          videoURL,
+		URL:          resultURL,
 		ErrorCode:    out.errorCode(),
 		ErrorMessage: out.errorMessage(),
 	}
-	resp.Video.URL = videoURL
+	resp.Video.URL = out.VideoURL
 	return resp, nil
 }
 
@@ -84,14 +99,14 @@ func (a *CustomAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, tas
 		return nil, err
 	}
 
-	videoURL := firstNonEmptyString(out.VideoURL, out.URL)
+	resultURL := firstNonEmptyString(out.URL, customFirstImageURL(out.Data), out.VideoURL)
 	return &dto.TaskStatusResponse{
 		RequestID: out.RequestID,
 		Output: dto.TaskStatusOutput{
 			TaskID:     firstNonEmptyString(out.TaskID, out.ID, taskID),
 			TaskStatus: firstNonEmptyString(out.Status, out.State),
-			URL:        videoURL,
-			VideoURL:   videoURL,
+			URL:        resultURL,
+			VideoURL:   out.VideoURL,
 			Code:       out.errorCode(),
 			Message:    out.errorMessage(),
 		},
@@ -115,6 +130,61 @@ func (a *CustomAdaptor) doJSON(ctx context.Context, cfg *ProviderConfig, method,
 		}
 		body = bytes.NewReader(data)
 	}
+	return a.doRequest(ctx, cfg, method, endpoint, body, "application/json", out)
+}
+
+func (a *CustomAdaptor) doMultipartImage(ctx context.Context, cfg *ProviderConfig, endpoint string, request *dto.MediaRequest, payload map[string]interface{}, out interface{}) error {
+	inputs := customImageInputs(request.Extra)
+	if len(inputs) == 0 {
+		return fmt.Errorf("custom image edit requires at least one image")
+	}
+	if len(inputs) > 9 {
+		return fmt.Errorf("custom image edit supports at most 9 images, got %d", len(inputs))
+	}
+
+	readers, err := openAIImageReferenceReaders(ctx, customHTTPClient(cfg), inputs)
+	if err != nil {
+		return err
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for key, value := range payload {
+		if customImageInputField(key) || key == "mask" || value == nil {
+			continue
+		}
+		fieldValue, err := customMultipartValue(value)
+		if err != nil {
+			return fmt.Errorf("encode custom multipart field %q: %w", key, err)
+		}
+		if err := writer.WriteField(key, fieldValue); err != nil {
+			return err
+		}
+	}
+	for i, reader := range readers {
+		if err := customWriteMultipartFile(writer, "image", reader, i); err != nil {
+			return err
+		}
+	}
+	if masks := utils.ContentImageURLs(request.Extra["mask"]); len(masks) > 0 {
+		if len(masks) > 1 {
+			return fmt.Errorf("custom image edit supports only one mask")
+		}
+		mask, err := openAIImageReferenceReader(ctx, customHTTPClient(cfg), masks[0], 0)
+		if err != nil {
+			return err
+		}
+		if err := customWriteMultipartFile(writer, "mask", mask, 0); err != nil {
+			return err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+	return a.doRequest(ctx, cfg, http.MethodPost, endpoint, &body, writer.FormDataContentType(), out)
+}
+
+func (a *CustomAdaptor) doRequest(ctx context.Context, cfg *ProviderConfig, method, endpoint string, body io.Reader, contentType string, out interface{}) error {
 
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
 	if err != nil {
@@ -123,7 +193,9 @@ func (a *CustomAdaptor) doJSON(ctx context.Context, cfg *ProviderConfig, method,
 	if cfg != nil && cfg.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
 	if cfg != nil {
 		for key, value := range cfg.Headers {
 			req.Header.Set(key, value)
@@ -165,15 +237,25 @@ func customPayload(cfg *ProviderConfig, request *dto.MediaRequest) (map[string]i
 	customSetString(payload, "model", model)
 	customSetString(payload, "prompt", customPrompt(request))
 	customSetString(payload, "size", request.Size)
-	customSetString(payload, "resolution", request.Resolution)
-	customSetString(payload, "response_format", request.ResponseFormat)
-	customSetInt(payload, "duration", request.Duration)
-	customSetInt(payload, "fps", request.Fps)
-	customSetInt(payload, "seed", request.Seed)
 	customSetInt(payload, "n", request.N)
+	if request.Type == dto.MediaTypeImage {
+		customSetString(payload, "output_resolution", request.Resolution)
+	} else {
+		customSetString(payload, "resolution", request.Resolution)
+		customSetString(payload, "response_format", request.ResponseFormat)
+		customSetInt(payload, "duration", request.Duration)
+		customSetInt(payload, "fps", request.Fps)
+		customSetInt(payload, "seed", request.Seed)
+	}
 
 	for key, value := range request.Extra {
 		payload[key] = value
+	}
+	if request.Type == dto.MediaTypeImage {
+		payload["async"] = true
+		if n, ok := utils.GetIntExtra(payload, "n"); ok && n > 1 {
+			return nil, fmt.Errorf("custom async image requests support only n=1")
+		}
 	}
 	return payload, nil
 }
@@ -259,6 +341,95 @@ func customHTTPClient(cfg *ProviderConfig) *http.Client {
 		client.Timeout = cfg.Timeout
 	}
 	return client
+}
+
+func customIsImageEditEndpoint(endpoint *url.URL) bool {
+	if endpoint == nil {
+		return false
+	}
+	return strings.HasSuffix(strings.ToLower(strings.TrimRight(endpoint.Path, "/")), "/images/edits")
+}
+
+func customImageInputs(extra map[string]interface{}) []string {
+	keys := []string{"image", "images", "imageUrls", "image_urls", "reference_images", "referenceImages", "image_refs"}
+	seen := make(map[string]struct{})
+	var inputs []string
+	for _, key := range keys {
+		for _, input := range utils.ContentImageURLs(extra[key]) {
+			input = strings.TrimSpace(input)
+			if input == "" {
+				continue
+			}
+			if _, exists := seen[input]; exists {
+				continue
+			}
+			seen[input] = struct{}{}
+			inputs = append(inputs, input)
+		}
+	}
+	for _, input := range utils.ParseExtraImageInputs(map[string]interface{}{"files": extra["files"]}) {
+		if _, exists := seen[input]; exists {
+			continue
+		}
+		seen[input] = struct{}{}
+		inputs = append(inputs, input)
+	}
+	return inputs
+}
+
+func customImageInputField(key string) bool {
+	switch key {
+	case "image", "images", "imageUrls", "image_urls", "reference_images", "referenceImages", "image_refs", "files":
+		return true
+	default:
+		return false
+	}
+}
+
+func customMultipartValue(value interface{}) (string, error) {
+	switch typed := value.(type) {
+	case string:
+		return typed, nil
+	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, json.Number:
+		return fmt.Sprint(typed), nil
+	default:
+		raw, err := json.Marshal(value)
+		return string(raw), err
+	}
+}
+
+func customWriteMultipartFile(writer *multipart.Writer, field string, reader io.Reader, index int) error {
+	if sized, ok := reader.(interface{ Len() int }); ok && sized.Len() > 10<<20 {
+		return fmt.Errorf("custom multipart %s exceeds 10MB", field)
+	}
+	filename := fmt.Sprintf("%s-%d.png", field, index+1)
+	if named, ok := reader.(interface{ Filename() string }); ok && strings.TrimSpace(named.Filename()) != "" {
+		filename = named.Filename()
+	}
+	contentType := "application/octet-stream"
+	if typed, ok := reader.(interface{ ContentType() string }); ok && strings.TrimSpace(typed.ContentType()) != "" {
+		contentType = typed.ContentType()
+	}
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{
+		"name": field, "filename": filename,
+	}))
+	header.Set("Content-Type", contentType)
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(part, reader)
+	return err
+}
+
+func customFirstImageURL(images []dto.ImageData) string {
+	for _, image := range images {
+		if strings.TrimSpace(image.URL) != "" {
+			return image.URL
+		}
+	}
+	return ""
 }
 
 func customResponseError(statusCode int, raw []byte) error {

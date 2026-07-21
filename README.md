@@ -179,6 +179,36 @@ status, err := client.TaskStatus(context.Background(), resp.TaskID, map[string]s
 
 `MediaRequest.Extra` 会平铺到请求 JSON，并覆盖同名通用字段。额外鉴权或租户 Header 可通过 `SetExtraHeaders` 设置；其中的 `Authorization` 会覆盖默认的 `Bearer <APIKey>`。完整示例见 `examples/custom/generate_video.go`。
 
+#### OpenAI 兼容异步图片
+
+第三方图片接口使用 OpenAI 请求字段但只走异步任务时，仍使用 `custom` 并把 `SetEndpoint` 设置为完整创建 URL：
+
+```go
+client, err := omnigo.NewLLM(
+    omnigo.SetProvider("custom"),
+    omnigo.SetModel("nano-banana-pro-1k"),
+    omnigo.SetEndpoint("https://ai.xxxx.cn/v1/images/generations"),
+    omnigo.SetAPIKey(os.Getenv("API_KEY")),
+)
+
+created, err := client.Media(context.Background(), &dto.MediaRequest{
+    Type:       dto.MediaTypeImage,
+    Prompt:     "电影感城市夜景",
+    Resolution: "1K",
+    Extra: map[string]interface{}{
+        "aspect_ratio": "16:9",
+        "images": []string{"https://example.com/reference.png"},
+    },
+})
+status, err := client.TaskStatus(context.Background(), created.TaskID)
+```
+
+`custom` 图片请求固定发送 `async=true`，不实现同步图片返回。`Resolution` 会映射为 `output_resolution`；公共字段中的 `seed` 和 `response_format` 不会发送，且 `n` 仅支持 1。查询响应中的 `data[0].url` 会映射到 `TaskStatusResponse.Output.URL`。
+
+当完整创建 URL 以 `/images/edits` 结尾时，`custom` 自动发送 multipart 请求。通过 `Extra.image`/`Extra.images` 传入最多 9 张图片，通过 `Extra.mask` 传入一个蒙版；支持公网 URL、data URI、Base64 和本地文件路径，单个文件最大 10MB。
+
+官方 `openai` adapter 只保留同步图片 generation/edit，不再发送 `async` 或查询异步图片任务；异步图片统一使用 `custom`。完整示例见 `examples/custom/image/generate_image.go`。
+
 ## 安装
 
 ```bash

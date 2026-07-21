@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -100,6 +101,125 @@ func TestCustomAdaptorMediaUsesConfiguredModelAndMessagePrompt(t *testing.T) {
 	}
 }
 
+func TestCustomAdaptorMediaSubmitsAsyncImageGeneration(t *testing.T) {
+	var gotPayload map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/images/generations" {
+			t.Fatalf("path = %s, want /v1/images/generations", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"id":"task-img-1","model":"nano-banana-pro-1k","object":"image.generation","status":"queued"}`))
+	}))
+	defer server.Close()
+
+	adaptor := &CustomAdaptor{}
+	resp, err := adaptor.Media(context.Background(), &ProviderConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1/images/generations",
+	}, &dto.MediaRequest{
+		Type:           dto.MediaTypeImage,
+		Model:          "nano-banana-pro-1k",
+		Prompt:         "cinematic city at night",
+		Resolution:     "1K",
+		N:              1,
+		Seed:           42,
+		ResponseFormat: "b64_json",
+		Extra: map[string]interface{}{
+			"aspect_ratio": "16:9",
+			"async":        false,
+			"images":       []string{"https://example.com/reference.png"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Media error = %v", err)
+	}
+	if gotPayload["async"] != true {
+		t.Fatalf("async = %#v, want true", gotPayload["async"])
+	}
+	if gotPayload["output_resolution"] != "1K" {
+		t.Fatalf("output_resolution = %#v, want 1K", gotPayload["output_resolution"])
+	}
+	if _, exists := gotPayload["resolution"]; exists {
+		t.Fatalf("image payload must not contain video resolution: %#v", gotPayload)
+	}
+	if _, exists := gotPayload["seed"]; exists {
+		t.Fatalf("async image payload must not contain seed: %#v", gotPayload)
+	}
+	if _, exists := gotPayload["response_format"]; exists {
+		t.Fatalf("async image payload must not contain response_format: %#v", gotPayload)
+	}
+	if resp.TaskID != "task-img-1" || resp.Status != "queued" || resp.Model != "nano-banana-pro-1k" || resp.Object != "image.generation" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestCustomPayloadRejectsAsyncImageCountFromExtra(t *testing.T) {
+	_, err := customPayload(nil, &dto.MediaRequest{
+		Type:  dto.MediaTypeImage,
+		Extra: map[string]interface{}{"n": "2"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "n=1") {
+		t.Fatalf("customPayload error = %v, want n=1 validation", err)
+	}
+}
+
+func TestCustomAdaptorMediaSubmitsAsyncMultipartImageEdit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/images/edits" {
+			t.Fatalf("path = %s, want /v1/images/edits", r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(4 << 20); err != nil {
+			t.Fatalf("ParseMultipartForm: %v", err)
+		}
+		if r.FormValue("async") != "true" {
+			t.Fatalf("async = %q, want true", r.FormValue("async"))
+		}
+		if r.FormValue("model") != "gpt-image-2" || r.FormValue("prompt") != "replace the sky" {
+			t.Fatalf("multipart fields = %#v", r.MultipartForm.Value)
+		}
+		if r.FormValue("output_resolution") != "1K" {
+			t.Fatalf("output_resolution = %q, want 1K", r.FormValue("output_resolution"))
+		}
+		if got := multipartFileContents(t, r, "image"); len(got) != 2 || got[0] != "first-image" || got[1] != "second-image" {
+			t.Fatalf("image files = %#v", got)
+		}
+		if got := r.MultipartForm.File["image"][0].Header.Get("Content-Type"); got != "image/png" {
+			t.Fatalf("image Content-Type = %q, want image/png", got)
+		}
+		if got := multipartFileContents(t, r, "mask"); len(got) != 1 || got[0] != "mask-image" {
+			t.Fatalf("mask files = %#v", got)
+		}
+		_, _ = w.Write([]byte(`{"id":"task-edit-1","status":"queued"}`))
+	}))
+	defer server.Close()
+
+	adaptor := &CustomAdaptor{}
+	resp, err := adaptor.Media(context.Background(), &ProviderConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1/images/edits",
+	}, &dto.MediaRequest{
+		Type:       dto.MediaTypeImage,
+		Model:      "gpt-image-2",
+		Prompt:     "replace the sky",
+		Resolution: "1K",
+		Extra: map[string]interface{}{
+			"image": []string{
+				"data:image/png;base64,Zmlyc3QtaW1hZ2U=",
+				"data:image/png;base64,c2Vjb25kLWltYWdl",
+			},
+			"mask": "data:image/png;base64,bWFzay1pbWFnZQ==",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Media error = %v", err)
+	}
+	if resp.TaskID != "task-edit-1" || resp.Status != "queued" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
 func TestCustomAdaptorTaskStatusAppendsTaskID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -150,6 +270,28 @@ func TestCustomAdaptorTaskStatusPreservesInProgress(t *testing.T) {
 	}
 	if !dto.IsPending(resp.Output.TaskStatus) {
 		t.Fatalf("IsPending(%q) = false, want true", resp.Output.TaskStatus)
+	}
+}
+
+func TestCustomAdaptorTaskStatusMapsAsyncImageResult(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"task-img-1","model":"nano-banana-pro-1k","object":"image.generation","status":"completed","data":[{"url":"https://example.com/image.png"}]}`))
+	}))
+	defer server.Close()
+
+	adaptor := &CustomAdaptor{}
+	resp, err := adaptor.TaskStatus(context.Background(), &ProviderConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1/images/generations",
+	}, "task-img-1")
+	if err != nil {
+		t.Fatalf("TaskStatus error = %v", err)
+	}
+	if resp.Output.TaskStatus != "completed" || resp.Output.URL != "https://example.com/image.png" {
+		t.Fatalf("response = %#v", resp)
+	}
+	if resp.Output.VideoURL != "" {
+		t.Fatalf("image result leaked into video URL: %#v", resp.Output)
 	}
 }
 
@@ -247,4 +389,22 @@ func mustJSON(t *testing.T, value interface{}) string {
 		t.Fatalf("marshal JSON: %v", err)
 	}
 	return string(raw)
+}
+
+func multipartFileContents(t *testing.T, r *http.Request, field string) []string {
+	t.Helper()
+	var contents []string
+	for _, header := range r.MultipartForm.File[field] {
+		file, err := header.Open()
+		if err != nil {
+			t.Fatalf("open multipart %s: %v", field, err)
+		}
+		body, err := io.ReadAll(file)
+		file.Close()
+		if err != nil {
+			t.Fatalf("read multipart %s: %v", field, err)
+		}
+		contents = append(contents, string(body))
+	}
+	return contents
 }
