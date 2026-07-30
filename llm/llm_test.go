@@ -34,6 +34,7 @@ func TestNewLLMPassesExtraHeadersToAdaptor(t *testing.T) {
 		Provider:     "custom",
 		Model:        "test-model",
 		Endpoint:     "https://example.com/v1/videos",
+		PollingURL:   "https://example.com/v1/tasks/{task_id}",
 		APIKeys:      map[string]string{"custom": "test-api-key"},
 		ExtraHeaders: map[string]string{"X-Tenant-ID": "tenant-1"},
 	}
@@ -45,6 +46,9 @@ func TestNewLLMPassesExtraHeadersToAdaptor(t *testing.T) {
 	impl := client.(*LLMImpl)
 	if got := impl.adaptorCfg.Headers["X-Tenant-ID"]; got != "tenant-1" {
 		t.Fatalf("X-Tenant-ID = %q, want tenant-1", got)
+	}
+	if got := impl.adaptorCfg.PollingURL; got != cfg.PollingURL {
+		t.Fatalf("PollingURL = %q, want %q", got, cfg.PollingURL)
 	}
 }
 

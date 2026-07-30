@@ -454,6 +454,7 @@ func (a *OpenAIAdaptor) Stream(ctx context.Context, config *ProviderConfig, requ
 
 func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	client := a.getClient(config)
+	async, _ := utils.GetBoolExtra(request.Extra, "async")
 
 	switch request.Type {
 	case dto.MediaTypeImage:
@@ -485,6 +486,9 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 			if err != nil {
 				return nil, err
 			}
+			if async {
+				return openAIAsyncImageResponse(resp)
+			}
 			return openAIImageResponse(resp), nil
 		}
 
@@ -508,10 +512,59 @@ func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, reque
 		if err != nil {
 			return nil, err
 		}
+		if async {
+			return openAIAsyncImageResponse(resp)
+		}
 		return openAIImageResponse(resp), nil
 	default:
 		return nil, fmt.Errorf("unsupported media mode: %s", request.Type)
 	}
+}
+
+type openAIAsyncTaskResponse struct {
+	ID        string          `json:"id"`
+	TaskID    string          `json:"task_id"`
+	RequestID string          `json:"request_id"`
+	Object    string          `json:"object"`
+	Model     string          `json:"model"`
+	Status    string          `json:"status"`
+	State     string          `json:"state"`
+	URL       string          `json:"url"`
+	VideoURL  string          `json:"video_url"`
+	Data      []dto.ImageData `json:"data"`
+	Code      interface{}     `json:"code"`
+	Message   string          `json:"message"`
+	Error     *struct {
+		Code    interface{} `json:"code"`
+		Message string      `json:"message"`
+	} `json:"error"`
+}
+
+func openAIAsyncImageResponse(resp *openai.ImagesResponse) (*dto.MediaResponse, error) {
+	if resp == nil {
+		return nil, fmt.Errorf("openai returned an empty async image response")
+	}
+
+	var task openAIAsyncTaskResponse
+	if err := json.Unmarshal([]byte(resp.RawJSON()), &task); err != nil {
+		return nil, fmt.Errorf("decode openai async image response: %w", err)
+	}
+
+	result := openAIImageResponse(resp)
+	if len(result.Data) == 0 && len(task.Data) > 0 {
+		result.Data = append([]dto.ImageData(nil), task.Data...)
+		result.URL = openAIFirstImageURL(task.Data)
+	}
+	result.ID = task.ID
+	result.Object = task.Object
+	result.Model = task.Model
+	result.RequestID = task.RequestID
+	result.TaskID = firstNonEmptyString(task.TaskID, task.ID)
+	result.Status = firstNonEmptyString(task.Status, task.State)
+	result.URL = firstNonEmptyString(result.URL, task.URL, openAIFirstImageURL(task.Data), task.VideoURL)
+	result.ErrorCode = openAIErrorCode(task)
+	result.ErrorMessage = openAIErrorMessage(task)
+	return result, nil
 }
 
 func openAIImageResponse(resp *openai.ImagesResponse) *dto.MediaResponse {
@@ -648,8 +701,130 @@ func openAIImageFilename(index int, contentType string) string {
 	return fmt.Sprintf("image-%d%s", index+1, ext)
 }
 
-func (a *OpenAIAdaptor) TaskStatus(context.Context, *ProviderConfig, string, ...map[string]string) (*dto.TaskStatusResponse, error) {
-	return nil, fmt.Errorf("task status not supported by OpenAI")
+func (a *OpenAIAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string, query ...map[string]string) (*dto.TaskStatusResponse, error) {
+	endpoint, err := openAITaskEndpoint(config, taskID, query...)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	if config.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+config.APIKey)
+	}
+	if config.Organization != "" {
+		req.Header.Set("OpenAI-Organization", config.Organization)
+	}
+	for key, value := range config.Headers {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := a.getHTTPClient(config).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("openai task status error: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(rawBody)))
+	}
+
+	var task openAIAsyncTaskResponse
+	if err := json.Unmarshal(rawBody, &task); err != nil {
+		return nil, fmt.Errorf("decode openai task status response: %w", err)
+	}
+	return openAITaskStatusResponse(task, taskID), nil
+}
+
+func openAITaskEndpoint(config *ProviderConfig, taskID string, query ...map[string]string) (string, error) {
+	if strings.TrimSpace(taskID) == "" {
+		return "", fmt.Errorf("openai task id is required")
+	}
+	if config == nil || strings.TrimSpace(config.PollingURL) == "" {
+		return "", fmt.Errorf("openai polling URL is required")
+	}
+
+	rawEndpoint := strings.TrimSpace(config.PollingURL)
+	escapedTaskID := url.PathEscape(taskID)
+	hasTaskTemplate := strings.Contains(rawEndpoint, "{task_id}")
+	if hasTaskTemplate {
+		rawEndpoint = strings.ReplaceAll(rawEndpoint, "{task_id}", escapedTaskID)
+	}
+
+	endpoint, err := url.Parse(rawEndpoint)
+	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
+		return "", fmt.Errorf("openai polling URL must be an absolute http(s) URL: %q", config.PollingURL)
+	}
+	if !hasTaskTemplate {
+		basePath := strings.TrimRight(endpoint.Path, "/")
+		baseEscapedPath := strings.TrimRight(endpoint.EscapedPath(), "/")
+		endpoint.Path = basePath + "/" + taskID
+		endpoint.RawPath = baseEscapedPath + "/" + escapedTaskID
+	}
+
+	values := endpoint.Query()
+	if len(query) > 0 {
+		for key, value := range query[0] {
+			values.Set(key, value)
+		}
+	}
+	endpoint.RawQuery = values.Encode()
+	return endpoint.String(), nil
+}
+
+func openAITaskStatusResponse(task openAIAsyncTaskResponse, fallbackTaskID string) *dto.TaskStatusResponse {
+	resultURL := firstNonEmptyString(task.URL, openAIFirstImageURL(task.Data), task.VideoURL)
+	status := firstNonEmptyString(task.Status, task.State)
+	if status == "" {
+		switch {
+		case openAIErrorMessage(task) != "":
+			status = dto.TaskStatusFailed
+		case resultURL != "":
+			status = dto.TaskStatusSucceeded
+		}
+	}
+
+	return &dto.TaskStatusResponse{
+		RequestID: task.RequestID,
+		Output: dto.TaskStatusOutput{
+			TaskID:     firstNonEmptyString(task.TaskID, task.ID, fallbackTaskID),
+			TaskStatus: status,
+			URL:        resultURL,
+			VideoURL:   task.VideoURL,
+			Code:       openAIErrorCode(task),
+			Message:    openAIErrorMessage(task),
+		},
+	}
+}
+
+func openAIFirstImageURL(data []dto.ImageData) string {
+	if len(data) == 0 {
+		return ""
+	}
+	return data[0].URL
+}
+
+func openAIErrorCode(task openAIAsyncTaskResponse) string {
+	if task.Error != nil && task.Error.Code != nil {
+		return strings.TrimSpace(fmt.Sprint(task.Error.Code))
+	}
+	if task.Code == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(task.Code))
+}
+
+func openAIErrorMessage(task openAIAsyncTaskResponse) string {
+	if task.Error != nil && strings.TrimSpace(task.Error.Message) != "" {
+		return task.Error.Message
+	}
+	return task.Message
 }
 
 func (a *OpenAIAdaptor) ListTasks(ctx context.Context, config *ProviderConfig, query map[string]string) (*dto.TaskListResponse, error) {

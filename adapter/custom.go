@@ -89,24 +89,34 @@ func (a *CustomAdaptor) Media(ctx context.Context, cfg *ProviderConfig, request 
 }
 
 func (a *CustomAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, taskID string, query ...map[string]string) (*dto.TaskStatusResponse, error) {
-	endpoint, err := customTaskEndpoint(cfg, taskID, firstCustomQuery(query))
+	taskQuery := firstCustomQuery(query)
+	endpoint, err := customTaskEndpoint(cfg, taskID, taskQuery)
 	if err != nil {
 		return nil, err
 	}
 
-	var out customAPIResponse
-	if err := a.doJSON(ctx, cfg, http.MethodGet, endpoint, nil, &out); err != nil {
+	var raw json.RawMessage
+	if err := a.doJSON(ctx, cfg, http.MethodGet, endpoint, nil, &raw); err != nil {
 		return nil, err
 	}
 
-	resultURL := firstNonEmptyString(out.URL, customFirstImageURL(out.Data), out.VideoURL)
+	var out customAPIResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("decode custom API response: %w", err)
+	}
+
+	videoURL := out.VideoURL
+	if path := strings.TrimSpace(taskQuery["video_url_path"]); path != "" {
+		videoURL = customJSONPathString(raw, path)
+	}
+	resultURL := firstNonEmptyString(out.URL, customFirstImageURL(out.Data), videoURL)
 	return &dto.TaskStatusResponse{
 		RequestID: out.RequestID,
 		Output: dto.TaskStatusOutput{
 			TaskID:     firstNonEmptyString(out.TaskID, out.ID, taskID),
 			TaskStatus: firstNonEmptyString(out.Status, out.State),
 			URL:        resultURL,
-			VideoURL:   out.VideoURL,
+			VideoURL:   videoURL,
 			Code:       out.errorCode(),
 			Message:    out.errorMessage(),
 		},
@@ -309,7 +319,7 @@ func customTaskEndpoint(cfg *ProviderConfig, taskID string, query map[string]str
 
 	values := endpoint.Query()
 	for key, value := range query {
-		if key != "endpoint" {
+		if !customTaskControlQuery(key) {
 			values.Set(key, value)
 		}
 	}
@@ -430,6 +440,40 @@ func customFirstImageURL(images []dto.ImageData) string {
 		}
 	}
 	return ""
+}
+
+func customJSONPathString(raw json.RawMessage, path string) string {
+	current := raw
+	for _, segment := range strings.Split(path, ".") {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			return ""
+		}
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(current, &object); err != nil {
+			return ""
+		}
+		next, ok := object[segment]
+		if !ok {
+			return ""
+		}
+		current = next
+	}
+
+	var value string
+	if err := json.Unmarshal(current, &value); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func customTaskControlQuery(key string) bool {
+	switch key {
+	case "endpoint", "video_url_path":
+		return true
+	default:
+		return false
+	}
 }
 
 func customResponseError(statusCode int, raw []byte) error {

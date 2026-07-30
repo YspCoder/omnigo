@@ -70,6 +70,7 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 		SecretKey:    cfg.SecretKey,
 		Model:        cfg.Model,
 		BaseURL:      cfg.Endpoint,
+		PollingURL:   cfg.PollingURL,
 		Organization: cfg.APIKeys["organization"],
 		Headers:      cfg.ExtraHeaders,
 		Timeout:      cfg.Timeout,

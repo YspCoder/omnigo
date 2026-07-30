@@ -31,6 +31,16 @@ func TestSetProviderNormalizesValue(t *testing.T) {
 	}
 }
 
+func TestSetPollingURL(t *testing.T) {
+	cfg := &Config{}
+
+	SetPollingURL("https://example.com/tasks/{task_id}")(cfg)
+
+	if cfg.PollingURL != "https://example.com/tasks/{task_id}" {
+		t.Fatalf("PollingURL = %q", cfg.PollingURL)
+	}
+}
+
 func TestLoadConfigNormalizesProvider(t *testing.T) {
 	t.Setenv("LLM_PROVIDER", "OpenAI")
 	t.Setenv("UNITTEST_API_KEY", "secret")

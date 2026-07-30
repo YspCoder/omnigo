@@ -21,6 +21,7 @@ import (
 //   - LLM_PROVIDER: LLM provider name (default: "openai")
 //   - LLM_MODEL: Model name (default: "gpt-4o-mini")
 //   - LLM_ENDPOINT: Override provider endpoint/base URL
+//   - LLM_POLLING_URL: Override the background-task polling URL
 //   - LLM_TEMPERATURE: Generation temperature (default: 0.7)
 //   - LLM_MAX_TOKENS: Maximum tokens to generate (default: 100)
 //   - LLM_TOP_P: Top-p sampling parameter (default: 0.9)
@@ -46,6 +47,7 @@ type Config struct {
 	Provider              string            `env:"LLM_PROVIDER" envDefault:"openai" validate:"required"`
 	Model                 string            `env:"LLM_MODEL" envDefault:"gpt-4o-mini" validate:"required"`
 	Endpoint              string            `env:"LLM_ENDPOINT"`
+	PollingURL            string            `env:"LLM_POLLING_URL"`
 	Temperature           float64           `env:"LLM_TEMPERATURE" envDefault:"0.7" validate:"gte=0,lte=1"`
 	MaxTokens             int               `env:"LLM_MAX_TOKENS" envDefault:"100"`
 	TopP                  float64           `env:"LLM_TOP_P" envDefault:"0.9" validate:"gte=0,lte=1"`
@@ -155,6 +157,13 @@ func NewConfig() *Config {
 func SetEndpoint(endpoint string) ConfigOption {
 	return func(c *Config) {
 		c.Endpoint = endpoint
+	}
+}
+
+// SetPollingURL sets the URL used to query background task status.
+func SetPollingURL(pollingURL string) ConfigOption {
+	return func(c *Config) {
+		c.PollingURL = pollingURL
 	}
 }
 

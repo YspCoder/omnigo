@@ -177,6 +177,16 @@ status, err := client.TaskStatus(context.Background(), resp.TaskID, map[string]s
 })
 ```
 
+查询响应中的视频地址不在顶层 `video_url` 时，可以通过 `video_url_path` 指定点分隔字段路径。`video_url_path` 只用于本地解析，不会发送给第三方 API：
+
+```go
+status, err := client.TaskStatus(context.Background(), resp.TaskID, map[string]string{
+    "video_url_path": "metadata.url",
+})
+```
+
+顶层字段使用 `"video_url"`，嵌套字段使用 `"metadata.url"`。解析结果会同时写入 `status.Output.URL` 和 `status.Output.VideoURL`。
+
 `MediaRequest.Extra` 会平铺到请求 JSON，并覆盖同名通用字段。额外鉴权或租户 Header 可通过 `SetExtraHeaders` 设置；其中的 `Authorization` 会覆盖默认的 `Bearer <APIKey>`。完整示例见 `examples/custom/generate_video.go`。
 
 #### OpenAI 兼容异步图片
@@ -207,7 +217,26 @@ status, err := client.TaskStatus(context.Background(), created.TaskID)
 
 当完整创建 URL 以 `/images/edits` 结尾时，`custom` 自动发送 multipart 请求。通过 `Extra.image`/`Extra.images` 传入最多 9 张图片，通过 `Extra.mask` 传入一个蒙版；支持公网 URL、data URI、Base64 和本地文件路径，单个文件最大 10MB。
 
-官方 `openai` adapter 只保留同步图片 generation/edit，不再发送 `async` 或查询异步图片任务；异步图片统一使用 `custom`。完整示例见 `examples/custom/image/generate_image.go`。
+官方 `openai` adapter 默认仍使用同步图片 generation/edit。传入 `Extra["async"]=true` 时，创建请求继续使用 OpenAI 标准 generation/edit 协议（`async` 不会发送给上游），但会从响应中提取 `id/task_id` 并启用 `TaskStatus` 查询。轮询地址通过 `SetPollingURL` 配置；地址包含 `{task_id}` 时会替换占位符，否则会在末尾追加任务 ID：
+
+```go
+client, err := omnigo.NewLLM(
+    omnigo.SetProvider("openai"),
+    omnigo.SetModel("gpt-image-1"),
+    omnigo.SetEndpoint("https://api.example.com/v1"),
+    omnigo.SetPollingURL("https://api.example.com/v1/images/generations/{task_id}"),
+    omnigo.SetAPIKey(os.Getenv("API_KEY")),
+)
+
+created, err := client.Media(context.Background(), &dto.MediaRequest{
+    Type:   dto.MediaTypeImage,
+    Prompt: "电影感城市夜景",
+    Extra:  map[string]interface{}{"async": true},
+})
+status, err := client.TaskStatus(context.Background(), created.TaskID)
+```
+
+不兼容 OpenAI 标准创建协议、需要平铺第三方字段或自定义完整创建 URL 时，继续使用 `custom`。完整示例见 `examples/custom/image/generate_image.go`。
 
 ## 安装
 

@@ -432,10 +432,94 @@ func TestOpenAIMediaImageIgnoresAsyncExtra(t *testing.T) {
 	}
 }
 
-func TestOpenAITaskStatusNotSupported(t *testing.T) {
+func TestOpenAIMediaImageAsyncReturnsTaskMetadata(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/images/generations" {
+			t.Fatalf("path = %q, want /images/generations", r.URL.Path)
+		}
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if _, exists := body["async"]; exists {
+			t.Fatalf("OpenAI request must not contain async: %#v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"task-img-1","object":"image.generation","model":"gpt-image-1","status":"queued"}`))
+	}))
+	defer srv.Close()
+
+	resp, err := (&OpenAIAdaptor{}).Media(context.Background(), &ProviderConfig{
+		APIKey:  "test-key",
+		BaseURL: srv.URL,
+	}, &dto.MediaRequest{
+		Type:   dto.MediaTypeImage,
+		Model:  "gpt-image-1",
+		Prompt: "make a poster",
+		Extra:  map[string]interface{}{"async": true},
+	})
+	if err != nil {
+		t.Fatalf("Media() error = %v", err)
+	}
+	if resp.TaskID != "task-img-1" || resp.Status != "queued" {
+		t.Fatalf("response = %#v, want task metadata", resp)
+	}
+	if resp.ID != "task-img-1" || resp.Object != "image.generation" || resp.Model != "gpt-image-1" {
+		t.Fatalf("response metadata = %#v", resp)
+	}
+}
+
+func TestOpenAITaskStatusUsesConfiguredPollingURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tasks/task-img-1" {
+			t.Fatalf("path = %q, want /tasks/task-img-1", r.URL.Path)
+		}
+		if r.URL.Query().Get("source") != "config" || r.URL.Query().Get("trace") != "1" {
+			t.Fatalf("query = %v, want source and trace", r.URL.Query())
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		if r.Header.Get("X-Tenant-ID") != "tenant-1" {
+			t.Fatalf("X-Tenant-ID = %q", r.Header.Get("X-Tenant-ID"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"task-img-1","status":"completed","data":[{"url":"https://example.com/generated.png"}]}`))
+	}))
+	defer srv.Close()
+
+	resp, err := (&OpenAIAdaptor{}).TaskStatus(context.Background(), &ProviderConfig{
+		APIKey:     "test-key",
+		PollingURL: srv.URL + "/tasks/{task_id}?source=config",
+		Headers:    map[string]string{"X-Tenant-ID": "tenant-1"},
+	}, "task-img-1", map[string]string{"trace": "1"})
+	if err != nil {
+		t.Fatalf("TaskStatus() error = %v", err)
+	}
+	if resp.Output.TaskID != "task-img-1" || resp.Output.TaskStatus != "completed" {
+		t.Fatalf("output = %#v, want completed task", resp.Output)
+	}
+	if resp.Output.URL != "https://example.com/generated.png" {
+		t.Fatalf("url = %q, want generated image URL", resp.Output.URL)
+	}
+}
+
+func TestOpenAITaskStatusAppendsTaskIDToPollingURL(t *testing.T) {
+	endpoint, err := openAITaskEndpoint(&ProviderConfig{
+		PollingURL: "https://example.com/v1/tasks/",
+	}, "task/id")
+	if err != nil {
+		t.Fatalf("openAITaskEndpoint() error = %v", err)
+	}
+	if endpoint != "https://example.com/v1/tasks/task%2Fid" {
+		t.Fatalf("endpoint = %q", endpoint)
+	}
+}
+
+func TestOpenAITaskStatusRequiresPollingURL(t *testing.T) {
 	adaptor := &OpenAIAdaptor{}
 	_, err := adaptor.TaskStatus(context.Background(), &ProviderConfig{}, "task-img-1")
-	if err == nil || !strings.Contains(err.Error(), "not supported") {
-		t.Fatalf("TaskStatus() error = %v, want not supported", err)
+	if err == nil || !strings.Contains(err.Error(), "polling URL is required") {
+		t.Fatalf("TaskStatus() error = %v, want polling URL validation", err)
 	}
 }

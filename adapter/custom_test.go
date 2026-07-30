@@ -251,6 +251,56 @@ func TestCustomAdaptorTaskStatusAppendsTaskID(t *testing.T) {
 	}
 }
 
+func TestCustomAdaptorTaskStatusUsesTopLevelVideoURLPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Has("video_url_path") {
+			t.Fatal("video_url_path control value leaked into query string")
+		}
+		_, _ = w.Write([]byte(`{"id":"task-1","status":"completed","video_url":"https://cdn.example.com/top-level.mp4"}`))
+	}))
+	defer server.Close()
+
+	adaptor := &CustomAdaptor{}
+	resp, err := adaptor.TaskStatus(context.Background(), &ProviderConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1/videos",
+	}, "task-1", map[string]string{"video_url_path": "video_url"})
+	if err != nil {
+		t.Fatalf("TaskStatus error = %v", err)
+	}
+	if resp.Output.URL != "https://cdn.example.com/top-level.mp4" || resp.Output.VideoURL != "https://cdn.example.com/top-level.mp4" {
+		t.Fatalf("response URLs = %#v", resp.Output)
+	}
+}
+
+func TestCustomAdaptorTaskStatusUsesNestedVideoURLPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Has("video_url_path") {
+			t.Fatal("video_url_path control value leaked into query string")
+		}
+		if got := r.URL.Query().Get("locale"); got != "zh-CN" {
+			t.Fatalf("locale = %q, want zh-CN", got)
+		}
+		_, _ = w.Write([]byte(`{"id":"task-1","status":"completed","metadata":{"url":"https://cdn.example.com/nested.mp4"}}`))
+	}))
+	defer server.Close()
+
+	adaptor := &CustomAdaptor{}
+	resp, err := adaptor.TaskStatus(context.Background(), &ProviderConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1/videos",
+	}, "task-1", map[string]string{
+		"locale":         "zh-CN",
+		"video_url_path": "metadata.url",
+	})
+	if err != nil {
+		t.Fatalf("TaskStatus error = %v", err)
+	}
+	if resp.Output.URL != "https://cdn.example.com/nested.mp4" || resp.Output.VideoURL != "https://cdn.example.com/nested.mp4" {
+		t.Fatalf("response URLs = %#v", resp.Output)
+	}
+}
+
 func TestCustomAdaptorTaskStatusPreservesInProgress(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"id":"task-1","status":"in_progress"}`))
