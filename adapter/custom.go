@@ -26,21 +26,44 @@ type customAPIError struct {
 	Message string      `json:"message"`
 }
 
+type customAPIData struct {
+	Images   []dto.ImageData
+	Response *customAPIResponse
+}
+
+func (d *customAPIData) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+
+	switch trimmed[0] {
+	case '[':
+		return json.Unmarshal(trimmed, &d.Images)
+	case '{':
+		return json.Unmarshal(trimmed, &d.Response)
+	default:
+		return fmt.Errorf("custom API data must be an array or object")
+	}
+}
+
 type customAPIResponse struct {
-	ID        string          `json:"id"`
-	TaskID    string          `json:"task_id"`
-	RequestID string          `json:"request_id"`
-	Object    string          `json:"object"`
-	Model     string          `json:"model"`
-	Status    string          `json:"status"`
-	State     string          `json:"state"`
-	URL       string          `json:"url"`
-	VideoURL  string          `json:"video_url"`
-	Data      []dto.ImageData `json:"data"`
-	Code      interface{}     `json:"code"`
-	ErrorCode interface{}     `json:"error_code"`
-	Message   string          `json:"message"`
-	Error     *customAPIError `json:"error"`
+	ID         interface{}     `json:"id"`
+	TaskID     string          `json:"task_id"`
+	RequestID  string          `json:"request_id"`
+	Object     string          `json:"object"`
+	Model      string          `json:"model"`
+	Status     string          `json:"status"`
+	State      string          `json:"state"`
+	URL        string          `json:"url"`
+	VideoURL   string          `json:"video_url"`
+	ResultURL  string          `json:"result_url"`
+	Data       customAPIData   `json:"data"`
+	Code       interface{}     `json:"code"`
+	ErrorCode  interface{}     `json:"error_code"`
+	Message    string          `json:"message"`
+	FailReason string          `json:"fail_reason"`
+	Error      *customAPIError `json:"error"`
 }
 
 func (a *CustomAdaptor) Chat(context.Context, *ProviderConfig, *dto.MediaRequest) (*dto.MediaResponse, error) {
@@ -71,20 +94,21 @@ func (a *CustomAdaptor) Media(ctx context.Context, cfg *ProviderConfig, request 
 		return nil, err
 	}
 
-	resultURL := firstNonEmptyString(out.URL, customFirstImageURL(out.Data), out.VideoURL)
+	result := out.result()
+	resultURL := firstNonEmptyString(result.URL, customFirstImageURL(result.Data.Images), result.VideoURL, result.ResultURL)
 	resp := &dto.MediaResponse{
-		ID:           out.ID,
-		Object:       out.Object,
-		Model:        out.Model,
-		Data:         append([]dto.ImageData(nil), out.Data...),
-		RequestID:    out.RequestID,
-		TaskID:       firstNonEmptyString(out.TaskID, out.ID),
-		Status:       firstNonEmptyString(out.Status, out.State),
+		ID:           customString(result.ID),
+		Object:       result.Object,
+		Model:        result.Model,
+		Data:         append([]dto.ImageData(nil), result.Data.Images...),
+		RequestID:    firstNonEmptyString(result.RequestID, out.RequestID),
+		TaskID:       firstNonEmptyString(result.TaskID, customString(result.ID)),
+		Status:       firstNonEmptyString(result.Status, result.State),
 		URL:          resultURL,
-		ErrorCode:    out.errorCode(),
-		ErrorMessage: out.errorMessage(),
+		ErrorCode:    result.errorCode(),
+		ErrorMessage: result.errorMessage(),
 	}
-	resp.Video.URL = out.VideoURL
+	resp.Video.URL = result.VideoURL
 	return resp, nil
 }
 
@@ -105,20 +129,21 @@ func (a *CustomAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, tas
 		return nil, fmt.Errorf("decode custom API response: %w", err)
 	}
 
-	videoURL := out.VideoURL
+	result := out.result()
+	videoURL := result.VideoURL
 	if path := strings.TrimSpace(taskQuery["video_url_path"]); path != "" {
 		videoURL = customJSONPathString(raw, path)
 	}
-	resultURL := firstNonEmptyString(out.URL, customFirstImageURL(out.Data), videoURL)
+	resultURL := firstNonEmptyString(result.URL, customFirstImageURL(result.Data.Images), videoURL, result.ResultURL)
 	return &dto.TaskStatusResponse{
-		RequestID: out.RequestID,
+		RequestID: firstNonEmptyString(result.RequestID, out.RequestID),
 		Output: dto.TaskStatusOutput{
-			TaskID:     firstNonEmptyString(out.TaskID, out.ID, taskID),
-			TaskStatus: firstNonEmptyString(out.Status, out.State),
+			TaskID:     firstNonEmptyString(result.TaskID, customString(result.ID), out.TaskID, customString(out.ID), taskID),
+			TaskStatus: firstNonEmptyString(result.Status, result.State),
 			URL:        resultURL,
 			VideoURL:   videoURL,
-			Code:       out.errorCode(),
-			Message:    out.errorMessage(),
+			Code:       result.errorCode(),
+			Message:    result.errorMessage(),
 		},
 	}, nil
 }
@@ -486,6 +511,14 @@ func customResponseError(statusCode int, raw []byte) error {
 	return fmt.Errorf("custom API error: status=%d body=%s", statusCode, strings.TrimSpace(string(raw)))
 }
 
+func (r *customAPIResponse) result() *customAPIResponse {
+	if r.Data.Response != nil && customString(r.ID) == "" && r.TaskID == "" &&
+		r.Status == "" && r.State == "" && r.URL == "" && r.VideoURL == "" && r.ResultURL == "" {
+		return r.Data.Response
+	}
+	return r
+}
+
 func (r customAPIResponse) errorCode() string {
 	if value := customString(r.ErrorCode); value != "" {
 		return value
@@ -495,12 +528,25 @@ func (r customAPIResponse) errorCode() string {
 			return value
 		}
 	}
+	if r.Data.Response != nil {
+		if value := r.Data.Response.errorCode(); value != "" {
+			return value
+		}
+	}
 	return customString(r.Code)
 }
 
 func (r customAPIResponse) errorMessage() string {
 	if r.Error != nil && r.Error.Message != "" {
 		return r.Error.Message
+	}
+	if r.FailReason != "" {
+		return r.FailReason
+	}
+	if r.Data.Response != nil {
+		if value := r.Data.Response.errorMessage(); value != "" {
+			return value
+		}
 	}
 	return r.Message
 }

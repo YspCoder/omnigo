@@ -391,6 +391,78 @@ func TestCustomAdaptorTaskStatusUsesFullEndpointTemplate(t *testing.T) {
 	}
 }
 
+func TestCustomAdaptorTaskStatusParsesWrappedFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"code":"success",
+			"message":"",
+			"data":{
+				"id":160,
+				"task_id":"task_LNjy5l7HkyCmKjDVKyYlrMQdnljGH4lb",
+				"status":"FAILURE",
+				"fail_reason":"output video may be related to copyright restrictions",
+				"result_url":"output video may be related to copyright restrictions",
+				"data":{
+					"id":"cgt-20260806114637-b8n8m",
+					"status":"failed",
+					"error":{
+						"code":"OutputVideoSensitiveContentDetected.PolicyViolation",
+						"message":"output video may be related to copyright restrictions"
+					}
+				}
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	adaptor := &CustomAdaptor{}
+	resp, err := adaptor.TaskStatus(context.Background(), &ProviderConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1/videos",
+	}, "fallback-task-id")
+	if err != nil {
+		t.Fatalf("TaskStatus error = %v", err)
+	}
+	if resp.Output.TaskID != "task_LNjy5l7HkyCmKjDVKyYlrMQdnljGH4lb" || resp.Output.TaskStatus != "FAILURE" {
+		t.Fatalf("response task = %#v", resp.Output)
+	}
+	if resp.Output.Code != "OutputVideoSensitiveContentDetected.PolicyViolation" {
+		t.Fatalf("response code = %q", resp.Output.Code)
+	}
+	if resp.Output.Message != "output video may be related to copyright restrictions" {
+		t.Fatalf("response message = %q", resp.Output.Message)
+	}
+	if resp.Output.URL != "output video may be related to copyright restrictions" {
+		t.Fatalf("response URL = %q", resp.Output.URL)
+	}
+}
+
+func TestCustomAdaptorTaskStatusKeepsFlatTaskWithNestedError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"task_id":"task-1",
+			"status":"FAILURE",
+			"fail_reason":"generation failed",
+			"data":{"error":{"code":"policy_violation","message":"blocked"}}
+		}`))
+	}))
+	defer server.Close()
+
+	resp, err := (&CustomAdaptor{}).TaskStatus(context.Background(), &ProviderConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1/videos",
+	}, "fallback-task-id")
+	if err != nil {
+		t.Fatalf("TaskStatus error = %v", err)
+	}
+	if resp.Output.TaskID != "task-1" || resp.Output.TaskStatus != "FAILURE" {
+		t.Fatalf("response task = %#v", resp.Output)
+	}
+	if resp.Output.Code != "policy_violation" || resp.Output.Message != "generation failed" {
+		t.Fatalf("response error = %#v", resp.Output)
+	}
+}
+
 func TestCustomAdaptorRejectsRelativeEndpoint(t *testing.T) {
 	adaptor := &CustomAdaptor{}
 	_, err := adaptor.Media(context.Background(), &ProviderConfig{
