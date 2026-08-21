@@ -4,6 +4,7 @@
 package config
 
 import (
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -69,6 +70,9 @@ type Config struct {
 	SystemPrompt          string            `env:"LLM_SYSTEM_PROMPT"`
 	SystemPromptCacheType string            `env:"LLM_SYSTEM_PROMPT_CACHE_TYPE"`
 	ExtraHeaders          map[string]string
+	Proxy                 string `env:"LLM_PROXY"`
+	ChatProtocol          string `env:"LLM_CHAT_PROTOCOL"`
+	HTTPClient            *http.Client
 	AccessKey             string `env:"LLM_ACCESS_KEY"`
 	SecretKey             string `env:"LLM_SECRET_KEY"`
 	EnableCaching         bool   `env:"LLM_ENABLE_CACHING" envDefault:"false"`
@@ -164,6 +168,27 @@ func SetEndpoint(endpoint string) ConfigOption {
 func SetPollingURL(pollingURL string) ConfigOption {
 	return func(c *Config) {
 		c.PollingURL = pollingURL
+	}
+}
+
+// SetProxy sets an optional outbound HTTP proxy URL.
+func SetProxy(proxy string) ConfigOption {
+	return func(c *Config) {
+		c.Proxy = proxy
+	}
+}
+
+// SetChatProtocol selects the OpenAI text protocol: chat or responses.
+func SetChatProtocol(protocol string) ConfigOption {
+	return func(c *Config) {
+		c.ChatProtocol = strings.ToLower(strings.TrimSpace(protocol))
+	}
+}
+
+// SetHTTPClient sets the HTTP client used by provider adaptors.
+func SetHTTPClient(client *http.Client) ConfigOption {
+	return func(c *Config) {
+		c.HTTPClient = client
 	}
 }
 

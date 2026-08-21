@@ -73,6 +73,9 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 		PollingURL:   cfg.PollingURL,
 		Organization: cfg.APIKeys["organization"],
 		Headers:      cfg.ExtraHeaders,
+		Proxy:        cfg.Proxy,
+		HTTPClient:   cfg.HTTPClient,
+		ChatProtocol: cfg.ChatProtocol,
 		Timeout:      cfg.Timeout,
 	}
 
@@ -136,7 +139,8 @@ func (l *LLMImpl) effectiveMediaRequest(request *dto.MediaRequest) *dto.MediaReq
 	return &cloned
 }
 
-func (l *LLMImpl) textRequest(messages []dto.Message, stream bool, options map[string]interface{}) *dto.MediaRequest {
+func (l *LLMImpl) textRequest(prompt *Prompt, stream bool, options map[string]interface{}) *dto.MediaRequest {
+	messages := toDTOMessages(prompt)
 	return &dto.MediaRequest{
 		Type:        dto.MediaTypeText,
 		Model:       l.config.Model,
@@ -146,6 +150,8 @@ func (l *LLMImpl) textRequest(messages []dto.Message, stream bool, options map[s
 		MaxTokens:   l.config.MaxTokens,
 		Stream:      stream,
 		Options:     options,
+		Tools:       toDTOTools(prompt.Tools),
+		ToolChoice:  prompt.ToolChoice,
 	}
 }
 
@@ -169,7 +175,7 @@ func (l *LLMImpl) GenerateWithResponse(ctx context.Context, prompt *Prompt, opts
 	}
 	l.optionsMutex.RUnlock()
 
-	request := l.textRequest(toDTOMessages(prompt), false, options)
+	request := l.textRequest(prompt, false, options)
 
 	resp, err := l.relay.Chat(ctx, l.adaptor, l.adaptorCfg, request)
 	if err != nil {
@@ -191,7 +197,7 @@ func (l *LLMImpl) GenerateWithResponse(ctx context.Context, prompt *Prompt, opts
 func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOption) (dto.TokenStream, error) {
 	prompt = l.effectivePrompt(prompt)
 
-	request := l.textRequest(toDTOMessages(prompt), true, nil)
+	request := l.textRequest(prompt, true, nil)
 	return l.relay.Stream(ctx, l.adaptor, nil, l.adaptorCfg, request)
 }
 
@@ -244,12 +250,35 @@ func toDTOMessages(prompt *Prompt) []dto.Message {
 		msgs = append(msgs, dto.Message{Role: "system", Content: prompt.SystemPrompt})
 	}
 	for _, m := range prompt.Messages {
-		msgs = append(msgs, dto.Message{Role: m.Role, Content: m.Content})
+		message := dto.Message{
+			Role: m.Role, Content: m.Content, Name: m.Name, ToolCallID: m.ToolCallID,
+		}
+		for _, call := range m.ToolCalls {
+			message.ToolCalls = append(message.ToolCalls, dto.ToolCall{
+				ID: call.ID, Type: call.Type,
+				Function: dto.ToolCallFunction{Name: call.Function.Name, Arguments: call.Function.Arguments},
+			})
+		}
+		msgs = append(msgs, message)
 	}
 	if len(msgs) == 0 && prompt.Input != "" {
 		msgs = append(msgs, dto.Message{Role: "user", Content: prompt.Input})
 	}
 	return msgs
+}
+
+func toDTOTools(tools []utils.Tool) []dto.Tool {
+	result := make([]dto.Tool, 0, len(tools))
+	for _, tool := range tools {
+		result = append(result, dto.Tool{
+			Type: tool.Type,
+			Function: dto.ToolFunction{
+				Name: tool.Function.Name, Description: tool.Function.Description,
+				Parameters: tool.Function.Parameters,
+			},
+		})
+	}
+	return result
 }
 
 func mediaPromptString(messages []dto.Message) string {

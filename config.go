@@ -64,13 +64,16 @@ var (
 // to modify configuration settings.
 var (
 	// Provider configuration
-	SetProvider   = config.SetProvider   // Sets the LLM provider (e.g., "openai", "ali")
-	SetModel      = config.SetModel      // Sets the model name for the selected provider
-	SetEndpoint   = config.SetEndpoint   // Sets a custom endpoint for the selected provider
-	SetPollingURL = config.SetPollingURL // Sets the background-task polling URL
-	SetAPIKey     = config.SetAPIKey     // Sets the API key for the current provider
-	SetAccessKey  = config.SetAccessKey  // Sets the access key for the current provider
-	SetSecretKey  = config.SetSecretKey  // Sets the secret key for the current provider
+	SetProvider     = config.SetProvider     // Sets the LLM provider (e.g., "openai", "ali")
+	SetModel        = config.SetModel        // Sets the model name for the selected provider
+	SetEndpoint     = config.SetEndpoint     // Sets a custom endpoint for the selected provider
+	SetPollingURL   = config.SetPollingURL   // Sets the background-task polling URL
+	SetAPIKey       = config.SetAPIKey       // Sets the API key for the current provider
+	SetAccessKey    = config.SetAccessKey    // Sets the access key for the current provider
+	SetSecretKey    = config.SetSecretKey    // Sets the secret key for the current provider
+	SetProxy        = config.SetProxy        // Sets an optional outbound HTTP proxy
+	SetChatProtocol = config.SetChatProtocol // Selects chat or responses for OpenAI text calls
+	SetHTTPClient   = config.SetHTTPClient   // Sets the provider HTTP client
 
 	// Generation parameters
 	SetTemperature      = config.SetTemperature      // Controls randomness in generation (0.0-1.0)

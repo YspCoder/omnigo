@@ -69,7 +69,11 @@ func (a *OpenAIAdaptor) getClient(config *ProviderConfig) *openai.Client {
 }
 
 func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
-	if openAIUsesResponsesAPI(request.Messages) {
+	useResponses, err := openAIUsesResponsesAPI(config, request.Messages)
+	if err != nil {
+		return nil, err
+	}
+	if useResponses {
 		return a.chatWithResponsesAPI(ctx, config, request)
 	}
 
@@ -78,6 +82,9 @@ func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, reques
 	params := openai.ChatCompletionNewParams{
 		Model:    request.Model,
 		Messages: toOpenAIMessages(request.Messages),
+	}
+	if err := applyOpenAIChatTools(&params, request); err != nil {
+		return nil, err
 	}
 	if request.Temperature != 0 {
 		params.Temperature = openai.Float(request.Temperature)
@@ -103,12 +110,14 @@ func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, reques
 		},
 	}
 	for i, c := range resp.Choices {
+		message := dto.Message{
+			Role:    string(c.Message.Role),
+			Content: c.Message.Content,
+		}
+		message.ToolCalls = fromOpenAIToolCalls(c.Message.ToolCalls)
 		res.Choices[i] = dto.ChatChoice{
-			Index: i,
-			Message: dto.Message{
-				Role:    string(c.Message.Role),
-				Content: c.Message.Content,
-			},
+			Index:        i,
+			Message:      message,
 			FinishReason: string(c.FinishReason),
 		}
 	}
@@ -119,10 +128,19 @@ func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, reques
 }
 
 type openAIResponsesRequest struct {
-	Model           string                     `json:"model"`
-	Input           []openAIResponsesInputItem `json:"input"`
-	Temperature     *float64                   `json:"temperature,omitempty"`
-	MaxOutputTokens *int                       `json:"max_output_tokens,omitempty"`
+	Model           string                `json:"model"`
+	Input           []json.RawMessage     `json:"input"`
+	Tools           []openAIResponsesTool `json:"tools,omitempty"`
+	ToolChoice      interface{}           `json:"tool_choice,omitempty"`
+	Temperature     *float64              `json:"temperature,omitempty"`
+	MaxOutputTokens *int                  `json:"max_output_tokens,omitempty"`
+}
+
+type openAIResponsesTool struct {
+	Type        string                 `json:"type"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Parameters  map[string]interface{} `json:"parameters,omitempty"`
 }
 
 type openAIResponsesInputItem struct {
@@ -150,9 +168,12 @@ type openAIResponsesResponse struct {
 }
 
 type openAIResponsesOutputItem struct {
-	Type    string                         `json:"type"`
-	Content []openAIResponsesOutputContent `json:"content"`
-	Role    string                         `json:"role"`
+	Type      string                         `json:"type"`
+	Content   []openAIResponsesOutputContent `json:"content"`
+	Role      string                         `json:"role"`
+	CallID    string                         `json:"call_id"`
+	Name      string                         `json:"name"`
+	Arguments string                         `json:"arguments"`
 }
 
 type openAIResponsesOutputContent struct {
@@ -172,9 +193,15 @@ type openAIResponsesError struct {
 }
 
 func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
+	input, err := toOpenAIResponsesInput(request.Messages)
+	if err != nil {
+		return nil, err
+	}
 	payload := openAIResponsesRequest{
-		Model: request.Model,
-		Input: toOpenAIResponsesInput(request.Messages),
+		Model:      request.Model,
+		Input:      input,
+		Tools:      toOpenAIResponsesTools(request.Tools),
+		ToolChoice: openAIResponsesToolChoice(request.ToolChoice),
 	}
 	if request.Temperature != 0 {
 		payload.Temperature = &request.Temperature
@@ -227,16 +254,22 @@ func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *Provid
 		text = strings.TrimSpace(extractOpenAIResponsesText(parsed.Output))
 	}
 
+	message := dto.Message{
+		Role: "assistant", Content: text,
+		ToolCalls: fromOpenAIResponsesToolCalls(parsed.Output),
+	}
+	finishReason := "completed"
+	if len(message.ToolCalls) > 0 {
+		finishReason = "tool_calls"
+	}
 	return &dto.MediaResponse{
 		ID:    parsed.ID,
 		Model: parsed.Model,
 		Text:  text,
 		Choices: []dto.ChatChoice{{
-			Index: 0,
-			Message: dto.Message{
-				Role:    "assistant",
-				Content: text,
-			},
+			Index:        0,
+			Message:      message,
+			FinishReason: finishReason,
 		}},
 		Usage: dto.Usage{
 			PromptTokens:     parsed.Usage.InputTokens,
@@ -246,18 +279,45 @@ func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *Provid
 	}, nil
 }
 
-func openAIUsesResponsesAPI(messages []dto.Message) bool {
+func openAIUsesResponsesAPI(config *ProviderConfig, messages []dto.Message) (bool, error) {
+	protocol := ""
+	if config != nil {
+		protocol = strings.ToLower(strings.TrimSpace(config.ChatProtocol))
+	}
+	switch protocol {
+	case "responses":
+		return true, nil
+	case "chat":
+		return false, nil
+	case "":
+	default:
+		return false, fmt.Errorf("unsupported openai chat protocol %q", protocol)
+	}
 	for _, message := range messages {
 		if message.FileURL != "" || len(openAIMessageImageURLs(message)) > 0 {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
-func toOpenAIResponsesInput(messages []dto.Message) []openAIResponsesInputItem {
-	items := make([]openAIResponsesInputItem, 0, len(messages))
+func toOpenAIResponsesInput(messages []dto.Message) ([]json.RawMessage, error) {
+	items := make([]json.RawMessage, 0, len(messages)*2)
 	for _, message := range messages {
+		if message.Role == "tool" {
+			if strings.TrimSpace(message.ToolCallID) == "" {
+				return nil, fmt.Errorf("openai tool message requires tool_call_id")
+			}
+			item, err := json.Marshal(map[string]interface{}{
+				"type": "function_call_output", "call_id": message.ToolCallID,
+				"output": openAIMessageTextContent(message),
+			})
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, item)
+			continue
+		}
 		role := strings.TrimSpace(message.Role)
 		if role == "" {
 			role = "user"
@@ -283,15 +343,28 @@ func toOpenAIResponsesInput(messages []dto.Message) []openAIResponsesInputItem {
 				Filename: message.Name,
 			})
 		}
-		if len(content) == 0 {
-			continue
+		if len(content) > 0 {
+			item, err := json.Marshal(openAIResponsesInputItem{
+				Role:    role,
+				Content: content,
+			})
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, item)
 		}
-		items = append(items, openAIResponsesInputItem{
-			Role:    role,
-			Content: content,
-		})
+		for _, call := range message.ToolCalls {
+			callItem, err := json.Marshal(map[string]interface{}{
+				"type": "function_call", "call_id": call.ID,
+				"name": call.Function.Name, "arguments": string(call.Function.Arguments),
+			})
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, callItem)
+		}
 	}
-	return items
+	return items, nil
 }
 
 func extractOpenAIResponsesText(items []openAIResponsesOutputItem) string {
@@ -305,6 +378,41 @@ func extractOpenAIResponsesText(items []openAIResponsesOutputItem) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func fromOpenAIResponsesToolCalls(items []openAIResponsesOutputItem) []dto.ToolCall {
+	result := make([]dto.ToolCall, 0, len(items))
+	for _, item := range items {
+		if item.Type != "function_call" {
+			continue
+		}
+		result = append(result, dto.ToolCall{
+			ID: item.CallID, Type: "function",
+			Function: dto.ToolCallFunction{
+				Name: item.Name, Arguments: json.RawMessage(item.Arguments),
+			},
+		})
+	}
+	return result
+}
+
+func toOpenAIResponsesTools(tools []dto.Tool) []openAIResponsesTool {
+	result := make([]openAIResponsesTool, 0, len(tools))
+	for _, tool := range tools {
+		result = append(result, openAIResponsesTool{
+			Type: firstNonEmptyString(tool.Type, "function"),
+			Name: tool.Function.Name, Description: tool.Function.Description,
+			Parameters: tool.Function.Parameters,
+		})
+	}
+	return result
+}
+
+func openAIResponsesToolChoice(value interface{}) interface{} {
+	if mode, ok := openAIToolChoiceMode(value); ok {
+		return mode
+	}
+	return value
 }
 
 func toOpenAIMessages(messages []dto.Message) []openai.ChatCompletionMessageParamUnion {
@@ -322,7 +430,13 @@ func toOpenAIMessages(messages []dto.Message) []openai.ChatCompletionMessagePara
 				res[i] = openai.UserMessage(content)
 			}
 		case "assistant":
-			res[i] = openai.AssistantMessage(content)
+			message := openai.AssistantMessage(content)
+			message.OfAssistant.ToolCalls = toOpenAIToolCallParams(m.ToolCalls)
+			res[i] = message
+		case "tool":
+			res[i] = openai.ToolMessage(content, m.ToolCallID)
+		case "developer":
+			res[i] = openai.DeveloperMessage(content)
 		default:
 			if len(parts) > 0 {
 				res[i] = openai.UserMessage(parts)
@@ -332,6 +446,86 @@ func toOpenAIMessages(messages []dto.Message) []openai.ChatCompletionMessagePara
 		}
 	}
 	return res
+}
+
+func toOpenAIToolCallParams(calls []dto.ToolCall) []openai.ChatCompletionMessageToolCallUnionParam {
+	result := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(calls))
+	for _, call := range calls {
+		result = append(result, openai.ChatCompletionMessageToolCallUnionParam{
+			OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+				ID: call.ID,
+				Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+					Name: call.Function.Name, Arguments: string(call.Function.Arguments),
+				},
+			},
+		})
+	}
+	return result
+}
+
+func fromOpenAIToolCalls(calls []openai.ChatCompletionMessageToolCallUnion) []dto.ToolCall {
+	result := make([]dto.ToolCall, 0, len(calls))
+	for _, call := range calls {
+		if call.Type != "function" && call.Function.Name == "" {
+			continue
+		}
+		result = append(result, dto.ToolCall{
+			ID: call.ID, Type: "function",
+			Function: dto.ToolCallFunction{
+				Name: call.Function.Name, Arguments: json.RawMessage(call.Function.Arguments),
+			},
+		})
+	}
+	return result
+}
+
+func applyOpenAIChatTools(params *openai.ChatCompletionNewParams, request *dto.MediaRequest) error {
+	for _, tool := range request.Tools {
+		toolType := strings.ToLower(strings.TrimSpace(tool.Type))
+		if toolType != "" && toolType != "function" {
+			return fmt.Errorf("unsupported openai tool type %q", tool.Type)
+		}
+		params.Tools = append(params.Tools, openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name: tool.Function.Name, Description: openai.String(tool.Function.Description),
+			Parameters: tool.Function.Parameters,
+		}))
+	}
+	if request.ToolChoice == nil {
+		return nil
+	}
+	if mode, ok := openAIToolChoiceMode(request.ToolChoice); ok {
+		params.ToolChoice.OfAuto = openai.String(mode)
+		return nil
+	}
+	choice, ok := request.ToolChoice.(map[string]interface{})
+	if !ok || strings.ToLower(strings.TrimSpace(fmt.Sprint(choice["type"]))) != "function" {
+		return fmt.Errorf("unsupported openai tool choice")
+	}
+	function, ok := choice["function"].(map[string]interface{})
+	if !ok || strings.TrimSpace(fmt.Sprint(function["name"])) == "" {
+		return fmt.Errorf("openai function tool choice requires a name")
+	}
+	params.ToolChoice = openai.ToolChoiceOptionFunctionToolChoice(
+		openai.ChatCompletionNamedToolChoiceFunctionParam{Name: strings.TrimSpace(fmt.Sprint(function["name"]))},
+	)
+	return nil
+}
+
+func openAIToolChoiceMode(value interface{}) (string, bool) {
+	mode := ""
+	switch typed := value.(type) {
+	case string:
+		mode = typed
+	case map[string]interface{}:
+		mode = fmt.Sprint(typed["type"])
+	}
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case "none", "auto", "required":
+		return mode, true
+	default:
+		return "", false
+	}
 }
 
 func openAIChatMessageParts(message dto.Message) []openai.ChatCompletionContentPartUnionParam {
@@ -435,11 +629,21 @@ func (w *openAIStreamWrapper) Close() error {
 }
 
 func (a *OpenAIAdaptor) Stream(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
+	useResponses, err := openAIUsesResponsesAPI(config, request.Messages)
+	if err != nil {
+		return nil, err
+	}
+	if useResponses {
+		return nil, fmt.Errorf("openai responses streaming is not supported")
+	}
 	client := a.getClient(config)
 
 	params := openai.ChatCompletionNewParams{
 		Model:    request.Model,
 		Messages: toOpenAIMessages(request.Messages),
+	}
+	if err := applyOpenAIChatTools(&params, request); err != nil {
+		return nil, err
 	}
 	if request.Temperature != 0 {
 		params.Temperature = openai.Float(request.Temperature)

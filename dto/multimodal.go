@@ -13,6 +13,34 @@ type Message struct {
 	VideoFPS    float64     `json:"video_fps,omitempty"`
 	FileURL     string      `json:"file_url,omitempty"`
 	Name        string      `json:"name,omitempty"`
+	ToolCalls   []ToolCall  `json:"tool_calls,omitempty"`
+	ToolCallID  string      `json:"tool_call_id,omitempty"`
+}
+
+// ToolCall represents a function call requested by the model.
+type ToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function ToolCallFunction `json:"function"`
+}
+
+// ToolCallFunction contains the function name and its JSON arguments.
+type ToolCallFunction struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
+// Tool defines a function exposed to the model.
+type Tool struct {
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+// ToolFunction contains the function metadata and JSON Schema parameters.
+type ToolFunction struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Parameters  map[string]interface{} `json:"parameters,omitempty"`
 }
 
 // MediaType indicates the kind of media request.
@@ -45,6 +73,8 @@ type MediaRequest struct {
 	Prompt         string                 `json:"-"`
 	Options        map[string]interface{} `json:"-"`
 	Schema         interface{}            `json:"-"`
+	Tools          []Tool                 `json:"tools,omitempty"`
+	ToolChoice     interface{}            `json:"tool_choice,omitempty"`
 }
 
 // GenerateResponse preserves both the extracted text and the raw multimodal response.
