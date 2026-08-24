@@ -42,6 +42,7 @@
 - OpenRouter (`openrouter`)
 - Ollama (`ollama`)
 - Anthropic (`anthropic`)
+- Cohere (`cohere`)
 - Ali / DashScope (`ali`)
 - Google / Gemini (`google`)
 - Google / Gemini OpenAI compatibility (`google-openai`)

@@ -105,6 +105,14 @@ func NewRegistry(providerNames ...string) *Registry {
 				return &AnthropicAdaptor{}
 			},
 		},
+		"cohere": {
+			Name:     "cohere",
+			Type:     TypeOpenAI,
+			Endpoint: "https://api.cohere.ai/compatibility/v1",
+			AdaptorFactory: func() Adaptor {
+				return &OpenAIAdaptor{}
+			},
+		},
 		"ali": {
 			Name:     "ali",
 			Type:     TypeAliAI,
