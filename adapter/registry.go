@@ -68,6 +68,14 @@ func NewRegistry(providerNames ...string) *Registry {
 				return &OpenAIAdaptor{}
 			},
 		},
+		"mistral": {
+			Name:     "mistral",
+			Type:     TypeOpenAI,
+			Endpoint: "https://api.mistral.ai/v1",
+			AdaptorFactory: func() Adaptor {
+				return &OpenAIAdaptor{}
+			},
+		},
 		"anthropic": {
 			Name:     "anthropic",
 			Type:     TypeCustom,

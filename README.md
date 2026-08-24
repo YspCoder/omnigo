@@ -38,6 +38,7 @@
 - Groq (`groq`)
 - Moonshot (`moonshot`)
 - DeepSeek (`deepseek`)
+- Mistral AI (`mistral`)
 - Anthropic (`anthropic`)
 - Ali / DashScope (`ali`)
 - Google / Gemini (`google`)
