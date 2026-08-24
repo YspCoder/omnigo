@@ -66,6 +66,13 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 	if baseURL == "" {
 		baseURL = spec.Endpoint
 	}
+	headers := make(map[string]string, len(spec.Headers)+len(cfg.ExtraHeaders))
+	for key, value := range spec.Headers {
+		headers[key] = value
+	}
+	for key, value := range cfg.ExtraHeaders {
+		headers[key] = value
+	}
 
 	llmClient.adaptorCfg = &adapter.ProviderConfig{
 		Name:         spec.Name,
@@ -76,7 +83,7 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 		BaseURL:      baseURL,
 		PollingURL:   cfg.PollingURL,
 		Organization: cfg.APIKeys["organization"],
-		Headers:      cfg.ExtraHeaders,
+		Headers:      headers,
 		Proxy:        cfg.Proxy,
 		HTTPClient:   cfg.HTTPClient,
 		ChatProtocol: cfg.ChatProtocol,

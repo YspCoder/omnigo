@@ -41,6 +41,9 @@ func (a *OpenAIAdaptor) getClient(config *ProviderConfig) *openai.Client {
 	if config.Organization != "" {
 		opts = append(opts, option.WithOrganization(config.Organization))
 	}
+	for key, value := range config.Headers {
+		opts = append(opts, option.WithHeader(key, value))
+	}
 
 	httpClient := config.HTTPClient
 	if httpClient == nil {

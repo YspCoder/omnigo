@@ -20,6 +20,7 @@ type ProviderSpec struct {
 	Name           string
 	Type           ProviderType
 	Endpoint       string
+	Headers        map[string]string
 	AdaptorFactory func() Adaptor
 }
 
@@ -72,6 +73,18 @@ func NewRegistry(providerNames ...string) *Registry {
 			Name:     "mistral",
 			Type:     TypeOpenAI,
 			Endpoint: "https://api.mistral.ai/v1",
+			AdaptorFactory: func() Adaptor {
+				return &OpenAIAdaptor{}
+			},
+		},
+		"openrouter": {
+			Name:     "openrouter",
+			Type:     TypeOpenAI,
+			Endpoint: "https://openrouter.ai/api/v1",
+			Headers: map[string]string{
+				"HTTP-Referer":       "https://github.com/YspCoder/omnigo",
+				"X-OpenRouter-Title": "Omnigo",
+			},
 			AdaptorFactory: func() Adaptor {
 				return &OpenAIAdaptor{}
 			},

@@ -39,6 +39,7 @@
 - Moonshot (`moonshot`)
 - DeepSeek (`deepseek`)
 - Mistral AI (`mistral`)
+- OpenRouter (`openrouter`)
 - Anthropic (`anthropic`)
 - Ali / DashScope (`ali`)
 - Google / Gemini (`google`)
