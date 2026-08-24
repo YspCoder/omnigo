@@ -19,6 +19,7 @@ import (
 	"github.com/YspCoder/omnigo/dto"
 	"github.com/YspCoder/omnigo/utils"
 	"github.com/openai/openai-go/v3"
+	openaiAzure "github.com/openai/openai-go/v3/azure"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 )
@@ -32,11 +33,17 @@ func (a *OpenAIAdaptor) getClient(config *ProviderConfig) *openai.Client {
 		return a.client
 	}
 
-	opts := []option.RequestOption{
-		option.WithAPIKey(config.APIKey),
-	}
-	if config.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(config.BaseURL))
+	opts := make([]option.RequestOption, 0, 6)
+	if config.Name == "azure-openai" {
+		opts = append(opts,
+			openaiAzure.WithEndpoint(config.BaseURL, config.APIVersion),
+			openaiAzure.WithAPIKey(config.APIKey),
+		)
+	} else {
+		opts = append(opts, option.WithAPIKey(config.APIKey))
+		if config.BaseURL != "" {
+			opts = append(opts, option.WithBaseURL(config.BaseURL))
+		}
 	}
 	if config.Organization != "" {
 		opts = append(opts, option.WithOrganization(config.Organization))
@@ -286,6 +293,20 @@ func openAIUsesResponsesAPI(config *ProviderConfig, messages []dto.Message) (boo
 	protocol := ""
 	if config != nil {
 		protocol = strings.ToLower(strings.TrimSpace(config.ChatProtocol))
+	}
+	if config != nil && config.Name == "azure-openai" {
+		if protocol == "responses" {
+			return false, fmt.Errorf("responses protocol is not supported by the azure-openai provider")
+		}
+		if protocol != "" && protocol != "chat" {
+			return false, fmt.Errorf("unsupported openai chat protocol %q", protocol)
+		}
+		for _, message := range messages {
+			if message.FileURL != "" {
+				return false, fmt.Errorf("file inputs are not supported by the azure-openai provider")
+			}
+		}
+		return false, nil
 	}
 	switch protocol {
 	case "responses":

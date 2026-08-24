@@ -35,6 +35,7 @@
 当前内置 Provider Spec（可扩展）：
 
 - OpenAI (`openai`)
+- Azure OpenAI (`azure-openai`)
 - Groq (`groq`)
 - Moonshot (`moonshot`)
 - DeepSeek (`deepseek`)
@@ -56,6 +57,18 @@
 > 说明：以上名称为 `SetProvider(...)` 传入值。
 
 `custom-openai` 适用于兼容 OpenAI API 的文本服务，必须通过 `SetEndpoint` 传入 base URL（例如 `https://example.com/v1`）；它支持对话、流式输出和工具调用。媒体任务若要求传入完整创建 URL，继续使用 `custom`。
+
+Azure OpenAI 需要同时配置资源 endpoint 与 API version，`SetModel` 传 deployment name：
+
+```go
+client, err := omnigo.NewLLM(
+    omnigo.SetProvider("azure-openai"),
+    omnigo.SetEndpoint("https://<resource>.openai.azure.com"),
+    omnigo.SetAPIVersion("<api-version>"),
+    omnigo.SetModel("<deployment-name>"),
+    omnigo.SetAPIKey(os.Getenv("AZURE_OPENAI_API_KEY")),
+)
+```
 
 ### Kling AI 示例
 

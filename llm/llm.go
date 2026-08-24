@@ -69,6 +69,9 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 	if spec.EndpointRequired && baseURL == "" {
 		return nil, fmt.Errorf("provider %s requires an endpoint", spec.Name)
 	}
+	if spec.APIVersionRequired && cfg.APIVersion == "" {
+		return nil, fmt.Errorf("provider %s requires an API version", spec.Name)
+	}
 	headers := make(map[string]string, len(spec.Headers)+len(cfg.ExtraHeaders))
 	for key, value := range spec.Headers {
 		headers[key] = value
@@ -84,6 +87,7 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 		SecretKey:    cfg.SecretKey,
 		Model:        cfg.Model,
 		BaseURL:      baseURL,
+		APIVersion:   cfg.APIVersion,
 		PollingURL:   cfg.PollingURL,
 		Organization: cfg.APIKeys["organization"],
 		Headers:      headers,
