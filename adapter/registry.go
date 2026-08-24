@@ -113,6 +113,14 @@ func NewRegistry(providerNames ...string) *Registry {
 				return &GoogleAdaptor{}
 			},
 		},
+		"google-openai": {
+			Name:     "google-openai",
+			Type:     TypeOpenAI,
+			Endpoint: "https://generativelanguage.googleapis.com/v1beta/openai",
+			AdaptorFactory: func() Adaptor {
+				return &OpenAIAdaptor{}
+			},
+		},
 		"ark": {
 			Name:     "ark",
 			Type:     TypeCustom,

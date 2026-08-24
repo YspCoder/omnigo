@@ -43,6 +43,7 @@
 - Anthropic (`anthropic`)
 - Ali / DashScope (`ali`)
 - Google / Gemini (`google`)
+- Google / Gemini OpenAI compatibility (`google-openai`)
 - Volcengine Ark (`ark`)
 - Vidu (`vidu`)
 - Kling AI (`kling`)
