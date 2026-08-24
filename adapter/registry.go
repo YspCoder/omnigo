@@ -17,11 +17,12 @@ const (
 
 // ProviderSpec describes a provider's defaults and adaptor mapping.
 type ProviderSpec struct {
-	Name           string
-	Type           ProviderType
-	Endpoint       string
-	Headers        map[string]string
-	AdaptorFactory func() Adaptor
+	Name             string
+	Type             ProviderType
+	Endpoint         string
+	EndpointRequired bool
+	Headers          map[string]string
+	AdaptorFactory   func() Adaptor
 }
 
 // Registry manages adaptor registration.
@@ -174,6 +175,14 @@ func NewRegistry(providerNames ...string) *Registry {
 			Type: TypeCustom,
 			AdaptorFactory: func() Adaptor {
 				return &CustomAdaptor{}
+			},
+		},
+		"custom-openai": {
+			Name:             "custom-openai",
+			Type:             TypeOpenAI,
+			EndpointRequired: true,
+			AdaptorFactory: func() Adaptor {
+				return &OpenAIAdaptor{}
 			},
 		},
 	}

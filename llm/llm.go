@@ -66,6 +66,9 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 	if baseURL == "" {
 		baseURL = spec.Endpoint
 	}
+	if spec.EndpointRequired && baseURL == "" {
+		return nil, fmt.Errorf("provider %s requires an endpoint", spec.Name)
+	}
 	headers := make(map[string]string, len(spec.Headers)+len(cfg.ExtraHeaders))
 	for key, value := range spec.Headers {
 		headers[key] = value

@@ -50,9 +50,12 @@
 - Vidu (`vidu`)
 - Kling AI (`kling`)
 - Pai / PixVerse (`pai`)
+- 第三方 OpenAI-compatible base URL (`custom-openai`)
 - 第三方完整 URL (`custom`)
 
 > 说明：以上名称为 `SetProvider(...)` 传入值。
+
+`custom-openai` 适用于兼容 OpenAI API 的文本服务，必须通过 `SetEndpoint` 传入 base URL（例如 `https://example.com/v1`）；它支持对话、流式输出和工具调用。媒体任务若要求传入完整创建 URL，继续使用 `custom`。
 
 ### Kling AI 示例
 
