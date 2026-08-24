@@ -40,6 +40,7 @@
 - DeepSeek (`deepseek`)
 - Mistral AI (`mistral`)
 - OpenRouter (`openrouter`)
+- Ollama (`ollama`)
 - Anthropic (`anthropic`)
 - Ali / DashScope (`ali`)
 - Google / Gemini (`google`)
