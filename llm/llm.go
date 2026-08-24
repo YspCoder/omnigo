@@ -62,6 +62,10 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 		relay:        relay.NewRelay(),
 		adaptor:      adp,
 	}
+	baseURL := cfg.Endpoint
+	if baseURL == "" {
+		baseURL = spec.Endpoint
+	}
 
 	llmClient.adaptorCfg = &adapter.ProviderConfig{
 		Name:         spec.Name,
@@ -69,7 +73,7 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 		AccessKey:    cfg.AccessKey,
 		SecretKey:    cfg.SecretKey,
 		Model:        cfg.Model,
-		BaseURL:      cfg.Endpoint,
+		BaseURL:      baseURL,
 		PollingURL:   cfg.PollingURL,
 		Organization: cfg.APIKeys["organization"],
 		Headers:      cfg.ExtraHeaders,

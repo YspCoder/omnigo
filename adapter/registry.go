@@ -60,6 +60,14 @@ func NewRegistry(providerNames ...string) *Registry {
 				return &OpenAIAdaptor{}
 			},
 		},
+		"deepseek": {
+			Name:     "deepseek",
+			Type:     TypeOpenAI,
+			Endpoint: "https://api.deepseek.com",
+			AdaptorFactory: func() Adaptor {
+				return &OpenAIAdaptor{}
+			},
+		},
 		"anthropic": {
 			Name:     "anthropic",
 			Type:     TypeCustom,

@@ -24,7 +24,7 @@
 ## 特性
 
 - **统一调用 API**：屏蔽不同服务商的请求格式差异。
-- **可扩展的 Provider Registry**：默认提供 OpenAI 与 Ali（DashScope），支持自定义扩展。
+- **可扩展的 Provider Registry**：内置常用文本与多媒体服务商，支持自定义扩展。
 - **流式与非流式统一处理**：一套接口支持 streaming 与非 streaming。
 - **结构化输出与校验**：支持 JSON Schema 校验与提示词结构化。
 - **可配置性强**：支持环境变量加载 + 代码选项式配置。
@@ -35,9 +35,13 @@
 当前内置 Provider Spec（可扩展）：
 
 - OpenAI (`openai`)
+- Groq (`groq`)
+- Moonshot (`moonshot`)
+- DeepSeek (`deepseek`)
+- Anthropic (`anthropic`)
 - Ali / DashScope (`ali`)
-- Jimeng / Volcengine (`jimeng`)
 - Google / Gemini (`google`)
+- Volcengine Ark (`ark`)
 - Vidu (`vidu`)
 - Kling AI (`kling`)
 - Pai / PixVerse (`pai`)
