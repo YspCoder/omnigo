@@ -45,6 +45,7 @@
 - Anthropic (`anthropic`)
 - Cohere (`cohere`)
 - Ali / DashScope (`ali`)
+- Jimeng / Volcengine Visual (`jimeng`)
 - Google / Gemini (`google`)
 - Google / Gemini OpenAI compatibility (`google-openai`)
 - Volcengine Ark (`ark`)
@@ -775,7 +776,7 @@ func main() {
 
 ### 视频生成示例 (Jimeng / 即梦)
 
-即梦 (Jimeng) 适配器支持动态模型映射。您可以通过 `SetModel` 指定模型编号（如 `jimeng_ti2v_v30_pro`），或在 `Extra` 中通过 `req_key` 覆盖。
+即梦 (Jimeng) 适配器使用火山引擎 AK/SK 鉴权。通过 `SetModel` 指定官方 `req_key`（如 `jimeng_ti2v_v30_pro`），也可以在 `Extra` 中通过 `req_key` 覆盖。
 
 ```go
 package main
@@ -790,15 +791,17 @@ import (
 )
 
 func main() {
-    apiKey := os.Getenv("JIMENG_API_KEY") // 火山引擎 API Key
-    if apiKey == "" {
-        log.Fatal("JIMENG_API_KEY is not set")
+    accessKey := os.Getenv("JIMENG_ACCESS_KEY")
+    secretKey := os.Getenv("JIMENG_SECRET_KEY")
+    if accessKey == "" || secretKey == "" {
+        log.Fatal("JIMENG_ACCESS_KEY or JIMENG_SECRET_KEY is not set")
     }
 
     llm, err := omnigo.NewLLM(
         omnigo.SetProvider("jimeng"),
         omnigo.SetModel("jimeng_ti2v_v30_pro"), // 指定即梦模型编号
-        omnigo.SetAPIKey(apiKey),
+        omnigo.SetAccessKey(accessKey),
+        omnigo.SetSecretKey(secretKey),
     )
     if err != nil {
         log.Fatalf("create LLM failed: %v", err)
@@ -806,6 +809,7 @@ func main() {
 
     req := &dto.MediaRequest{
         Type:     dto.MediaTypeVideo,
+        Duration: 5,
         Messages: []dto.Message{{Role: "user", Content: "赛博朋克风格的白兔执行官在指挥中心，全息屏闪烁"}},
         Extra: map[string]interface{}{
             "image_url": "https://example.com/character.png", // 可选的首帧图

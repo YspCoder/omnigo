@@ -132,6 +132,14 @@ func NewRegistry(providerNames ...string) *Registry {
 				return &AliAdaptor{}
 			},
 		},
+		"jimeng": {
+			Name:     "jimeng",
+			Type:     TypeCustom,
+			Endpoint: "https://visual.volcengineapi.com",
+			AdaptorFactory: func() Adaptor {
+				return &JimengAdaptor{}
+			},
+		},
 		"google": {
 			Name:     "google",
 			Type:     TypeCustom,
