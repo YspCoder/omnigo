@@ -59,6 +59,7 @@ type customAPIResponse struct {
 	VideoURL   string          `json:"video_url"`
 	ResultURL  string          `json:"result_url"`
 	Data       customAPIData   `json:"data"`
+	Metadata   json.RawMessage `json:"metadata"`
 	Code       interface{}     `json:"code"`
 	ErrorCode  interface{}     `json:"error_code"`
 	Message    string          `json:"message"`
@@ -95,7 +96,8 @@ func (a *CustomAdaptor) Media(ctx context.Context, cfg *ProviderConfig, request 
 	}
 
 	result := out.result()
-	resultURL := firstNonEmptyString(result.URL, customFirstImageURL(result.Data.Images), result.VideoURL, result.ResultURL)
+	metadataURL := result.metadataURL()
+	resultURL := firstNonEmptyString(result.URL, customFirstImageURL(result.Data.Images), result.VideoURL, result.ResultURL, metadataURL)
 	resp := &dto.MediaResponse{
 		ID:           customString(result.ID),
 		Object:       result.Object,
@@ -108,7 +110,11 @@ func (a *CustomAdaptor) Media(ctx context.Context, cfg *ProviderConfig, request 
 		ErrorCode:    result.errorCode(),
 		ErrorMessage: result.errorMessage(),
 	}
-	resp.Video.URL = result.VideoURL
+	if request.Type == dto.MediaTypeVideo {
+		resp.Video.URL = firstNonEmptyString(result.VideoURL, metadataURL)
+	} else {
+		resp.Video.URL = result.VideoURL
+	}
 	return resp, nil
 }
 
@@ -130,7 +136,7 @@ func (a *CustomAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, tas
 	}
 
 	result := out.result()
-	videoURL := result.VideoURL
+	videoURL := firstNonEmptyString(result.VideoURL, result.metadataURL())
 	if path := strings.TrimSpace(taskQuery["video_url_path"]); path != "" {
 		videoURL = customJSONPathString(raw, path)
 	}
@@ -549,6 +555,14 @@ func (r customAPIResponse) errorMessage() string {
 		}
 	}
 	return r.Message
+}
+
+func (r customAPIResponse) metadataURL() string {
+	return firstNonEmptyString(
+		customJSONPathString(r.Metadata, "url"),
+		customJSONPathString(r.Metadata, "video_url"),
+		customJSONPathString(r.Metadata, "result_url"),
+	)
 }
 
 func customString(value interface{}) string {
