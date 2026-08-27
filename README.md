@@ -24,7 +24,7 @@
 ## 特性
 
 - **统一调用 API**：屏蔽不同服务商的请求格式差异。
-- **可扩展的 Provider Registry**：内置常用文本与多媒体服务商，支持自定义扩展。
+- **可扩展的 Provider Registry**：默认提供 OpenAI 与 Ali（DashScope），支持自定义扩展。
 - **流式与非流式统一处理**：一套接口支持 streaming 与非 streaming。
 - **结构化输出与校验**：支持 JSON Schema 校验与提示词结构化。
 - **可配置性强**：支持环境变量加载 + 代码选项式配置。
@@ -35,41 +35,15 @@
 当前内置 Provider Spec（可扩展）：
 
 - OpenAI (`openai`)
-- Azure OpenAI (`azure-openai`)
-- Groq (`groq`)
-- Moonshot (`moonshot`)
-- DeepSeek (`deepseek`)
-- Mistral AI (`mistral`)
-- OpenRouter (`openrouter`)
-- Ollama (`ollama`)
-- Anthropic (`anthropic`)
-- Cohere (`cohere`)
 - Ali / DashScope (`ali`)
-- Jimeng / Volcengine Visual (`jimeng`)
+- Jimeng / Volcengine (`jimeng`)
 - Google / Gemini (`google`)
-- Google / Gemini OpenAI compatibility (`google-openai`)
-- Volcengine Ark (`ark`)
 - Vidu (`vidu`)
 - Kling AI (`kling`)
 - Pai / PixVerse (`pai`)
-- 第三方 OpenAI-compatible base URL (`custom-openai`)
 - 第三方完整 URL (`custom`)
 
 > 说明：以上名称为 `SetProvider(...)` 传入值。
-
-`custom-openai` 适用于兼容 OpenAI API 的文本服务，必须通过 `SetEndpoint` 传入 base URL（例如 `https://example.com/v1`）；它支持对话、流式输出和工具调用。媒体任务若要求传入完整创建 URL，继续使用 `custom`。
-
-Azure OpenAI 需要同时配置资源 endpoint 与 API version，`SetModel` 传 deployment name：
-
-```go
-client, err := omnigo.NewLLM(
-    omnigo.SetProvider("azure-openai"),
-    omnigo.SetEndpoint("https://<resource>.openai.azure.com"),
-    omnigo.SetAPIVersion("<api-version>"),
-    omnigo.SetModel("<deployment-name>"),
-    omnigo.SetAPIKey(os.Getenv("AZURE_OPENAI_API_KEY")),
-)
-```
 
 ### Kling AI 示例
 
@@ -776,7 +750,7 @@ func main() {
 
 ### 视频生成示例 (Jimeng / 即梦)
 
-即梦 (Jimeng) 适配器使用火山引擎 AK/SK 鉴权。通过 `SetModel` 指定官方 `req_key`（如 `jimeng_ti2v_v30_pro`），也可以在 `Extra` 中通过 `req_key` 覆盖。
+即梦 (Jimeng) 适配器支持动态模型映射。您可以通过 `SetModel` 指定模型编号（如 `jimeng_ti2v_v30_pro`），或在 `Extra` 中通过 `req_key` 覆盖。
 
 ```go
 package main
@@ -791,17 +765,15 @@ import (
 )
 
 func main() {
-    accessKey := os.Getenv("JIMENG_ACCESS_KEY")
-    secretKey := os.Getenv("JIMENG_SECRET_KEY")
-    if accessKey == "" || secretKey == "" {
-        log.Fatal("JIMENG_ACCESS_KEY or JIMENG_SECRET_KEY is not set")
+    apiKey := os.Getenv("JIMENG_API_KEY") // 火山引擎 API Key
+    if apiKey == "" {
+        log.Fatal("JIMENG_API_KEY is not set")
     }
 
     llm, err := omnigo.NewLLM(
         omnigo.SetProvider("jimeng"),
         omnigo.SetModel("jimeng_ti2v_v30_pro"), // 指定即梦模型编号
-        omnigo.SetAccessKey(accessKey),
-        omnigo.SetSecretKey(secretKey),
+        omnigo.SetAPIKey(apiKey),
     )
     if err != nil {
         log.Fatalf("create LLM failed: %v", err)
@@ -809,7 +781,6 @@ func main() {
 
     req := &dto.MediaRequest{
         Type:     dto.MediaTypeVideo,
-        Duration: 5,
         Messages: []dto.Message{{Role: "user", Content: "赛博朋克风格的白兔执行官在指挥中心，全息屏闪烁"}},
         Extra: map[string]interface{}{
             "image_url": "https://example.com/character.png", // 可选的首帧图

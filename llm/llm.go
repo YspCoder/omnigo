@@ -62,23 +62,6 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 		relay:        relay.NewRelay(),
 		adaptor:      adp,
 	}
-	baseURL := cfg.Endpoint
-	if baseURL == "" {
-		baseURL = spec.Endpoint
-	}
-	if spec.EndpointRequired && baseURL == "" {
-		return nil, fmt.Errorf("provider %s requires an endpoint", spec.Name)
-	}
-	if spec.APIVersionRequired && cfg.APIVersion == "" {
-		return nil, fmt.Errorf("provider %s requires an API version", spec.Name)
-	}
-	headers := make(map[string]string, len(spec.Headers)+len(cfg.ExtraHeaders))
-	for key, value := range spec.Headers {
-		headers[key] = value
-	}
-	for key, value := range cfg.ExtraHeaders {
-		headers[key] = value
-	}
 
 	llmClient.adaptorCfg = &adapter.ProviderConfig{
 		Name:         spec.Name,
@@ -86,11 +69,10 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 		AccessKey:    cfg.AccessKey,
 		SecretKey:    cfg.SecretKey,
 		Model:        cfg.Model,
-		BaseURL:      baseURL,
-		APIVersion:   cfg.APIVersion,
+		BaseURL:      cfg.Endpoint,
 		PollingURL:   cfg.PollingURL,
 		Organization: cfg.APIKeys["organization"],
-		Headers:      headers,
+		Headers:      cfg.ExtraHeaders,
 		Proxy:        cfg.Proxy,
 		HTTPClient:   cfg.HTTPClient,
 		ChatProtocol: cfg.ChatProtocol,

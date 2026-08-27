@@ -8,7 +8,6 @@ require (
 	github.com/invopop/jsonschema v0.14.0
 	github.com/liushuangls/go-anthropic/v2 v2.24.0
 	github.com/openai/openai-go/v3 v3.47.0
-	github.com/volcengine/volc-sdk-golang v1.0.253
 	github.com/volcengine/volcengine-go-sdk v1.2.45
 	google.golang.org/genai v1.66.0
 )
@@ -17,8 +16,6 @@ require (
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth v0.18.1 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.22.0 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cenkalti/backoff/v4 v4.1.2 // indirect
@@ -43,6 +40,7 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
+	github.com/volcengine/volc-sdk-golang v1.0.253 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0 // indirect
 	go.opentelemetry.io/otel v1.39.0 // indirect

@@ -67,7 +67,6 @@ var (
 	SetProvider     = config.SetProvider     // Sets the LLM provider (e.g., "openai", "ali")
 	SetModel        = config.SetModel        // Sets the model name for the selected provider
 	SetEndpoint     = config.SetEndpoint     // Sets a custom endpoint for the selected provider
-	SetAPIVersion   = config.SetAPIVersion   // Sets a provider API version (for example, Azure OpenAI)
 	SetPollingURL   = config.SetPollingURL   // Sets the background-task polling URL
 	SetAPIKey       = config.SetAPIKey       // Sets the API key for the current provider
 	SetAccessKey    = config.SetAccessKey    // Sets the access key for the current provider

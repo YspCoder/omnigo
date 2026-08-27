@@ -17,7 +17,6 @@ type ProviderConfig struct {
 	SecretKey    string
 	Model        string
 	BaseURL      string
-	APIVersion   string
 	PollingURL   string
 	Region       string
 	Organization string

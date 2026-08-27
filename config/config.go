@@ -22,7 +22,6 @@ import (
 //   - LLM_PROVIDER: LLM provider name (default: "openai")
 //   - LLM_MODEL: Model name (default: "gpt-4o-mini")
 //   - LLM_ENDPOINT: Override provider endpoint/base URL
-//   - LLM_API_VERSION: Provider API version (required by Azure OpenAI)
 //   - LLM_POLLING_URL: Override the background-task polling URL
 //   - LLM_TEMPERATURE: Generation temperature (default: 0.7)
 //   - LLM_MAX_TOKENS: Maximum tokens to generate (default: 100)
@@ -49,7 +48,6 @@ type Config struct {
 	Provider              string            `env:"LLM_PROVIDER" envDefault:"openai" validate:"required"`
 	Model                 string            `env:"LLM_MODEL" envDefault:"gpt-4o-mini" validate:"required"`
 	Endpoint              string            `env:"LLM_ENDPOINT"`
-	APIVersion            string            `env:"LLM_API_VERSION"`
 	PollingURL            string            `env:"LLM_POLLING_URL"`
 	Temperature           float64           `env:"LLM_TEMPERATURE" envDefault:"0.7" validate:"gte=0,lte=1"`
 	MaxTokens             int               `env:"LLM_MAX_TOKENS" envDefault:"100"`
@@ -163,13 +161,6 @@ func NewConfig() *Config {
 func SetEndpoint(endpoint string) ConfigOption {
 	return func(c *Config) {
 		c.Endpoint = endpoint
-	}
-}
-
-// SetAPIVersion sets the API version for providers that require one.
-func SetAPIVersion(apiVersion string) ConfigOption {
-	return func(c *Config) {
-		c.APIVersion = apiVersion
 	}
 }
 

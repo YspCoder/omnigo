@@ -17,13 +17,10 @@ const (
 
 // ProviderSpec describes a provider's defaults and adaptor mapping.
 type ProviderSpec struct {
-	Name               string
-	Type               ProviderType
-	Endpoint           string
-	EndpointRequired   bool
-	APIVersionRequired bool
-	Headers            map[string]string
-	AdaptorFactory     func() Adaptor
+	Name           string
+	Type           ProviderType
+	Endpoint       string
+	AdaptorFactory func() Adaptor
 }
 
 // Registry manages adaptor registration.
@@ -47,15 +44,6 @@ func NewRegistry(providerNames ...string) *Registry {
 				return &OpenAIAdaptor{}
 			},
 		},
-		"azure-openai": {
-			Name:               "azure-openai",
-			Type:               TypeOpenAI,
-			EndpointRequired:   true,
-			APIVersionRequired: true,
-			AdaptorFactory: func() Adaptor {
-				return &OpenAIAdaptor{}
-			},
-		},
 		"groq": {
 			Name:     "groq",
 			Type:     TypeOpenAI,
@@ -72,56 +60,12 @@ func NewRegistry(providerNames ...string) *Registry {
 				return &OpenAIAdaptor{}
 			},
 		},
-		"deepseek": {
-			Name:     "deepseek",
-			Type:     TypeOpenAI,
-			Endpoint: "https://api.deepseek.com",
-			AdaptorFactory: func() Adaptor {
-				return &OpenAIAdaptor{}
-			},
-		},
-		"mistral": {
-			Name:     "mistral",
-			Type:     TypeOpenAI,
-			Endpoint: "https://api.mistral.ai/v1",
-			AdaptorFactory: func() Adaptor {
-				return &OpenAIAdaptor{}
-			},
-		},
-		"openrouter": {
-			Name:     "openrouter",
-			Type:     TypeOpenAI,
-			Endpoint: "https://openrouter.ai/api/v1",
-			Headers: map[string]string{
-				"HTTP-Referer":       "https://github.com/YspCoder/omnigo",
-				"X-OpenRouter-Title": "Omnigo",
-			},
-			AdaptorFactory: func() Adaptor {
-				return &OpenAIAdaptor{}
-			},
-		},
-		"ollama": {
-			Name:     "ollama",
-			Type:     TypeOpenAI,
-			Endpoint: "http://localhost:11434/v1",
-			AdaptorFactory: func() Adaptor {
-				return &OpenAIAdaptor{}
-			},
-		},
 		"anthropic": {
 			Name:     "anthropic",
 			Type:     TypeCustom,
 			Endpoint: "https://api.anthropic.com/v1",
 			AdaptorFactory: func() Adaptor {
 				return &AnthropicAdaptor{}
-			},
-		},
-		"cohere": {
-			Name:     "cohere",
-			Type:     TypeOpenAI,
-			Endpoint: "https://api.cohere.ai/compatibility/v1",
-			AdaptorFactory: func() Adaptor {
-				return &OpenAIAdaptor{}
 			},
 		},
 		"ali": {
@@ -132,28 +76,12 @@ func NewRegistry(providerNames ...string) *Registry {
 				return &AliAdaptor{}
 			},
 		},
-		"jimeng": {
-			Name:     "jimeng",
-			Type:     TypeCustom,
-			Endpoint: "https://visual.volcengineapi.com",
-			AdaptorFactory: func() Adaptor {
-				return &JimengAdaptor{}
-			},
-		},
 		"google": {
 			Name:     "google",
 			Type:     TypeCustom,
 			Endpoint: "https://generativelanguage.googleapis.com",
 			AdaptorFactory: func() Adaptor {
 				return &GoogleAdaptor{}
-			},
-		},
-		"google-openai": {
-			Name:     "google-openai",
-			Type:     TypeOpenAI,
-			Endpoint: "https://generativelanguage.googleapis.com/v1beta/openai",
-			AdaptorFactory: func() Adaptor {
-				return &OpenAIAdaptor{}
 			},
 		},
 		"ark": {
@@ -193,14 +121,6 @@ func NewRegistry(providerNames ...string) *Registry {
 			Type: TypeCustom,
 			AdaptorFactory: func() Adaptor {
 				return &CustomAdaptor{}
-			},
-		},
-		"custom-openai": {
-			Name:             "custom-openai",
-			Type:             TypeOpenAI,
-			EndpointRequired: true,
-			AdaptorFactory: func() Adaptor {
-				return &OpenAIAdaptor{}
 			},
 		},
 	}
