@@ -286,6 +286,9 @@ func customPayload(cfg *ProviderConfig, request *dto.MediaRequest) (map[string]i
 	for key, value := range request.Extra {
 		payload[key] = value
 	}
+	if request.Type == dto.MediaTypeVideo {
+		customNormalizeVideoReferences(payload)
+	}
 	if request.Type == dto.MediaTypeImage {
 		payload["async"] = true
 		if n, ok := utils.GetIntExtra(payload, "n"); ok && n > 1 {
@@ -293,6 +296,75 @@ func customPayload(cfg *ProviderConfig, request *dto.MediaRequest) (map[string]i
 		}
 	}
 	return payload, nil
+}
+
+func customNormalizeVideoReferences(payload map[string]interface{}) {
+	files, exists := payload["files"]
+	if !exists {
+		return
+	}
+	if _, explicit := payload["references"]; explicit {
+		delete(payload, "files")
+		return
+	}
+
+	references := customReferencesFromFiles(files)
+	if len(references) == 0 {
+		return
+	}
+	if imageURL, ok := utils.ContentImageURL(payload["image_url"]); ok {
+		for _, reference := range references {
+			if strings.TrimSpace(imageURL) == reference["source"] {
+				delete(payload, "image_url")
+				break
+			}
+		}
+	}
+	delete(payload, "files")
+	payload["references"] = references
+}
+
+func customReferencesFromFiles(value interface{}) []map[string]string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var files []struct {
+		Type   string `json:"type"`
+		Role   string `json:"role"`
+		URL    string `json:"url"`
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(raw, &files); err != nil {
+		return nil
+	}
+
+	references := make([]map[string]string, 0, len(files))
+	for _, file := range files {
+		typ := strings.ToLower(strings.TrimSpace(file.Type))
+		switch typ {
+		case "image", "video", "audio":
+		default:
+			continue
+		}
+		source := strings.TrimSpace(file.Source)
+		if source == "" {
+			source = strings.TrimSpace(file.URL)
+		}
+		if source == "" {
+			continue
+		}
+		role := strings.ToLower(strings.TrimSpace(file.Role))
+		if role == "" {
+			role = "reference"
+		}
+		references = append(references, map[string]string{
+			"type":   typ,
+			"role":   role,
+			"source": source,
+		})
+	}
+	return references
 }
 
 func customPrompt(request *dto.MediaRequest) string {

@@ -101,6 +101,110 @@ func TestCustomAdaptorMediaUsesConfiguredModelAndMessagePrompt(t *testing.T) {
 	}
 }
 
+func TestCustomPayloadConvertsDramaFilesToReferences(t *testing.T) {
+	payload, err := customPayload(&ProviderConfig{
+		BaseURL: "https://drama.dafeiyangapi.top/v1/videos",
+	}, &dto.MediaRequest{
+		Type:     dto.MediaTypeVideo,
+		Model:    "seedance2.5",
+		Prompt:   "animate the reference image",
+		Duration: 5,
+		Extra: map[string]interface{}{
+			"image_url": "https://example.com/reference.png",
+			"files": []map[string]interface{}{
+				{
+					"name": "reference image",
+					"type": "image",
+					"url":  "https://example.com/reference.png",
+				},
+				{
+					"type":   "image",
+					"role":   "first_frame",
+					"source": "https://example.com/first-frame.png",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("customPayload error = %v", err)
+	}
+	if _, exists := payload["files"]; exists {
+		t.Fatalf("files leaked into payload: %#v", payload)
+	}
+	if _, exists := payload["image_url"]; exists {
+		t.Fatalf("duplicate image_url leaked into payload: %#v", payload)
+	}
+	wantReferences := []map[string]string{
+		{
+			"type":   "image",
+			"role":   "reference",
+			"source": "https://example.com/reference.png",
+		},
+		{
+			"type":   "image",
+			"role":   "first_frame",
+			"source": "https://example.com/first-frame.png",
+		},
+	}
+	if got := mustJSON(t, payload["references"]); got != mustJSON(t, wantReferences) {
+		t.Fatalf("references = %s, want %s", got, mustJSON(t, wantReferences))
+	}
+}
+
+func TestCustomPayloadPrefersExplicitReferencesOverFiles(t *testing.T) {
+	explicitReferences := []map[string]interface{}{
+		{
+			"type":   "image",
+			"role":   "first_frame",
+			"source": "https://example.com/first-frame.png",
+		},
+	}
+	payload, err := customPayload(&ProviderConfig{
+		BaseURL: "https://drama.dafeiyangapi.top/v1/videos",
+	}, &dto.MediaRequest{
+		Type: dto.MediaTypeVideo,
+		Extra: map[string]interface{}{
+			"files": []map[string]interface{}{
+				{"type": "image", "url": "https://example.com/reference.png"},
+			},
+			"references": explicitReferences,
+		},
+	})
+	if err != nil {
+		t.Fatalf("customPayload error = %v", err)
+	}
+	if _, exists := payload["files"]; exists {
+		t.Fatalf("files leaked into payload: %#v", payload)
+	}
+	if got := mustJSON(t, payload["references"]); got != mustJSON(t, explicitReferences) {
+		t.Fatalf("references = %s, want explicit %s", got, mustJSON(t, explicitReferences))
+	}
+}
+
+func TestCustomPayloadConvertsFilesForOtherEndpoints(t *testing.T) {
+	files := []map[string]interface{}{
+		{"type": "image", "role": "last_frame", "url": "https://example.com/reference.png"},
+	}
+	payload, err := customPayload(&ProviderConfig{
+		BaseURL: "https://api.example.com/v1/videos",
+	}, &dto.MediaRequest{
+		Type:  dto.MediaTypeVideo,
+		Extra: map[string]interface{}{"files": files},
+	})
+	if err != nil {
+		t.Fatalf("customPayload error = %v", err)
+	}
+	if _, exists := payload["files"]; exists {
+		t.Fatalf("files leaked into payload: %#v", payload)
+	}
+	wantReferences := []map[string]string{
+		{"type": "image", "role": "last_frame", "source": "https://example.com/reference.png"},
+	}
+	if got := mustJSON(t, payload["references"]); got != mustJSON(t, wantReferences) {
+		t.Fatalf("references = %s, want %s", got, mustJSON(t, wantReferences))
+	}
+}
+
 func TestCustomAdaptorMediaSubmitsAsyncImageGeneration(t *testing.T) {
 	var gotPayload map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
