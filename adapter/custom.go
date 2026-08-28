@@ -285,6 +285,9 @@ func customPayload(cfg *ProviderConfig, request *dto.MediaRequest) (map[string]i
 	}
 
 	maps.Copy(payload, request.Extra)
+	if seconds, exists := payload["seconds"]; exists {
+		payload["seconds"] = fmt.Sprint(seconds)
+	}
 	if request.Type == dto.MediaTypeVideo {
 		if files, exists := request.Extra["files"]; request.Metadata != nil || exists {
 			payload["metadata"] = customMetadataFromFiles(files, request.Metadata, customMetadataExtra(request))
@@ -312,6 +315,9 @@ func customMetadataExtra(request *dto.MediaRequest) map[string]any {
 	}
 	if _, exists := extra["duration"]; !exists && request.Duration != 0 {
 		extra["duration"] = request.Duration
+	}
+	if seconds, exists := extra["seconds"]; exists {
+		extra["seconds"] = fmt.Sprint(seconds)
 	}
 	if _, exists := extra["ratio"]; !exists {
 		if ratio, exists := extra["aspect_ratio"]; exists {
