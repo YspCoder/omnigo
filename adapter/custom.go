@@ -307,12 +307,13 @@ func customNormalizeVideoReferences(payload map[string]any) {
 	if !exists {
 		return
 	}
+	references := customReferencesFromFiles(files)
+	customSetReferenceURLArrays(payload, references)
 	if _, explicit := payload["references"]; explicit {
 		delete(payload, "files")
 		return
 	}
 
-	references := customReferencesFromFiles(files)
 	if len(references) == 0 {
 		return
 	}
@@ -326,6 +327,32 @@ func customNormalizeVideoReferences(payload map[string]any) {
 	}
 	delete(payload, "files")
 	payload["references"] = references
+}
+
+func customSetReferenceURLArrays(payload map[string]any, references []map[string]string) {
+	arrays := make(map[string][]string, 3)
+	for _, reference := range references {
+		var key string
+		switch reference["type"] {
+		case "image":
+			key = "reference_image_urls"
+		case "video":
+			key = "reference_videos"
+		case "audio":
+			key = "reference_audios"
+		default:
+			continue
+		}
+		arrays[key] = append(arrays[key], reference["source"])
+	}
+	for key, urls := range arrays {
+		if len(urls) == 0 {
+			continue
+		}
+		if _, explicit := payload[key]; !explicit {
+			payload[key] = urls
+		}
+	}
 }
 
 func customReferencesFromFiles(value any) []map[string]string {
@@ -608,7 +635,7 @@ func customFirstImageURL(images []dto.ImageData) string {
 
 func customJSONPathString(raw json.RawMessage, path string) string {
 	current := raw
-	for _, segment := range strings.Split(path, ".") {
+	for segment := range strings.SplitSeq(path, ".") {
 		segment = strings.TrimSpace(segment)
 		if segment == "" {
 			return ""
