@@ -167,7 +167,7 @@ case dto.TaskStatusFailed:
 }
 ```
 
-`NormalizeTaskStatus` 会将 `pending/submitted` 映射为 `queued`，将 `running/processing/in_progress` 映射为 `in_progress`，将 `success/completed` 映射为 `succeeded`，并将 `failure/error/rejected/cancelled/canceled` 映射为 `failed`。也可直接使用 `dto.IsPending`、`dto.IsSucceeded`、`dto.IsFailed`。未知状态会保留原始值，并返回可通过 `errors.Is(err, dto.ErrUnsupportedTaskStatus)` 判断的兼容性错误。
+`NormalizeTaskStatus` 会将 `pending/submitted/not_start` 映射为 `queued`，将 `running/processing/in_progress` 映射为 `in_progress`，将 `success/completed` 映射为 `succeeded`，并将 `failure/error/rejected/cancelled/canceled` 映射为 `failed`。也可直接使用 `dto.IsPending`、`dto.IsSucceeded`、`dto.IsFailed`。未知状态会保留原始值，并返回可通过 `errors.Is(err, dto.ErrUnsupportedTaskStatus)` 判断的兼容性错误。
 
 `TaskStatus` 默认查询 `SetEndpoint` 后追加 `/{task_id}` 的地址。查询路径不符合该规则时，传入包含 `{task_id}` 的完整 URL 模板：
 
