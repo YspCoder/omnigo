@@ -54,7 +54,7 @@ const (
 )
 
 // MediaRequest represents a request for text/image/video generation.
-// Use Extra for provider- or model-specific fields.
+// Use Metadata for structured provider fields and Extra for flat provider fields.
 type MediaRequest struct {
 	Type           MediaType              `json:"-"`
 	Model          string                 `json:"model"`
@@ -69,6 +69,7 @@ type MediaRequest struct {
 	Fps            int                    `json:"fps,omitempty"`
 	Seed           int                    `json:"seed,omitempty"`
 	ResponseFormat string                 `json:"response_format,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 	Extra          map[string]interface{} `json:"extra,omitempty"`
 	Prompt         string                 `json:"-"`
 	Options        map[string]interface{} `json:"-"`

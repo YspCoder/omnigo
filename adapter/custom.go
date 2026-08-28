@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -283,11 +284,14 @@ func customPayload(cfg *ProviderConfig, request *dto.MediaRequest) (map[string]i
 		customSetInt(payload, "seed", request.Seed)
 	}
 
-	for key, value := range request.Extra {
-		payload[key] = value
-	}
+	maps.Copy(payload, request.Extra)
 	if request.Type == dto.MediaTypeVideo {
+		if files, exists := request.Extra["files"]; request.Metadata != nil || exists {
+			payload["metadata"] = customMetadataFromFiles(files, request.Metadata, request.Extra)
+		}
 		customNormalizeVideoReferences(payload)
+	} else if request.Metadata != nil {
+		payload["metadata"] = maps.Clone(request.Metadata)
 	}
 	if request.Type == dto.MediaTypeImage {
 		payload["async"] = true
@@ -298,7 +302,7 @@ func customPayload(cfg *ProviderConfig, request *dto.MediaRequest) (map[string]i
 	return payload, nil
 }
 
-func customNormalizeVideoReferences(payload map[string]interface{}) {
+func customNormalizeVideoReferences(payload map[string]any) {
 	files, exists := payload["files"]
 	if !exists {
 		return
@@ -324,7 +328,7 @@ func customNormalizeVideoReferences(payload map[string]interface{}) {
 	payload["references"] = references
 }
 
-func customReferencesFromFiles(value interface{}) []map[string]string {
+func customReferencesFromFiles(value any) []map[string]string {
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return nil
@@ -365,6 +369,69 @@ func customReferencesFromFiles(value interface{}) []map[string]string {
 		})
 	}
 	return references
+}
+
+func customMetadataMap(value any) (map[string]any, bool) {
+	if metadata, ok := value.(map[string]any); ok {
+		if metadata == nil {
+			return make(map[string]any), true
+		}
+		return maps.Clone(metadata), true
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, false
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(raw, &metadata); err != nil || metadata == nil {
+		return nil, false
+	}
+	return metadata, true
+}
+
+func customMetadataFromFiles(value any, requestMetadata, extra map[string]any) map[string]any {
+	metadata := make(map[string]any)
+	if requestMetadata != nil {
+		metadata = maps.Clone(requestMetadata)
+	} else if rawMetadata, exists := extra["metadata"]; exists {
+		if parsed, ok := customMetadataMap(rawMetadata); ok {
+			metadata = parsed
+		}
+	}
+	if content := customMetadataContentFromFiles(value); len(content) > 0 {
+		metadata["content"] = content
+	}
+	for key, v := range extra {
+		switch key {
+		case "files", "metadata", "model", "prompt", "references":
+			continue
+		}
+		if _, exists := metadata[key]; !exists {
+			metadata[key] = v
+		}
+	}
+	return metadata
+}
+
+func customMetadataContentFromFiles(value any) []map[string]any {
+	references := customReferencesFromFiles(value)
+	content := make([]map[string]any, 0, len(references))
+	for _, reference := range references {
+		typ := reference["type"]
+		urlField := typ + "_url"
+		role := reference["role"]
+		if role == "" || role == "reference" {
+			role = "reference_" + typ
+		}
+		content = append(content, map[string]any{
+			"type": urlField,
+			urlField: map[string]any{
+				"url": reference["source"],
+			},
+			"role": role,
+		})
+	}
+	return content
 }
 
 func customPrompt(request *dto.MediaRequest) string {
@@ -591,36 +658,50 @@ func (r *customAPIResponse) result() *customAPIResponse {
 	return r
 }
 
-func (r customAPIResponse) errorCode() string {
-	if value := customString(r.ErrorCode); value != "" {
-		return value
-	}
-	if r.Error != nil {
-		if value := customString(r.Error.Code); value != "" {
+func (r *customAPIResponse) errorCode() string {
+	seen := make(map[*customAPIResponse]struct{})
+	fallback := ""
+	for current := r; current != nil; current = current.Data.Response {
+		if _, exists := seen[current]; exists {
+			break
+		}
+		seen[current] = struct{}{}
+
+		if value := customString(current.ErrorCode); value != "" {
 			return value
 		}
-	}
-	if r.Data.Response != nil {
-		if value := r.Data.Response.errorCode(); value != "" {
-			return value
+		if current.Error != nil {
+			if value := customString(current.Error.Code); value != "" {
+				return value
+			}
+		}
+		if value := customString(current.Code); value != "" {
+			fallback = value
 		}
 	}
-	return customString(r.Code)
+	return fallback
 }
 
-func (r customAPIResponse) errorMessage() string {
-	if r.Error != nil && r.Error.Message != "" {
-		return r.Error.Message
-	}
-	if r.FailReason != "" {
-		return r.FailReason
-	}
-	if r.Data.Response != nil {
-		if value := r.Data.Response.errorMessage(); value != "" {
-			return value
+func (r *customAPIResponse) errorMessage() string {
+	seen := make(map[*customAPIResponse]struct{})
+	fallback := ""
+	for current := r; current != nil; current = current.Data.Response {
+		if _, exists := seen[current]; exists {
+			break
+		}
+		seen[current] = struct{}{}
+
+		if current.Error != nil && current.Error.Message != "" {
+			return current.Error.Message
+		}
+		if current.FailReason != "" {
+			return current.FailReason
+		}
+		if current.Message != "" {
+			fallback = current.Message
 		}
 	}
-	return r.Message
+	return fallback
 }
 
 func customString(value interface{}) string {
