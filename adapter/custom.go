@@ -287,7 +287,7 @@ func customPayload(cfg *ProviderConfig, request *dto.MediaRequest) (map[string]i
 	maps.Copy(payload, request.Extra)
 	if request.Type == dto.MediaTypeVideo {
 		if files, exists := request.Extra["files"]; request.Metadata != nil || exists {
-			payload["metadata"] = customMetadataFromFiles(files, request.Metadata, request.Extra)
+			payload["metadata"] = customMetadataFromFiles(files, request.Metadata, customMetadataExtra(request))
 		}
 		customNormalizeVideoReferences(payload)
 	} else if request.Metadata != nil {
@@ -300,6 +300,27 @@ func customPayload(cfg *ProviderConfig, request *dto.MediaRequest) (map[string]i
 		}
 	}
 	return payload, nil
+}
+
+func customMetadataExtra(request *dto.MediaRequest) map[string]any {
+	extra := maps.Clone(request.Extra)
+	if extra == nil {
+		extra = make(map[string]any)
+	}
+	if _, exists := extra["resolution"]; !exists && request.Resolution != "" {
+		extra["resolution"] = request.Resolution
+	}
+	if _, exists := extra["duration"]; !exists && request.Duration != 0 {
+		extra["duration"] = request.Duration
+	}
+	if _, exists := extra["ratio"]; !exists {
+		if ratio, exists := extra["aspect_ratio"]; exists {
+			extra["ratio"] = ratio
+		} else if request.Size != "" {
+			extra["ratio"] = request.Size
+		}
+	}
+	return extra
 }
 
 func customNormalizeVideoReferences(payload map[string]any) {
@@ -430,7 +451,7 @@ func customMetadataFromFiles(value any, requestMetadata, extra map[string]any) m
 	}
 	for key, v := range extra {
 		switch key {
-		case "files", "metadata", "model", "prompt", "references":
+		case "files", "metadata", "model", "prompt", "references", "aspect_ratio":
 			continue
 		}
 		if _, exists := metadata[key]; !exists {
