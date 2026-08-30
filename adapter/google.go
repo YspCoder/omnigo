@@ -277,8 +277,8 @@ func (a *GoogleAdaptor) toVidCfg(r *dto.MediaRequest) *genai.GenerateVideosConfi
 	if r.Resolution != "" {
 		cfg.Resolution = r.Resolution
 	}
-	if r.Duration > 0 {
-		cfg.DurationSeconds = genai.Ptr(int32(r.Duration))
+	if duration, ok := intValue(r.Duration); ok && duration > 0 {
+		cfg.DurationSeconds = genai.Ptr(int32(duration))
 	}
 	if r.Fps > 0 {
 		cfg.FPS = genai.Ptr(int32(r.Fps))

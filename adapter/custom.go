@@ -279,15 +279,14 @@ func customPayload(cfg *ProviderConfig, request *dto.MediaRequest) (map[string]i
 	} else {
 		customSetString(payload, "resolution", request.Resolution)
 		customSetString(payload, "response_format", request.ResponseFormat)
-		customSetInt(payload, "duration", request.Duration)
+		if request.Duration != nil {
+			payload["duration"] = request.Duration
+		}
 		customSetInt(payload, "fps", request.Fps)
 		customSetInt(payload, "seed", request.Seed)
 	}
 
 	maps.Copy(payload, request.Extra)
-	if seconds, exists := payload["seconds"]; exists {
-		payload["seconds"] = fmt.Sprint(seconds)
-	}
 	if request.Type == dto.MediaTypeVideo {
 		if files, exists := request.Extra["files"]; request.Metadata != nil || exists {
 			payload["metadata"] = customMetadataFromFiles(files, request.Metadata, customMetadataExtra(request))
@@ -313,11 +312,8 @@ func customMetadataExtra(request *dto.MediaRequest) map[string]any {
 	if _, exists := extra["resolution"]; !exists && request.Resolution != "" {
 		extra["resolution"] = request.Resolution
 	}
-	if _, exists := extra["duration"]; !exists && request.Duration != 0 {
+	if _, exists := extra["duration"]; !exists && request.Duration != nil {
 		extra["duration"] = request.Duration
-	}
-	if seconds, exists := extra["seconds"]; exists {
-		extra["seconds"] = fmt.Sprint(seconds)
 	}
 	if _, exists := extra["ratio"]; !exists {
 		if ratio, exists := extra["aspect_ratio"]; exists {

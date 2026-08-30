@@ -643,16 +643,16 @@ func (a *KlingAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[strin
 
 	switch mode {
 	case klingModeTextToVideo, klingModeOmniVideo, klingModeImageToVideo, klingModeMultiImageToVideo:
-		if r.Duration > 0 {
+		if r.Duration != nil {
 			if _, ok := payload["duration"]; !ok {
-				payload["duration"] = fmt.Sprintf("%d", r.Duration)
+				payload["duration"] = r.Duration
 			}
 		}
 	case klingModeTextToAudio:
 		if prompt != "" {
 			payload["prompt"] = prompt
 		}
-		if r.Duration > 0 {
+		if r.Duration != nil {
 			if _, ok := payload["duration"]; !ok {
 				payload["duration"] = r.Duration
 			}

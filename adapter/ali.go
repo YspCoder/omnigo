@@ -668,7 +668,7 @@ func aliVideoParameters(r *dto.MediaRequest) (parameters map[string]interface{})
 	if r.Size != "" {
 		parameters["ratio"] = r.Size
 	}
-	if r.Duration > 0 {
+	if r.Duration != nil {
 		parameters["duration"] = r.Duration
 	}
 	if r.Fps > 0 {

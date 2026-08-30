@@ -718,8 +718,8 @@ func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGeneration
 			appendCustomMediaContent("image_url", "reference_image", "image_url", url)
 		}
 	}
-	if r.Duration > 0 {
-		req.Duration = volcengine.Int64(int64(r.Duration))
+	if duration, ok := int64Value(r.Duration); ok && duration > 0 {
+		req.Duration = volcengine.Int64(duration)
 	}
 	if r.Seed != 0 {
 		req.Seed = volcengine.Int64(int64(r.Seed))

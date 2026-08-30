@@ -401,7 +401,7 @@ func (a *ViduAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[string
 	if prompt != "" && mode != viduModeMulti {
 		payload["prompt"] = prompt
 	}
-	if r.Duration > 0 {
+	if r.Duration != nil {
 		payload["duration"] = r.Duration
 	}
 	if r.Seed != 0 {

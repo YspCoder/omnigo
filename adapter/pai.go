@@ -381,7 +381,7 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 	if r.Model != "" {
 		payload["model"] = r.Model
 	}
-	if r.Duration > 0 {
+	if r.Duration != nil {
 		payload["duration"] = r.Duration
 	}
 	if r.Seed != 0 {
