@@ -288,9 +288,7 @@ func customPayload(cfg *ProviderConfig, request *dto.MediaRequest) (map[string]i
 
 	maps.Copy(payload, request.Extra)
 	if request.Type == dto.MediaTypeVideo {
-		if files, exists := request.Extra["files"]; request.Metadata != nil || exists {
-			payload["metadata"] = customMetadataFromFiles(files, request.Metadata, customMetadataExtra(request))
-		}
+		payload["metadata"] = customMetadataFromFiles(request.Extra["files"], request.Metadata, customMetadataExtra(request))
 		customNormalizeVideoReferences(payload)
 	} else if request.Metadata != nil {
 		payload["metadata"] = maps.Clone(request.Metadata)
