@@ -34,14 +34,18 @@ var _ AssetAdaptor = (*NewAPIAssetAdaptor)(nil)
 
 // AssetGroup is a logical container for managed assets.
 type AssetGroup struct {
-	ID           int64  `json:"id"`
-	UserID       int64  `json:"user_id,omitempty"`
-	CloudGroupID string `json:"cloud_group_id"`
-	GroupType    string `json:"group_type"`
-	GroupName    string `json:"group_name"`
-	Description  string `json:"description"`
-	CreatedAt    int64  `json:"created_at"`
-	UpdatedAt    int64  `json:"updated_at"`
+	ID               int64                      `json:"id"`
+	UserID           int64                      `json:"user_id,omitempty"`
+	CloudGroupID     string                     `json:"cloud_group_id"`
+	GroupType        string                     `json:"group_type"`
+	GroupName        string                     `json:"group_name"`
+	Description      string                     `json:"description"`
+	CreatedAt        int64                      `json:"created_at"`
+	UpdatedAt        int64                      `json:"updated_at"`
+	CreateTime       string                     `json:"create_time,omitempty"`
+	UpdateTime       string                     `json:"update_time,omitempty"`
+	ProjectName      string                     `json:"project_name,omitempty"`
+	ResponseMetadata *NewAPIArkResponseMetadata `json:"-"`
 }
 
 // CreateAssetGroupRequest contains the fields accepted when creating an asset group.
@@ -53,17 +57,22 @@ type CreateAssetGroupRequest struct {
 
 // ListAssetGroupsRequest contains asset group pagination and filtering fields.
 type ListAssetGroupsRequest struct {
-	PageNo    int    `json:"page_no"`
-	PageSize  int    `json:"page_size"`
-	GroupType string `json:"group_type,omitempty"`
+	PageNo    int      `json:"page_no"`
+	PageSize  int      `json:"page_size"`
+	GroupType string   `json:"group_type,omitempty"`
+	GroupIDs  []string `json:"group_ids,omitempty"`
+	GroupName string   `json:"group_name,omitempty"`
+	SortBy    string   `json:"sort_by,omitempty"`
+	SortOrder string   `json:"sort_order,omitempty"`
 }
 
 // AssetGroupList is a page of asset groups.
 type AssetGroupList struct {
-	Items    []AssetGroup `json:"items"`
-	Total    int          `json:"total"`
-	PageNo   int          `json:"page_no"`
-	PageSize int          `json:"page_size"`
+	Items            []AssetGroup               `json:"items"`
+	Total            int                        `json:"total"`
+	PageNo           int                        `json:"page_no"`
+	PageSize         int                        `json:"page_size"`
+	ResponseMetadata *NewAPIArkResponseMetadata `json:"-"`
 }
 
 // UpdateAssetGroupRequest contains optional asset group fields to update.
@@ -74,15 +83,21 @@ type UpdateAssetGroupRequest struct {
 
 // Asset is a managed image, video, or audio file.
 type Asset struct {
-	ID           int64  `json:"id"`
-	CloudAssetID string `json:"cloud_asset_id"`
-	CloudGroupID string `json:"cloud_group_id"`
-	AssetType    string `json:"asset_type"`
-	AssetStatus  string `json:"asset_status"`
-	AssetName    string `json:"asset_name"`
-	AssetURL     string `json:"asset_url"`
-	CreatedAt    int64  `json:"created_at"`
-	UpdatedAt    int64  `json:"updated_at"`
+	ID               int64                      `json:"id"`
+	CloudAssetID     string                     `json:"cloud_asset_id"`
+	CloudGroupID     string                     `json:"cloud_group_id"`
+	AssetType        string                     `json:"asset_type"`
+	AssetStatus      string                     `json:"asset_status"`
+	AssetName        string                     `json:"asset_name"`
+	AssetURL         string                     `json:"asset_url"`
+	CreatedAt        int64                      `json:"created_at"`
+	UpdatedAt        int64                      `json:"updated_at"`
+	CreateTime       string                     `json:"create_time,omitempty"`
+	UpdateTime       string                     `json:"update_time,omitempty"`
+	ProjectName      string                     `json:"project_name,omitempty"`
+	Moderation       any                        `json:"moderation,omitempty"`
+	Error            any                        `json:"error,omitempty"`
+	ResponseMetadata *NewAPIArkResponseMetadata `json:"-"`
 }
 
 // CreateAssetRequest contains the fields accepted when creating an asset.
@@ -95,17 +110,23 @@ type CreateAssetRequest struct {
 
 // ListAssetsRequest contains asset pagination fields for one asset group.
 type ListAssetsRequest struct {
-	CloudGroupID string `json:"cloud_group_id"`
-	PageNo       int    `json:"page_no"`
-	PageSize     int    `json:"page_size"`
+	CloudGroupID string   `json:"cloud_group_id,omitempty"`
+	GroupIDs     []string `json:"group_ids,omitempty"`
+	GroupType    string   `json:"group_type,omitempty"`
+	AssetName    string   `json:"asset_name,omitempty"`
+	PageNo       int      `json:"page_no"`
+	PageSize     int      `json:"page_size"`
+	SortBy       string   `json:"sort_by,omitempty"`
+	SortOrder    string   `json:"sort_order,omitempty"`
 }
 
 // AssetList is a page of assets.
 type AssetList struct {
-	Items    []Asset `json:"items"`
-	Total    int     `json:"total"`
-	PageNo   int     `json:"page_no"`
-	PageSize int     `json:"page_size"`
+	Items            []Asset                    `json:"items"`
+	Total            int                        `json:"total"`
+	PageNo           int                        `json:"page_no"`
+	PageSize         int                        `json:"page_size"`
+	ResponseMetadata *NewAPIArkResponseMetadata `json:"-"`
 }
 
 // UpdateAssetRequest contains the new name for an asset.
@@ -115,7 +136,8 @@ type UpdateAssetRequest struct {
 
 // DeleteAssetResult reports whether an asset or asset group was deleted.
 type DeleteAssetResult struct {
-	Deleted bool `json:"deleted"`
+	Deleted          bool                       `json:"deleted"`
+	ResponseMetadata *NewAPIArkResponseMetadata `json:"-"`
 }
 
 // CreateAssetGroup creates an asset group.

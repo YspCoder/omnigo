@@ -42,8 +42,48 @@
 - Kling AI (`kling`)
 - Pai / PixVerse (`pai`)
 - 第三方完整 URL (`custom`)
+- NewAPI Ark 素材库（`newapi_ark`）
 
-> 说明：以上名称为 `SetProvider(...)` 传入值。
+> 说明：LLM 服务商名称传给 `SetProvider(...)`；素材库服务商名称传给 `NewAssetClient(...)`。
+
+### NewAPI Ark 素材库
+
+素材库统一通过 `NewAssetClient(...)` 创建，根据 `AssetProvider` 选择具体协议。NewAPI Ark 调用方需要显式配置完整的素材库 endpoint。
+
+```go
+client, err := omnigo.NewAssetClient(
+    omnigo.AssetProviderNewAPIArk,
+    &omnigo.AssetConfig{
+        APIKey:  os.Getenv("NEWAPI_API_KEY"),
+        BaseURL: os.Getenv("NEWAPI_ARK_ASSET_BASE_URL"),
+    },
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+group, err := client.CreateAssetGroup(context.Background(), &omnigo.CreateAssetGroupRequest{
+    GroupName:   "虚拟人素材",
+    Description: "视频生成使用的形象素材",
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+asset, err := client.CreateAsset(context.Background(), &omnigo.CreateAssetRequest{
+    AssetName:    "host-front",
+    AssetURL:     "https://cdn.example.com/host-front.jpg",
+    AssetType:    omnigo.NewAPIArkAssetTypeImage,
+    CloudGroupID: group.CloudGroupID,
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+detail, err := client.GetAsset(context.Background(), asset.CloudAssetID)
+```
+
+NewAPI Ark 只使用 API Key Bearer 鉴权，`BaseURL` 为必填项。`Version=2024-01-01`、`Content-Type=application/json` 及各方法对应的 Action 均已内置。其字符串资源 ID 分别映射到统一结果的 `CloudGroupID` 和 `CloudAssetID`。创建素材只登记公网 URL，不支持 Base64 或 multipart 文件上传。
 
 ### Kling AI 示例
 
