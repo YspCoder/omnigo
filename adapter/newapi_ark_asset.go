@@ -14,6 +14,7 @@ import (
 
 const (
 	newAPIArkAssetAPIVersion = "2024-01-01"
+	newAPIArkAssetAPIPath    = "/v1/ark/asset"
 
 	NewAPIArkAssetTypeImage = "Image"
 
@@ -358,7 +359,11 @@ func newAPIArkAssetEndpoint(cfg *ProviderConfig, action string) (string, error) 
 	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
 		return "", fmt.Errorf("NewAPI Ark asset API base URL must be an absolute http(s) URL: %q", rawBaseURL)
 	}
-	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/"
+	basePath := strings.TrimRight(endpoint.Path, "/")
+	if !strings.HasSuffix(basePath, newAPIArkAssetAPIPath) {
+		basePath += newAPIArkAssetAPIPath
+	}
+	endpoint.Path = basePath
 	endpoint.RawPath = ""
 	query := endpoint.Query()
 	query.Set("Action", action)
