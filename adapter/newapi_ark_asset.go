@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -158,10 +159,10 @@ type NewAPIArkModeration struct {
 }
 
 type NewAPIArkCreateAssetRequest struct {
-	Name      string `json:"Name"`
-	URL       string `json:"URL"`
-	AssetType string `json:"AssetType"`
-	GroupID   string `json:"GroupId"`
+	Name      string `json:"purpose"`
+	URL       string `json:"url"`
+	AssetType string `json:"type,omitempty"`
+	GroupID   string `json:"group_id,omitempty"`
 }
 
 type NewAPIArkAssetFilter struct {
@@ -238,35 +239,132 @@ func (a *NewAPIArkAssetAdaptor) CreateAsset(ctx context.Context, cfg *ProviderCo
 	if request == nil {
 		return nil, fmt.Errorf("create NewAPI Ark asset request is required")
 	}
-	return newAPIArkAssetCall[NewAPIArkResourceID](ctx, cfg, "CreateAsset", request)
+	payload := *request
+	payload.AssetType = strings.ToLower(strings.TrimSpace(payload.AssetType))
+	result, err := newAPIArkRESTCall[newAPIArkRESTAsset](ctx, cfg, http.MethodPost, "/v1/assets/upload", nil, &payload)
+	if err != nil {
+		return nil, err
+	}
+	return &NewAPIArkResourceID{ID: result.AssetID}, nil
 }
 
 func (a *NewAPIArkAssetAdaptor) ListAssets(ctx context.Context, cfg *ProviderConfig, request *NewAPIArkListAssetsRequest) (*NewAPIArkAssetList, error) {
 	if request == nil {
 		return nil, fmt.Errorf("list NewAPI Ark assets request is required")
 	}
-	return newAPIArkAssetCall[NewAPIArkAssetList](ctx, cfg, "ListAssets", request)
+	query := make(url.Values)
+	if request.PageNumber > 0 {
+		query.Set("page", strconv.Itoa(request.PageNumber))
+	}
+	if request.PageSize > 0 {
+		query.Set("page_size", strconv.Itoa(request.PageSize))
+	}
+	if request.SortOrder != "" {
+		query.Set("sort_order", request.SortOrder)
+	}
+	if request.Filter != nil {
+		if request.Filter.Name != "" {
+			query.Set("purpose", request.Filter.Name)
+		}
+		if len(request.Filter.GroupIDs) > 0 {
+			query.Set("group_id", request.Filter.GroupIDs[0])
+		}
+	}
+	result, err := newAPIArkRESTCall[newAPIArkRESTAssetList](ctx, cfg, http.MethodGet, "/v1/assets", query, nil)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]NewAPIArkAsset, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, item.toNewAPIArkAsset())
+	}
+	return &NewAPIArkAssetList{
+		Items:      items,
+		TotalCount: result.Total,
+		PageNumber: result.Page,
+		PageSize:   result.PageSize,
+	}, nil
 }
 
 func (a *NewAPIArkAssetAdaptor) GetAsset(ctx context.Context, cfg *ProviderConfig, request *NewAPIArkGetAssetRequest) (*NewAPIArkAsset, error) {
 	if request == nil {
 		return nil, fmt.Errorf("get NewAPI Ark asset request is required")
 	}
-	return newAPIArkAssetCall[NewAPIArkAsset](ctx, cfg, "GetAsset", request)
+	result, err := newAPIArkRESTCall[newAPIArkRESTAsset](ctx, cfg, http.MethodGet, "/v1/assets/"+request.ID, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	asset := result.toNewAPIArkAsset()
+	return &asset, nil
 }
 
 func (a *NewAPIArkAssetAdaptor) UpdateAsset(ctx context.Context, cfg *ProviderConfig, request *NewAPIArkUpdateAssetRequest) (*NewAPIArkResourceID, error) {
 	if request == nil {
 		return nil, fmt.Errorf("update NewAPI Ark asset request is required")
 	}
-	return newAPIArkAssetCall[NewAPIArkResourceID](ctx, cfg, "UpdateAsset", request)
+	payload := struct {
+		Purpose string `json:"purpose"`
+	}{Purpose: request.Name}
+	result, err := newAPIArkRESTCall[newAPIArkRESTAsset](ctx, cfg, http.MethodPut, "/v1/assets/"+request.ID, nil, &payload)
+	if err != nil {
+		return nil, err
+	}
+	return &NewAPIArkResourceID{ID: result.AssetID}, nil
 }
 
 func (a *NewAPIArkAssetAdaptor) DeleteAsset(ctx context.Context, cfg *ProviderConfig, request *NewAPIArkDeleteAssetRequest) (*NewAPIArkDeleteResult, error) {
 	if request == nil {
 		return nil, fmt.Errorf("delete NewAPI Ark asset request is required")
 	}
-	return newAPIArkAssetCall[NewAPIArkDeleteResult](ctx, cfg, "DeleteAsset", request)
+	_, err := newAPIArkRESTCall[newAPIArkRESTAsset](ctx, cfg, http.MethodDelete, "/v1/assets/"+request.ID, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &NewAPIArkDeleteResult{}, nil
+}
+
+type newAPIArkRESTEnvelope[T any] struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Data    T      `json:"data"`
+}
+
+type newAPIArkRESTAsset struct {
+	AssetID       string `json:"asset_id"`
+	GroupID       string `json:"group_id"`
+	OriginalURL   string `json:"original_url"`
+	Purpose       string `json:"purpose"`
+	Status        string `json:"status"`
+	Type          string `json:"type"`
+	FailureReason string `json:"failure_reason,omitempty"`
+}
+
+func (a newAPIArkRESTAsset) toNewAPIArkAsset() NewAPIArkAsset {
+	status := a.Status
+	switch strings.ToLower(status) {
+	case "pending", "processing":
+		status = NewAPIArkAssetStatusProcessing
+	case "ready", "active":
+		status = NewAPIArkAssetStatusActive
+	case "failed":
+		status = NewAPIArkAssetStatusFailed
+	}
+	return NewAPIArkAsset{
+		ID:        a.AssetID,
+		Name:      a.Purpose,
+		URL:       a.OriginalURL,
+		AssetType: a.Type,
+		GroupID:   a.GroupID,
+		Status:    status,
+		Error:     a.FailureReason,
+	}
+}
+
+type newAPIArkRESTAssetList struct {
+	Total    int                  `json:"total"`
+	Page     int                  `json:"page"`
+	PageSize int                  `json:"page_size"`
+	Items    []newAPIArkRESTAsset `json:"items"`
 }
 
 type newAPIArkAssetEnvelope struct {
@@ -331,6 +429,82 @@ func newAPIArkAssetCall[T any](ctx context.Context, cfg *ProviderConfig, action 
 	}
 	setNewAPIArkResponseMetadata(&result, envelope.ResponseMetadata)
 	return &result, nil
+}
+
+func newAPIArkRESTCall[T any](ctx context.Context, cfg *ProviderConfig, method, path string, query url.Values, payload any) (*T, error) {
+	endpoint, err := newAPIArkRESTEndpoint(cfg, path, query)
+	if err != nil {
+		return nil, err
+	}
+
+	var body io.Reader
+	if payload != nil {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("encode NewAPI Ark asset request: %w", err)
+		}
+		body = bytes.NewReader(data)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		return nil, fmt.Errorf("create NewAPI Ark asset request: %w", err)
+	}
+	if cfg != nil {
+		setNewAPIArkAssetHeaders(request, cfg.Headers)
+	}
+	if payload != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	if err := newAPIArkAssetAuthenticate(request, cfg); err != nil {
+		return nil, err
+	}
+
+	response, err := newAPIArkAssetHTTPClient(cfg).Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("call NewAPI Ark asset API: %w", err)
+	}
+	defer response.Body.Close()
+
+	raw, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read NewAPI Ark asset API response: %w", err)
+	}
+	var envelope newAPIArkRESTEnvelope[T]
+	decodeErr := json.Unmarshal(raw, &envelope)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		message := strings.TrimSpace(string(raw))
+		if decodeErr == nil && strings.TrimSpace(envelope.Message) != "" {
+			message = envelope.Message
+		}
+		return nil, newAPIArkAssetError(response.StatusCode, "", NewAPIArkResponseMetadata{}, message)
+	}
+	if decodeErr != nil {
+		return nil, fmt.Errorf("decode NewAPI Ark asset API response: %w", decodeErr)
+	}
+	if !envelope.Success {
+		return nil, newAPIArkAssetError(response.StatusCode, "", NewAPIArkResponseMetadata{}, envelope.Message)
+	}
+	return &envelope.Data, nil
+}
+
+func newAPIArkRESTEndpoint(cfg *ProviderConfig, path string, query url.Values) (string, error) {
+	if cfg == nil || strings.TrimSpace(cfg.BaseURL) == "" {
+		return "", fmt.Errorf("NewAPI Ark asset API base URL is required")
+	}
+	rawBaseURL := strings.TrimSpace(cfg.BaseURL)
+	endpoint, err := url.Parse(rawBaseURL)
+	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
+		return "", fmt.Errorf("NewAPI Ark asset API base URL must be an absolute http(s) URL: %q", rawBaseURL)
+	}
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/" + strings.TrimLeft(path, "/")
+	endpoint.RawPath = ""
+	if query == nil {
+		endpoint.RawQuery = ""
+	} else {
+		endpoint.RawQuery = query.Encode()
+	}
+	endpoint.Fragment = ""
+	return endpoint.String(), nil
 }
 
 func setNewAPIArkResponseMetadata(result any, metadata NewAPIArkResponseMetadata) {
