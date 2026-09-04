@@ -231,8 +231,12 @@ func (c *assetClient) CreateAsset(ctx context.Context, request *CreateAssetReque
 	if request == nil {
 		return nil, fmt.Errorf("create asset request is required")
 	}
+	purpose := strings.TrimSpace(request.Purpose)
+	if purpose == "" {
+		purpose = request.AssetName
+	}
 	result, err := c.arkAdaptor.CreateAsset(ctx, c.config, &adapter.NewAPIArkCreateAssetRequest{
-		Name:      request.AssetName,
+		Purpose:   purpose,
 		URL:       request.AssetURL,
 		AssetType: request.AssetType,
 		GroupID:   request.CloudGroupID,

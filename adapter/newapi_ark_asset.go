@@ -159,7 +159,7 @@ type NewAPIArkModeration struct {
 }
 
 type NewAPIArkCreateAssetRequest struct {
-	Name      string `json:"purpose"`
+	Purpose   string `json:"purpose"`
 	URL       string `json:"url"`
 	AssetType string `json:"type,omitempty"`
 	GroupID   string `json:"group_id,omitempty"`
@@ -240,6 +240,10 @@ func (a *NewAPIArkAssetAdaptor) CreateAsset(ctx context.Context, cfg *ProviderCo
 		return nil, fmt.Errorf("create NewAPI Ark asset request is required")
 	}
 	payload := *request
+	payload.Purpose = strings.TrimSpace(payload.Purpose)
+	if payload.Purpose == "" {
+		return nil, fmt.Errorf("create NewAPI Ark asset purpose is required")
+	}
 	payload.AssetType = strings.ToLower(strings.TrimSpace(payload.AssetType))
 	result, err := newAPIArkRESTCall[newAPIArkRESTAsset](ctx, cfg, http.MethodPost, "/v1/assets/upload", nil, &payload)
 	if err != nil {
