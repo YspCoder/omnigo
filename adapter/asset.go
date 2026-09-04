@@ -106,6 +106,7 @@ type CreateAssetRequest struct {
 	AssetName    string `json:"asset_name"`
 	AssetURL     string `json:"asset_url"`
 	AssetType    string `json:"asset_type"`
+	Purpose      string `json:"purpose,omitempty"`
 }
 
 // ListAssetsRequest contains asset pagination fields for one asset group.
@@ -179,7 +180,43 @@ func (a *NewAPIAssetAdaptor) CreateAsset(ctx context.Context, cfg *ProviderConfi
 	if request == nil {
 		return nil, fmt.Errorf("create asset request is required")
 	}
-	return newAPIAssetCall[Asset](ctx, a, cfg, http.MethodPost, "/v1/assets", request)
+	purpose := strings.TrimSpace(request.Purpose)
+	if purpose == "" {
+		purpose = request.AssetName
+	}
+	payload := &newAPIUploadAssetRequest{
+		URL:     request.AssetURL,
+		Purpose: purpose,
+		Type:    strings.ToLower(strings.TrimSpace(request.AssetType)),
+		GroupID: request.CloudGroupID,
+	}
+	result, err := newAPIAssetCall[newAPIUploadAssetResult](ctx, a, cfg, http.MethodPost, "/v1/assets/upload", payload)
+	if err != nil {
+		return nil, err
+	}
+	return &Asset{
+		CloudAssetID: result.AssetID,
+		CloudGroupID: result.GroupID,
+		AssetType:    payload.Type,
+		AssetStatus:  result.Status,
+		AssetName:    request.AssetName,
+		AssetURL:     request.AssetURL,
+		Error:        result.FailureReason,
+	}, nil
+}
+
+type newAPIUploadAssetRequest struct {
+	URL     string `json:"url"`
+	Purpose string `json:"purpose"`
+	Type    string `json:"type,omitempty"`
+	GroupID string `json:"group_id,omitempty"`
+}
+
+type newAPIUploadAssetResult struct {
+	AssetID       string `json:"asset_id"`
+	GroupID       string `json:"group_id"`
+	Status        string `json:"status"`
+	FailureReason string `json:"failure_reason,omitempty"`
 }
 
 // ListAssets returns a page of assets in an asset group.
