@@ -353,6 +353,22 @@ export LLM_SYSTEM_PROMPT="你是一个严谨的中文助手"
 export LLM_SYSTEM_PROMPT_CACHE_TYPE="ephemeral"
 ```
 
+### 请求配置与重试
+
+未设置 `SetEndpoint` 时使用 Provider Registry 中的默认地址；显式设置的地址优先。通过 `adapter.RegisterProvider` 注册的服务商可直接由 `omnigo.NewLLM` 使用。
+
+OpenAI 及其兼容协议的文本调用支持 `SetTemperature`、`SetTopP`、`SetFrequencyPenalty`、`SetPresencePenalty`、`SetSeed`，流式与非流式共用这些参数。`SetOption` 的同名字段覆盖配置值；`SetTemperature(0)` 和 `SetTopP(0)` 会明确发送零值。
+
+OpenAI adapter 的聊天、流式连接、图片创建、Responses 和任务查询共用以下设置：
+
+- `SetExtraHeaders` 设置额外 Header，同名 Header 会覆盖默认值，包括 `Authorization`。
+- `SetTimeout` 为单次 HTTP 请求的超时，包含读取响应体；大于零时覆盖所提供 `HTTPClient` 的超时。整个调用及重试过程的总时间由调用方的 context deadline 控制。
+- `SetMaxRetries(0)` 禁用重试；大于零时，在连接错误、HTTP 408/409/429/5xx 等可重试情况下重试。无法重放请求体时不重试。
+- `SetRetryDelay` 设置指数退避的初始间隔，默认 2 秒、退避上限 30 秒；有效的上游 `Retry-After` / `Retry-After-Ms` 优先，最长接受 60 秒。context 取消会中断等待。
+- `SetProxy` 保留已有 `http.Transport` 的连接池、TLS 等设置。提供自定义 RoundTripper 时，应在该 RoundTripper 内配置代理。
+
+重试只处理请求建立阶段，已开始读取的流不会自动重新生成。其他服务商的原生协议能力以各自 adapter 为准。
+
 ### Prompt 结构化
 
 ```go
@@ -409,11 +425,13 @@ for {
 
 补充说明：
 
-1. 流式响应统一按 OpenAI 的事件格式解析（适用于兼容 OpenAI stream 的服务）。
-2. `omnigo` 会在流式请求体中自动加入：
+1. OpenAI 兼容服务的流式响应使用 OpenAI 事件格式；Google 等原生协议由各自 adapter 处理。
+2. OpenAI adapter 会在流式请求体中自动加入：
    - `"stream": true`
    - `"stream_options": { "include_usage": true }`
-3. 某些服务商需要额外的流式请求头（如 Ali 的 `X-DashScope-SSE: enable`），这些由 adaptor 自动注入。
+3. OpenAI 流式事件保留 `ToolCalls`、`Usage` 和 `FinishReason`。工具调用的 `Function.Arguments` 是字符串分片，按 `token.Index`（候选回复）和 `call.Index`（工具调用）累积后再解析 JSON。
+4. `Type` 可为 `text`、`function_call`、`finish` 或 `usage`。继续读取至 `io.EOF` 才能接收到末尾的用量统计。
+5. `Next(ctx)` 的 context 取消会中断当前读取并关闭 OpenAI 流；调用结束仍应执行 `Close()`。
 
 ### 流式对话示例（OpenAI）
 
@@ -1156,6 +1174,7 @@ resp, err := llm.Media(context.Background(), &dto.MediaRequest{
 
 - 提交 Issue 或 PR 之前请先简单描述问题/需求。
 - 新增 Provider 请参考 `adapter/registry.go` 的结构。
+- 本地回归检查：`go test -race ./... -skip 'Live$'` 和 `go vet ./...`。名称以 `Live` 结尾的测试需要真实 API，默认 CI 会跳过。
 
 ## 许可证
 

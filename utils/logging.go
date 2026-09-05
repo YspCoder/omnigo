@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 )
 
 type LogLevel int
@@ -28,6 +29,7 @@ type Logger interface {
 type DefaultLogger struct {
 	logger *log.Logger
 	level  LogLevel
+	mu     sync.RWMutex
 }
 
 func NewLogger(level LogLevel) Logger {
@@ -38,10 +40,14 @@ func NewLogger(level LogLevel) Logger {
 }
 
 func (l *DefaultLogger) SetLevel(level LogLevel) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.level = level
 }
 
 func (l *DefaultLogger) log(level LogLevel, msg string, keysAndValues ...interface{}) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	if level <= l.level {
 		l.logger.Printf("%s: %s %v", level, msg, keysAndValues)
 	}

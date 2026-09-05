@@ -154,11 +154,23 @@ func GenerateJSONSchema(v interface{}) ([]byte, error) {
 //   - []string: List of required fields
 //   - error: Any error encountered during analysis
 func getStructProperties(t reflect.Type) (map[string]interface{}, []string, error) {
+	if t == nil {
+		return nil, nil, fmt.Errorf("schema type must be a struct or a pointer to a struct")
+	}
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil, nil, fmt.Errorf("schema type must be a struct, got %v", t.Kind())
+	}
 	properties := make(map[string]interface{})
 	var required []string
 
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
+		if !field.IsExported() {
+			continue
+		}
 		jsonTag := field.Tag.Get("json")
 		if jsonTag == "-" {
 			continue

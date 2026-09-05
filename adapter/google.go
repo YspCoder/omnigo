@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/YspCoder/omnigo/dto"
 	"github.com/YspCoder/omnigo/utils"
@@ -18,10 +19,13 @@ import (
 )
 
 type GoogleAdaptor struct {
-	client *genai.Client
+	client      *genai.Client
+	clientMutex sync.Mutex
 }
 
 func (a *GoogleAdaptor) getClient(ctx context.Context, cfg *ProviderConfig) (*genai.Client, error) {
+	a.clientMutex.Lock()
+	defer a.clientMutex.Unlock()
 	if a.client != nil {
 		return a.client, nil
 	}

@@ -6,6 +6,7 @@ package omnigo
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/YspCoder/omnigo/adapter"
 	"github.com/YspCoder/omnigo/config"
@@ -48,12 +49,14 @@ type llmImpl struct {
 	model        string
 	config       *config.Config
 	providerName string
+	configMutex  sync.RWMutex
 }
 
 // SetSystemPrompt sets the system prompt for the LLM.
 func (l *llmImpl) SetSystemPrompt(prompt string, cacheType CacheType) {
-	l.config.SystemPrompt = prompt
-	l.config.SystemPromptCacheType = string(cacheType)
+	if setter, ok := l.LLM.(interface{ SetSystemPrompt(string, llm.CacheType) }); ok {
+		setter.SetSystemPrompt(prompt, cacheType)
+	}
 }
 
 // GetProvider returns the provider of the LLM.
@@ -73,6 +76,8 @@ func (l *llmImpl) Debug(msg string, keysAndValues ...interface{}) {
 
 // GetLogLevel returns the current log level of the LLM.
 func (l *llmImpl) GetLogLevel() LogLevel {
+	l.configMutex.RLock()
+	defer l.configMutex.RUnlock()
 	return LogLevel(l.config.LogLevel)
 }
 
@@ -89,7 +94,10 @@ func (l *llmImpl) StreamMedia(ctx context.Context, request *dto.MediaRequest) (d
 
 // GenerateWithResponse returns both the extracted text and the raw unified provider response.
 func (l *llmImpl) GenerateWithResponse(ctx context.Context, prompt *llm.Prompt, opts ...llm.GenerateOption) (*dto.GenerateResponse, error) {
-	l.logger.Debug("Starting GenerateWithResponse method", "prompt_length", len(prompt.String()), "context", ctx)
+	if prompt == nil {
+		return nil, fmt.Errorf("prompt is required")
+	}
+	l.logger.Debug("Starting GenerateWithResponse method", "prompt_length", len(prompt.Input))
 
 	config := &llm.GenerateConfig{}
 	for _, opt := range opts {
@@ -118,11 +126,15 @@ func (l *llmImpl) GetPromptJSONSchema(opts ...SchemaOption) ([]byte, error) {
 
 // UpdateLogLevel updates the log level for both the omnigo package and the internal llm package.
 func (l *llmImpl) UpdateLogLevel(level LogLevel) {
+	l.configMutex.Lock()
+	defer l.configMutex.Unlock()
 	l.config.LogLevel = utils.LogLevel(level)
 	l.logger.SetLevel(utils.LogLevel(level))
-	if internalLLM, ok := l.LLM.(interface{ SetLogLevel(utils.LogLevel) }); ok {
-		internalLLM.SetLogLevel(utils.LogLevel(level))
-	}
+}
+
+// SetLogLevel keeps the shared logger and reported configuration in sync.
+func (l *llmImpl) SetLogLevel(level utils.LogLevel) {
+	l.UpdateLogLevel(LogLevel(level))
 }
 
 // Implement the base Generate method (if not already provided by embedded llm.LLM)
@@ -174,7 +186,7 @@ func NewLLM(opts ...ConfigOption) (LLM, error) {
 
 	logger := utils.NewLogger(cfg.LogLevel)
 
-	baseLLM, err := llm.NewLLM(cfg, logger, adapter.NewRegistry())
+	baseLLM, err := llm.NewLLM(cfg, logger, adapter.GetDefaultRegistry())
 	if err != nil {
 		logger.Error("Failed to create internal LLM", "error", err)
 		return nil, fmt.Errorf("failed to create internal LLM: %w", err)

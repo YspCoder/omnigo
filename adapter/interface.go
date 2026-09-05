@@ -26,6 +26,8 @@ type ProviderConfig struct {
 	Headers      map[string]string
 	HTTPClient   *http.Client
 	Timeout      time.Duration
+	MaxRetries   int
+	RetryDelay   time.Duration
 	ChatProtocol string
 }
 

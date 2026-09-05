@@ -240,6 +240,21 @@ func (p *Prompt) String() string {
 		builder.WriteString("\n\n")
 	}
 
+	builder.WriteString(p.userContent(p.Input))
+	if len(p.Messages) > 0 {
+		builder.WriteString("\nMessages:\n")
+		for _, msg := range p.Messages {
+			fmt.Fprintf(&builder, "%s: %s\n", msg.Role, msg.Content)
+			if msg.CacheType != "" {
+				fmt.Fprintf(&builder, "(Cache: %s)\n", msg.CacheType)
+			}
+		}
+	}
+	return builder.String()
+}
+
+func (p *Prompt) userContent(input string) string {
+	var builder strings.Builder
 	if p.Context != "" {
 		builder.WriteString("Context: ")
 		builder.WriteString(p.Context)
@@ -256,7 +271,7 @@ func (p *Prompt) String() string {
 		builder.WriteString("\n")
 	}
 
-	builder.WriteString(p.Input)
+	builder.WriteString(input)
 
 	if p.Output != "" {
 		builder.WriteString("\n\nExpected Output Format:\n")
@@ -274,16 +289,6 @@ func (p *Prompt) String() string {
 
 	if p.MaxLength > 0 {
 		builder.WriteString(fmt.Sprintf("\n\nPlease limit your response to approximately %d words.", p.MaxLength))
-	}
-
-	if len(p.Messages) > 0 {
-		builder.WriteString("\nMessages:\n")
-		for _, msg := range p.Messages {
-			builder.WriteString(fmt.Sprintf("%s: %s\n", msg.Role, msg.Content))
-			if msg.CacheType != "" {
-				builder.WriteString(fmt.Sprintf("(Cache: %s)\n", msg.CacheType))
-			}
-		}
 	}
 
 	return builder.String()

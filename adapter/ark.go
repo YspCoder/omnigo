@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/YspCoder/omnigo/dto"
@@ -19,10 +20,13 @@ import (
 )
 
 type ArkAdaptor struct {
-	client *arkruntime.Client
+	client      *arkruntime.Client
+	clientMutex sync.Mutex
 }
 
 func (a *ArkAdaptor) getClient(config *ProviderConfig) *arkruntime.Client {
+	a.clientMutex.Lock()
+	defer a.clientMutex.Unlock()
 	if a.client != nil {
 		return a.client
 	}

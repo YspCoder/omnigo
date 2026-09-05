@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/YspCoder/omnigo/dto"
 	"github.com/YspCoder/omnigo/utils"
@@ -24,48 +25,36 @@ import (
 )
 
 type OpenAIAdaptor struct {
-	client *openai.Client
+	clientOnce sync.Once
+	client     *openai.Client
+	clientErr  error
+	httpClient *http.Client
+	apiClient  *retryHTTPClient
 }
 
-func (a *OpenAIAdaptor) getClient(config *ProviderConfig) *openai.Client {
-	if a.client != nil {
-		return a.client
-	}
-
-	opts := []option.RequestOption{
-		option.WithAPIKey(config.APIKey),
-	}
-	if config.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(config.BaseURL))
-	}
-	if config.Organization != "" {
-		opts = append(opts, option.WithOrganization(config.Organization))
-	}
-
-	httpClient := config.HTTPClient
-	if httpClient == nil {
-		httpClient = &http.Client{}
-	}
-
-	if config.Proxy != "" {
-		proxyURL, err := url.Parse(config.Proxy)
-		if err == nil {
-			transport := &http.Transport{
-				Proxy: http.ProxyURL(proxyURL),
-			}
-			httpClient = &http.Client{
-				Transport: transport,
-			}
+func (a *OpenAIAdaptor) getClient(config *ProviderConfig) (*openai.Client, error) {
+	a.clientOnce.Do(func() {
+		a.httpClient, a.clientErr = providerHTTPClient(config)
+		if a.clientErr != nil {
+			return
 		}
-	}
-
-	if httpClient != nil {
-		opts = append(opts, option.WithHTTPClient(httpClient))
-	}
-
-	client := openai.NewClient(opts...)
-	a.client = &client
-	return a.client
+		a.apiClient = &retryHTTPClient{client: a.httpClient, maxRetries: config.MaxRetries, retryDelay: config.RetryDelay}
+		opts := []option.RequestOption{
+			option.WithAPIKey(config.APIKey), option.WithHTTPClient(a.apiClient), option.WithMaxRetries(0),
+		}
+		if config.BaseURL != "" {
+			opts = append(opts, option.WithBaseURL(config.BaseURL))
+		}
+		if config.Organization != "" {
+			opts = append(opts, option.WithOrganization(config.Organization))
+		}
+		for key, value := range config.Headers {
+			opts = append(opts, option.WithHeader(key, value))
+		}
+		client := openai.NewClient(opts...)
+		a.client = &client
+	})
+	return a.client, a.clientErr
 }
 
 func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
@@ -77,7 +66,10 @@ func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, reques
 		return a.chatWithResponsesAPI(ctx, config, request)
 	}
 
-	client := a.getClient(config)
+	client, err := a.getClient(config)
+	if err != nil {
+		return nil, err
+	}
 
 	params := openai.ChatCompletionNewParams{
 		Model:    request.Model,
@@ -92,6 +84,7 @@ func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, reques
 	if request.MaxTokens != 0 {
 		params.MaxTokens = openai.Int(int64(request.MaxTokens))
 	}
+	params.SetExtraFields(request.Options)
 
 	resp, err := client.Chat.Completions.New(ctx, params)
 	if err != nil {
@@ -193,6 +186,9 @@ type openAIResponsesError struct {
 }
 
 func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
+	if _, err := a.getClient(config); err != nil {
+		return nil, err
+	}
 	input, err := toOpenAIResponsesInput(request.Messages)
 	if err != nil {
 		return nil, err
@@ -214,6 +210,23 @@ func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *Provid
 	if err != nil {
 		return nil, err
 	}
+	if len(request.Options) > 0 {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(body, &fields); err != nil {
+			return nil, err
+		}
+		for key, value := range request.Options {
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return nil, fmt.Errorf("encode option %q: %w", key, err)
+			}
+			fields[key] = encoded
+		}
+		body, err = json.Marshal(fields)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(openAIBaseURL(config), "/")+"/responses", bytes.NewReader(body))
 	if err != nil {
@@ -228,7 +241,7 @@ func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *Provid
 		req.Header.Set(key, value)
 	}
 
-	resp, err := a.getHTTPClient(config).Do(req)
+	resp, err := a.apiClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -493,6 +506,9 @@ func applyOpenAIChatTools(params *openai.ChatCompletionNewParams, request *dto.M
 	if request.ToolChoice == nil {
 		return nil
 	}
+	if choice, ok := request.ToolChoice.(map[string]interface{}); ok && len(choice) == 0 {
+		return nil
+	}
 	if mode, ok := openAIToolChoiceMode(request.ToolChoice); ok {
 		params.ToolChoice.OfAuto = openai.String(mode)
 		return nil
@@ -575,24 +591,6 @@ func openAIContentImageURLs(content interface{}) []string {
 	}
 }
 
-func (a *OpenAIAdaptor) getHTTPClient(config *ProviderConfig) *http.Client {
-	httpClient := config.HTTPClient
-	if httpClient == nil {
-		httpClient = &http.Client{}
-	}
-	if config.Proxy != "" {
-		proxyURL, err := url.Parse(config.Proxy)
-		if err == nil {
-			httpClient = &http.Client{
-				Transport: &http.Transport{
-					Proxy: http.ProxyURL(proxyURL),
-				},
-			}
-		}
-	}
-	return httpClient
-}
-
 func openAIBaseURL(config *ProviderConfig) string {
 	if strings.TrimSpace(config.BaseURL) != "" {
 		return strings.TrimSpace(config.BaseURL)
@@ -601,27 +599,52 @@ func openAIBaseURL(config *ProviderConfig) string {
 }
 
 type openAIStreamWrapper struct {
-	stream *ssestream.Stream[openai.ChatCompletionChunk]
+	stream  *ssestream.Stream[openai.ChatCompletionChunk]
+	pending []*dto.StreamToken
 }
 
 func (w *openAIStreamWrapper) Next(ctx context.Context) (*dto.StreamToken, error) {
-	if !w.stream.Next() {
-		if err := w.stream.Err(); err != nil {
-			return nil, err
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	stop := context.AfterFunc(ctx, func() { w.stream.Close() })
+	defer stop()
+	for len(w.pending) == 0 {
+		if !w.stream.Next() {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if err := w.stream.Err(); err != nil {
+				return nil, err
+			}
+			return nil, io.EOF
 		}
-		return nil, io.EOF
+		resp := w.stream.Current()
+		for _, choice := range resp.Choices {
+			token := &dto.StreamToken{Text: choice.Delta.Content, Type: "text", Index: int(choice.Index), FinishReason: choice.FinishReason}
+			for _, call := range choice.Delta.ToolCalls {
+				token.ToolCalls = append(token.ToolCalls, dto.ToolCallDelta{
+					Index: int(call.Index), ID: call.ID, Type: call.Type,
+					Function: dto.ToolCallFunctionDelta{Name: call.Function.Name, Arguments: call.Function.Arguments},
+				})
+			}
+			if len(token.ToolCalls) > 0 {
+				token.Type = "function_call"
+			} else if token.Text == "" && token.FinishReason != "" {
+				token.Type = "finish"
+			}
+			w.pending = append(w.pending, token)
+		}
+		if resp.JSON.Usage.Valid() {
+			w.pending = append(w.pending, &dto.StreamToken{Type: "usage", Usage: &dto.Usage{
+				PromptTokens: int(resp.Usage.PromptTokens), CompletionTokens: int(resp.Usage.CompletionTokens), TotalTokens: int(resp.Usage.TotalTokens),
+			}})
+		}
 	}
-
-	resp := w.stream.Current()
-	if len(resp.Choices) == 0 {
-		return &dto.StreamToken{Text: ""}, nil
-	}
-
-	return &dto.StreamToken{
-		Text:  resp.Choices[0].Delta.Content,
-		Type:  "text",
-		Index: int(resp.Choices[0].Index),
-	}, nil
+	token := w.pending[0]
+	w.pending[0] = nil
+	w.pending = w.pending[1:]
+	return token, nil
 }
 
 func (w *openAIStreamWrapper) Close() error {
@@ -636,7 +659,10 @@ func (a *OpenAIAdaptor) Stream(ctx context.Context, config *ProviderConfig, requ
 	if useResponses {
 		return nil, fmt.Errorf("openai responses streaming is not supported")
 	}
-	client := a.getClient(config)
+	client, err := a.getClient(config)
+	if err != nil {
+		return nil, err
+	}
 
 	params := openai.ChatCompletionNewParams{
 		Model:    request.Model,
@@ -651,20 +677,29 @@ func (a *OpenAIAdaptor) Stream(ctx context.Context, config *ProviderConfig, requ
 	if request.MaxTokens != 0 {
 		params.MaxTokens = openai.Int(int64(request.MaxTokens))
 	}
+	params.StreamOptions = openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(true)}
+	params.SetExtraFields(request.Options)
 
 	stream := client.Chat.Completions.NewStreaming(ctx, params)
+	if err := stream.Err(); err != nil {
+		stream.Close()
+		return nil, err
+	}
 	return &openAIStreamWrapper{stream: stream}, nil
 }
 
 func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
-	client := a.getClient(config)
+	client, err := a.getClient(config)
+	if err != nil {
+		return nil, err
+	}
 	async, _ := utils.GetBoolExtra(request.Extra, "async")
 
 	switch request.Type {
 	case dto.MediaTypeImage:
 		inputs := utils.ParseExtraImageInputs(request.Extra)
 		if len(inputs) > 0 {
-			referenceImages, err := openAIImageReferenceReaders(ctx, a.getHTTPClient(config), inputs)
+			referenceImages, err := openAIImageReferenceReaders(ctx, a.httpClient, inputs)
 			if err != nil {
 				return nil, err
 			}
@@ -906,6 +941,9 @@ func openAIImageFilename(index int, contentType string) string {
 }
 
 func (a *OpenAIAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string, query ...map[string]string) (*dto.TaskStatusResponse, error) {
+	if _, err := a.getClient(config); err != nil {
+		return nil, err
+	}
 	endpoint, err := openAITaskEndpoint(config, taskID, query...)
 	if err != nil {
 		return nil, err
@@ -925,7 +963,7 @@ func (a *OpenAIAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, 
 		req.Header.Set(key, value)
 	}
 
-	resp, err := a.getHTTPClient(config).Do(req)
+	resp, err := a.apiClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

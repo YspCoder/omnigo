@@ -271,3 +271,31 @@ type stubTokenStream struct{}
 
 func (s *stubTokenStream) Next(context.Context) (*dto.StreamToken, error) { return nil, nil }
 func (s *stubTokenStream) Close() error                                   { return nil }
+
+func TestPromptConversionPreservesHistory(t *testing.T) {
+	prompt := NewPrompt("unused", WithContext("context"), WithMessages([]PromptMessage{
+		{Role: "user", Content: "first"}, {Role: "assistant", Content: "answer"}, {Role: "user", Content: "followup"},
+	}))
+	got := toDTOMessages(prompt)
+	if len(got) != 3 || got[0].Content != "first" || got[1].Content != "answer" || got[2].Content != "Context: context\n\nfollowup" {
+		t.Fatalf("messages=%+v", got)
+	}
+	if prompt.Messages[2].Content != "followup" {
+		t.Fatal("history mutated")
+	}
+	got = toDTOMessages(&Prompt{Input: "hello", SystemPrompt: "system"})
+	if len(got) != 2 || got[1].Content != "hello" {
+		t.Fatalf("input missing: %+v", got)
+	}
+}
+
+func TestStreamMediaDoesNotMutateRequest(t *testing.T) {
+	client := &LLMImpl{config: &config.Config{}, relay: relay.NewRelay(), adaptor: stubAdaptor{stream: &stubTokenStream{}}, adaptorCfg: &adapter.ProviderConfig{}}
+	request := &dto.MediaRequest{Type: dto.MediaTypeText, Messages: []dto.Message{{Role: "user", Content: "hello"}}}
+	if _, err := client.StreamMedia(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Stream {
+		t.Fatal("caller request mutated")
+	}
+}

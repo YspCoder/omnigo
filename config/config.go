@@ -54,9 +54,9 @@ type Config struct {
 	TopP                  float64           `env:"LLM_TOP_P" envDefault:"0.9" validate:"gte=0,lte=1"`
 	FrequencyPenalty      float64           `env:"LLM_FREQUENCY_PENALTY" envDefault:"0.0"`
 	PresencePenalty       float64           `env:"LLM_PRESENCE_PENALTY" envDefault:"0.0"`
-	Timeout               time.Duration     `env:"LLM_TIMEOUT" envDefault:"30s"`
-	MaxRetries            int               `env:"LLM_MAX_RETRIES" envDefault:"3"`
-	RetryDelay            time.Duration     `env:"LLM_RETRY_DELAY" envDefault:"2s"`
+	Timeout               time.Duration     `env:"LLM_TIMEOUT" envDefault:"30s" validate:"gte=0"`
+	MaxRetries            int               `env:"LLM_MAX_RETRIES" envDefault:"3" validate:"gte=0"`
+	RetryDelay            time.Duration     `env:"LLM_RETRY_DELAY" envDefault:"2s" validate:"gte=0"`
 	APIKeys               map[string]string `validate:"required,apikey"`
 	LogLevel              utils.LogLevel    `env:"LLM_LOG_LEVEL" envDefault:"WARN"`
 	Seed                  *int              `env:"LLM_SEED"`
@@ -147,6 +147,7 @@ func NewConfig() *Config {
 		Provider:     "openai",
 		Model:        "gpt-4o-mini",
 		Temperature:  0.7,
+		TopP:         0.9,
 		MaxTokens:    300,
 		Timeout:      30 * time.Second,
 		MaxRetries:   3,

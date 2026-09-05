@@ -10,7 +10,7 @@ type StreamToken struct {
 	// Text is the actual token text or status message
 	Text string
 
-	// Type indicates the type of token (e.g., "text", "function_call", "error", "progress", "url")
+	// Type indicates the event type: text, function_call, usage, finish, error, progress, or url.
 	Type string
 
 	// Index is the position of this token in the sequence
@@ -24,6 +24,24 @@ type StreamToken struct {
 
 	// Metadata contains provider-specific metadata
 	Metadata map[string]interface{}
+
+	// ToolCalls contains incremental function calls, grouped by tool index within a choice.
+	ToolCalls    []ToolCallDelta
+	Usage        *Usage
+	FinishReason string
+}
+
+// ToolCallDelta preserves fragments that may not yet form valid JSON arguments.
+type ToolCallDelta struct {
+	Index    int
+	ID       string
+	Type     string
+	Function ToolCallFunctionDelta
+}
+
+type ToolCallFunctionDelta struct {
+	Name      string
+	Arguments string
 }
 
 // TokenStream represents a stream of tokens from the LLM.

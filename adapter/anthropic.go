@@ -4,16 +4,20 @@ package adapter
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/YspCoder/omnigo/dto"
 	"github.com/liushuangls/go-anthropic/v2"
 )
 
 type AnthropicAdaptor struct {
-	client *anthropic.Client
+	client      *anthropic.Client
+	clientMutex sync.Mutex
 }
 
 func (a *AnthropicAdaptor) getClient(config *ProviderConfig) *anthropic.Client {
+	a.clientMutex.Lock()
+	defer a.clientMutex.Unlock()
 	if a.client != nil {
 		return a.client
 	}
