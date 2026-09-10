@@ -4,6 +4,7 @@ package adapter
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/YspCoder/omnigo/dto"
@@ -12,22 +13,47 @@ import (
 
 type AnthropicAdaptor struct {
 	client      *anthropic.Client
+	clientErr   error
 	clientMutex sync.Mutex
 }
 
 func (a *AnthropicAdaptor) getClient(config *ProviderConfig) *anthropic.Client {
-	a.clientMutex.Lock()
-	defer a.clientMutex.Unlock()
-	if a.client != nil {
-		return a.client
-	}
-	client := anthropic.NewClient(config.APIKey)
-	a.client = client
+	client, _ := a.getClientWithError(config)
 	return client
 }
 
+func (a *AnthropicAdaptor) getClientWithError(config *ProviderConfig) (*anthropic.Client, error) {
+	a.clientMutex.Lock()
+	defer a.clientMutex.Unlock()
+	if a.client != nil {
+		return a.client, nil
+	}
+	if a.clientErr != nil {
+		return nil, a.clientErr
+	}
+
+	if config == nil {
+		config = &ProviderConfig{}
+	}
+	httpClient, err := providerHTTPClient(config)
+	if err != nil {
+		a.clientErr = err
+		return nil, err
+	}
+	opts := []anthropic.ClientOption{anthropic.WithHTTPClient(httpClient)}
+	if baseURL := strings.TrimSpace(config.BaseURL); baseURL != "" {
+		opts = append(opts, anthropic.WithBaseURL(baseURL))
+	}
+	client := anthropic.NewClient(config.APIKey, opts...)
+	a.client = client
+	return client, nil
+}
+
 func (a *AnthropicAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
-	client := a.getClient(config)
+	client, err := a.getClientWithError(config)
+	if err != nil {
+		return nil, err
+	}
 
 	messages := make([]anthropic.Message, 0)
 	var system string

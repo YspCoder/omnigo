@@ -33,6 +33,9 @@ func (a *GoogleAdaptor) getClient(ctx context.Context, cfg *ProviderConfig) (*ge
 		APIKey:  cfg.APIKey,
 		Backend: genai.BackendGeminiAPI,
 	}
+	if baseURL := strings.TrimSpace(cfg.BaseURL); baseURL != "" {
+		cc.HTTPOptions.BaseURL = baseURL
+	}
 	if cfg.Proxy != "" {
 		proxy := cfg.Proxy
 		if !strings.HasPrefix(proxy, "http") {
