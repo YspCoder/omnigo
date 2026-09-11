@@ -12,6 +12,7 @@
 
 - [特性](#特性)
 - [支持的服务商](#支持的服务商)
+- [向量数据库与适配器](#向量数据库与适配器)
 - [安装](#安装)
 - [快速开始](#快速开始)
 - [快速参考](#快速参考)
@@ -45,6 +46,58 @@
 - NewAPI Ark 素材库（`newapi_ark`）
 
 > 说明：LLM 服务商名称传给 `SetProvider(...)`；素材库服务商名称传给 `NewAssetClient(...)`。
+
+## 向量数据库与适配器
+
+内置统一的向量数据库接口，覆盖常见的托管服务、自建服务和搜索引擎：
+
+- Qdrant (`qdrant`)
+- Milvus / Zilliz Cloud (`milvus`, `zilliz`)
+- Pinecone (`pinecone`)
+- Weaviate (`weaviate`)
+- Chroma (`chroma`)
+- Elasticsearch / OpenSearch (`elasticsearch`, `opensearch`)
+
+适配器均通过 REST API 工作，不需要把对应数据库 SDK 引入业务项目。公共操作包括创建集合、批量写入、向量检索和按 ID 删除；`VectorRecord` 统一承载 `ID`、`Vector`、`Metadata` 和可选 `Document`，检索返回统一的 `VectorMatch`。
+
+`VectorMatch.Score` 保留上游返回值，不做跨数据库的分数换算；例如 Chroma、Weaviate 的距离值通常是越小越近，而 Pinecone/Qdrant 常见配置下是越大越相似。
+
+如果服务只暴露一个固定的推送地址，可以只设置 `PushURL`（或语义更明确的 `UpsertURL`/`InsertURL`），不需要配置根地址；也可以用 `OperationURLs["upsert"]`（或 `"push"`、`"insert"`）配置同一能力。其他操作对应 `CreateCollectionURL`、`SearchURL`、`DeleteURL`。
+
+```go
+pushOnly, err := omnigo.NewVectorClient(omnigo.VectorProviderQdrant, &omnigo.VectorConfig{
+    PushURL: "https://vector.example.com/v1/ingest",
+})
+err = pushOnly.Upsert(ctx, "ignored-by-fixed-url", records)
+```
+
+```go
+client, err := omnigo.NewVectorClient(omnigo.VectorProviderQdrant, &omnigo.VectorConfig{
+    Endpoint: "http://localhost:6333",
+    APIKey:   os.Getenv("QDRANT_API_KEY"),
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+err = client.CreateCollection(ctx, &omnigo.VectorCollection{
+    Name: "articles", Dimension: 1536,
+    Distance: omnigo.VectorDistanceCosine,
+})
+if err != nil {
+    log.Fatal(err)
+}
+err = client.Upsert(ctx, "articles", []omnigo.VectorRecord{{
+    ID: "article-1", Vector: embedding,
+    Metadata: map[string]interface{}{"lang": "zh"}, Document: "向量数据库简介",
+}})
+matches, err := client.Search(ctx, &omnigo.VectorSearchRequest{
+    Collection: "articles", Vector: queryEmbedding, TopK: 5,
+    IncludeMetadata: true,
+})
+```
+
+Pinecone 的 `Endpoint` 应填写具体 index 的 data-plane host；需要由客户端创建 index 时，再设置 `ControlPlaneEndpoint`（通常为 `https://api.pinecone.io`）。Milvus/Zilliz 使用 v2 REST endpoint；OpenSearch 使用 `knn_vector` 映射，和 Elasticsearch 的 `dense_vector` 映射分别适配。所有适配器都支持 `HTTPClient`、`Timeout`、`Proxy`、`MaxRetries`、`RetryDelay` 和 `Headers`。Chroma 和 Weaviate 可以不填写 `Dimension`，其余需要建索引的数据库应提供正数维度。
 
 ### NewAPI Ark 素材库
 
