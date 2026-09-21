@@ -123,6 +123,30 @@ func TestEffectiveMediaRequestUsesConfiguredSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestEffectiveMediaRequestUsesConfiguredModelWithoutMutatingRequest(t *testing.T) {
+	client := &LLMImpl{
+		config: &config.Config{Model: "configured-media-model"},
+	}
+	request := &dto.MediaRequest{
+		Type:     dto.MediaTypeImage,
+		Messages: []dto.Message{{Role: "user", Content: "draw a cat"}},
+	}
+
+	effective := client.effectiveMediaRequest(request)
+	if effective == request {
+		t.Fatal("expected a cloned request when applying configured model")
+	}
+	if effective.Model != "configured-media-model" {
+		t.Fatalf("model = %q, want configured-media-model", effective.Model)
+	}
+	if request.Model != "" {
+		t.Fatalf("expected original request model to remain empty, got %q", request.Model)
+	}
+	if len(effective.Messages) != 1 || effective.Messages[0].Content != "draw a cat" {
+		t.Fatalf("messages changed unexpectedly: %+v", effective.Messages)
+	}
+}
+
 func TestEffectiveMediaRequestKeepsExplicitSystemPrompt(t *testing.T) {
 	client := &LLMImpl{
 		config: &config.Config{

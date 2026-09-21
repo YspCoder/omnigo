@@ -12,6 +12,9 @@ import (
 
 func providerHTTPClient(cfg *ProviderConfig) (*http.Client, error) {
 	client := &http.Client{}
+	if cfg == nil {
+		return client, nil
+	}
 	if cfg.HTTPClient != nil {
 		*client = *cfg.HTTPClient
 	}
@@ -29,7 +32,7 @@ func providerHTTPClient(cfg *ProviderConfig) (*http.Client, error) {
 	if err != nil || proxyURL.Host == "" {
 		return nil, fmt.Errorf("invalid proxy URL")
 	}
-	switch proxyURL.Scheme {
+	switch strings.ToLower(proxyURL.Scheme) {
 	case "http", "https", "socks5", "socks5h":
 	default:
 		return nil, fmt.Errorf("unsupported proxy scheme %q", proxyURL.Scheme)
@@ -97,7 +100,7 @@ func retryableResponse(response *http.Response, err error) bool {
 	if response == nil {
 		return false
 	}
-	switch response.Header.Get("X-Should-Retry") {
+	switch strings.ToLower(strings.TrimSpace(response.Header.Get("X-Should-Retry"))) {
 	case "true":
 		return true
 	case "false":

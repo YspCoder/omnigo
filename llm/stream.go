@@ -67,6 +67,7 @@ type SSEDecoder struct {
 	reader  *bufio.Scanner
 	current Event
 	err     error
+	done    bool
 }
 
 type Event struct {
@@ -75,13 +76,16 @@ type Event struct {
 }
 
 func NewSSEDecoder(reader io.Reader) *SSEDecoder {
-	return &SSEDecoder{
-		reader: bufio.NewScanner(reader),
-	}
+	scanner := bufio.NewScanner(reader)
+	// Provider payloads can contain long JSON lines (for example, tool call
+	// arguments). Keep the scanner's useful default while allowing those lines
+	// to pass through without turning into an opaque "token too long" error.
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	return &SSEDecoder{reader: scanner}
 }
 
 func (d *SSEDecoder) Next() bool {
-	if d.err != nil {
+	if d.done || d.err != nil {
 		return false
 	}
 
@@ -90,6 +94,10 @@ func (d *SSEDecoder) Next() bool {
 
 	for d.reader.Scan() {
 		line := d.reader.Bytes()
+		// Scanner strips '\n' but leaves the '\r' from CRLF responses.
+		// Normalize it so blank lines delimit events consistently across
+		// providers and transports.
+		line = bytes.TrimSuffix(line, []byte{'\r'})
 
 		// Dispatch event on empty line
 		if len(line) == 0 {
@@ -121,7 +129,17 @@ func (d *SSEDecoder) Next() bool {
 
 	if err := d.reader.Err(); err != nil {
 		d.err = err
+		d.done = true
+		return false
 	}
+	// SSE permits the final event to end at EOF without a blank delimiter.
+	// Deliver it once before reporting end-of-stream.
+	if event != "" || data.Len() > 0 {
+		d.current = Event{Type: event, Data: data.Bytes()}
+		d.done = true
+		return true
+	}
+	d.done = true
 	return false
 }
 

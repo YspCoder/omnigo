@@ -15,6 +15,16 @@ type Relay struct {
 	Client *http.Client
 }
 
+// contextErr avoids dispatching work that the caller has already cancelled.
+// A nil context is kept compatible with existing callers and is left for the
+// adaptor to handle as before.
+func contextErr(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Err()
+}
+
 // NewRelay creates a relay with default settings.
 func NewRelay() *Relay {
 	return &Relay{}
@@ -25,6 +35,9 @@ func (r *Relay) Chat(ctx context.Context, adp adapter.Adaptor, config *adapter.P
 	if adp == nil {
 		return nil, fmt.Errorf("adaptor is required")
 	}
+	if err := contextErr(ctx); err != nil {
+		return nil, err
+	}
 	return adp.Chat(ctx, config, request)
 }
 
@@ -32,6 +45,9 @@ func (r *Relay) Chat(ctx context.Context, adp adapter.Adaptor, config *adapter.P
 func (r *Relay) Media(ctx context.Context, adp adapter.Adaptor, config *adapter.ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	if adp == nil {
 		return nil, fmt.Errorf("adaptor is required")
+	}
+	if err := contextErr(ctx); err != nil {
+		return nil, err
 	}
 	return adp.Media(ctx, config, request)
 }
@@ -41,6 +57,9 @@ func (r *Relay) TaskStatus(ctx context.Context, adp adapter.Adaptor, config *ada
 	if adp == nil {
 		return nil, fmt.Errorf("adaptor is required")
 	}
+	if err := contextErr(ctx); err != nil {
+		return nil, err
+	}
 	return adp.TaskStatus(ctx, config, taskID, query...)
 }
 
@@ -48,6 +67,9 @@ func (r *Relay) TaskStatus(ctx context.Context, adp adapter.Adaptor, config *ada
 func (r *Relay) ListTasks(ctx context.Context, adp adapter.Adaptor, config *adapter.ProviderConfig, query map[string]string) (*dto.TaskListResponse, error) {
 	if adp == nil {
 		return nil, fmt.Errorf("adaptor is required")
+	}
+	if err := contextErr(ctx); err != nil {
+		return nil, err
 	}
 	return adp.ListTasks(ctx, config, query)
 }
@@ -57,6 +79,9 @@ func (r *Relay) Stream(ctx context.Context, adp adapter.Adaptor, _ interface{}, 
 	if adp == nil {
 		return nil, fmt.Errorf("adaptor is required")
 	}
+	if err := contextErr(ctx); err != nil {
+		return nil, err
+	}
 	return adp.Stream(ctx, config, request)
 }
 
@@ -64,6 +89,9 @@ func (r *Relay) Stream(ctx context.Context, adp adapter.Adaptor, _ interface{}, 
 func (r *Relay) StreamMedia(ctx context.Context, adp adapter.Adaptor, config *adapter.ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
 	if adp == nil {
 		return nil, fmt.Errorf("adaptor is required")
+	}
+	if err := contextErr(ctx); err != nil {
+		return nil, err
 	}
 	return adp.StreamMedia(ctx, config, request)
 }

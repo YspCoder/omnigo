@@ -362,7 +362,7 @@ OpenAI 及其兼容协议的文本调用支持 `SetTemperature`、`SetTopP`、`S
 OpenAI adapter 的聊天、流式连接、图片创建、Responses 和任务查询共用以下设置：
 
 - `SetExtraHeaders` 设置额外 Header，同名 Header 会覆盖默认值，包括 `Authorization`。
-- `SetTimeout` 为单次 HTTP 请求的超时，包含读取响应体；大于零时覆盖所提供 `HTTPClient` 的超时。整个调用及重试过程的总时间由调用方的 context deadline 控制。
+- `SetTimeout` 为单次 HTTP 请求的超时，包含读取响应体；未设置或设置为零时不配置客户端超时。整个调用及重试过程的总时间由调用方的 context deadline 控制。
 - `SetMaxRetries(0)` 禁用重试；大于零时，在连接错误、HTTP 408/409/429/5xx 等可重试情况下重试。无法重放请求体时不重试。
 - `SetRetryDelay` 设置指数退避的初始间隔，默认 2 秒、退避上限 30 秒；有效的上游 `Retry-After` / `Retry-After-Ms` 优先，最长接受 60 秒。context 取消会中断等待。
 - `SetProxy` 保留已有 `http.Transport` 的连接池、TLS 等设置。提供自定义 RoundTripper 时，应在该 RoundTripper 内配置代理。

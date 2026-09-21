@@ -478,6 +478,7 @@ func googleHTTPClient(c *genai.Client) *http.Client {
 }
 
 func googleFetchImageBytes(ctx context.Context, httpClient *http.Client, raw string) ([]byte, string, error) {
+	const maxImageBytes = 50 << 20
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("build image request %q: %w", raw, err)
@@ -490,9 +491,15 @@ func googleFetchImageBytes(ctx context.Context, httpClient *http.Client, raw str
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, "", fmt.Errorf("download image %q: unexpected status %s", raw, resp.Status)
 	}
-	data, err := io.ReadAll(resp.Body)
+	if resp.ContentLength > maxImageBytes {
+		return nil, "", fmt.Errorf("download image %q exceeds 50MB", raw)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("read image %q: %w", raw, err)
+	}
+	if len(data) > maxImageBytes {
+		return nil, "", fmt.Errorf("download image %q exceeds 50MB", raw)
 	}
 	mimeType := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	if idx := strings.Index(mimeType, ";"); idx >= 0 {

@@ -70,7 +70,11 @@ func (l *DefaultLogger) Error(msg string, keysAndValues ...interface{}) {
 }
 
 func (l LogLevel) String() string {
-	return [...]string{"OFF", "ERROR", "WARN", "INFO", "DEBUG"}[l]
+	levels := [...]string{"OFF", "ERROR", "WARN", "INFO", "DEBUG"}
+	if l < 0 || int(l) >= len(levels) {
+		return fmt.Sprintf("UNKNOWN(%d)", l)
+	}
+	return levels[l]
 }
 
 func (l *LogLevel) UnmarshalText(text []byte) error {

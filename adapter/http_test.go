@@ -17,6 +17,11 @@ type testTransport func(*http.Request) (*http.Response, error)
 func (f testTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestProviderHTTPClientPreservesConfiguration(t *testing.T) {
+	client, err := providerHTTPClient(nil)
+	if err != nil || client == nil || client.Timeout != 0 {
+		t.Fatalf("nil config should use a default client: client=%v err=%v", client, err)
+	}
+
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConnsPerHost = 20
 	jar, err := cookiejar.New(nil)
@@ -24,7 +29,7 @@ func TestProviderHTTPClientPreservesConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := &http.Client{Transport: transport, Timeout: time.Minute, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	client, err := providerHTTPClient(&ProviderConfig{HTTPClient: original, Timeout: 3 * time.Second, Proxy: "localhost:8080"})
+	client, err = providerHTTPClient(&ProviderConfig{HTTPClient: original, Timeout: 3 * time.Second, Proxy: "localhost:8080"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,6 +99,31 @@ func TestRetryPolicy(t *testing.T) {
 				t.Fatalf("body=%s attempts=%d err=%v", body, attempts, err)
 			}
 		})
+	}
+}
+
+func TestRetryHeaderIsCaseInsensitiveAndWhitespaceTolerant(t *testing.T) {
+	attempts := 0
+	client := &retryHTTPClient{maxRetries: 1, retryDelay: time.Millisecond, client: &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+		attempts++
+		return &http.Response{
+			StatusCode: 503,
+			Header:     http.Header{"X-Should-Retry": {"  TRUE  "}},
+			Body:       io.NopCloser(strings.NewReader("retry")),
+			Request:    r,
+		}, nil
+	})}}
+	request, err := http.NewRequest(http.MethodGet, "http://example.invalid", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if attempts != 2 {
+		t.Fatalf("attempts=%d, want 2", attempts)
 	}
 }
 

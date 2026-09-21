@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -973,6 +974,7 @@ func paiStatusText(status int) string {
 }
 
 func paiReadImageInput(ctx context.Context, client *http.Client, input string) (string, string, []byte, error) {
+	const maxImageBytes = 50 << 20
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return "", "", nil, fmt.Errorf("pai image input is empty")
@@ -993,9 +995,15 @@ func paiReadImageInput(ctx context.Context, client *http.Client, input string) (
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return "", "", nil, fmt.Errorf("pai image fetch failed: status=%d url=%s", resp.StatusCode, input)
 		}
-		data, err := io.ReadAll(resp.Body)
+		if resp.ContentLength > maxImageBytes {
+			return "", "", nil, fmt.Errorf("pai image exceeds 50MB: url=%s", input)
+		}
+		data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
 		if err != nil {
 			return "", "", nil, err
+		}
+		if len(data) > maxImageBytes {
+			return "", "", nil, fmt.Errorf("pai image exceeds 50MB: url=%s", input)
 		}
 		contentType := resp.Header.Get("Content-Type")
 		filename := filepath.Base(resp.Request.URL.Path)
@@ -1051,7 +1059,10 @@ func uint64FromAny(v interface{}) (uint64, bool) {
 			return uint64(typed), true
 		}
 	case float64:
-		if typed >= 0 {
+		// JSON numbers are decoded as float64. Reject fractions, NaN/Inf and
+		// values outside uint64 instead of silently truncating an ID.
+		const maxUint64Exclusive = 18446744073709551616.0
+		if typed >= 0 && typed < maxUint64Exclusive && math.IsInf(typed, 0) == false && math.IsNaN(typed) == false && math.Trunc(typed) == typed {
 			return uint64(typed), true
 		}
 	case string:

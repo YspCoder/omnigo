@@ -10,7 +10,7 @@ import (
 // ExtractFunctionCalls extracts JSON function calls encapsulated within <function_call> tags.
 // It returns a slice of function call objects, each containing a name and arguments.
 func ExtractFunctionCalls(response string) ([]map[string]interface{}, error) {
-	functionCallRegex := regexp.MustCompile(`<function_call>(.*?)</function_call>`)
+	functionCallRegex := regexp.MustCompile(`(?s)<function_call>(.*?)</function_call>`)
 	matches := functionCallRegex.FindAllStringSubmatch(response, -1)
 
 	var functionCalls []map[string]interface{}
@@ -43,7 +43,7 @@ func CleanResponse(rawResponse string) (string, []string, error) {
 	var functionCalls []string
 
 	// Extract function calls
-	functionCallRegex := regexp.MustCompile(`<function_call>(.*?)</function_call>`)
+	functionCallRegex := regexp.MustCompile(`(?s)<function_call>(.*?)</function_call>`)
 	matches := functionCallRegex.FindAllStringSubmatchIndex(rawResponse, -1)
 
 	lastIndex := 0

@@ -152,6 +152,9 @@ func (r *Registry) GetProviderSpec(name string) (ProviderSpec, bool) {
 func (r *Registry) RegisterProviderSpec(name string, spec ProviderSpec) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.specs == nil {
+		r.specs = make(map[string]ProviderSpec)
+	}
 	spec.Name = name
 	r.specs[name] = spec
 }

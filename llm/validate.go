@@ -2,12 +2,17 @@
 package llm
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
+	"net/url"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/go-playground/validator/v10"
 )
@@ -264,26 +269,37 @@ func addValidationToSchema(schema map[string]interface{}, validateTag string) {
 
 		case "min":
 			if num, err := strconv.ParseFloat(value, 64); err == nil {
-				if schema["type"] == "array" {
+				switch schema["type"] {
+				case "array":
 					schema["minItems"] = int(num)
-				} else {
+				case "string":
+					schema["minLength"] = int(num)
+				default:
 					schema["minimum"] = num
 				}
 			}
 
 		case "max":
 			if num, err := strconv.ParseFloat(value, 64); err == nil {
-				if schema["type"] == "array" {
+				switch schema["type"] {
+				case "array":
 					schema["maxItems"] = int(num)
-				} else {
+				case "string":
+					schema["maxLength"] = int(num)
+				default:
 					schema["maximum"] = num
 				}
 			}
 
 		case "len":
 			if num, err := strconv.ParseInt(value, 10, 64); err == nil {
-				schema["minLength"] = num
-				schema["maxLength"] = num
+				if schema["type"] == "array" {
+					schema["minItems"] = num
+					schema["maxItems"] = num
+				} else {
+					schema["minLength"] = num
+					schema["maxLength"] = num
+				}
 			}
 
 		case "one_decimal":
@@ -382,7 +398,15 @@ func ValidateAgainstSchema(response string, schema interface{}) error {
 			return fmt.Errorf("failed to parse schema JSON bytes: %w", err)
 		}
 	case map[string]interface{}:
-		schemaMap = s
+		// Round-trip map schemas through JSON so values such as []string and
+		// integer literals have the same representation as decoded schemas.
+		schemaBytes, err := json.Marshal(s)
+		if err != nil {
+			return fmt.Errorf("failed to marshal schema: %w", err)
+		}
+		if err := json.Unmarshal(schemaBytes, &schemaMap); err != nil {
+			return fmt.Errorf("failed to parse schema: %w", err)
+		}
 	default:
 		// Try to marshal and unmarshal to ensure we have a proper object
 		schemaBytes, err := json.Marshal(schema)
@@ -411,9 +435,41 @@ func ValidateAgainstSchema(response string, schema interface{}) error {
 // Returns:
 //   - error: nil if validation passes, otherwise returns validation errors
 func validateJSONAgainstSchema(data interface{}, schema map[string]interface{}) error {
+	if schema == nil {
+		return fmt.Errorf("schema must be an object")
+	}
+
+	if enum, ok := schema["enum"]; ok {
+		if !schemaEnumContains(enum, data) {
+			return fmt.Errorf("value %v is not in enum", data)
+		}
+	}
+	if allOf, ok := schema["allOf"]; ok {
+		for i, raw := range schemaList(allOf) {
+			part, ok := raw.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("invalid allOf schema at index %d", i)
+			}
+			if err := validateJSONAgainstSchema(data, part); err != nil {
+				return err
+			}
+		}
+	}
+	if raw, ok := schema["not"]; ok {
+		part, ok := raw.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("invalid not schema")
+		}
+		if validateJSONAgainstSchema(data, part) == nil {
+			return fmt.Errorf("value matches not schema")
+		}
+	}
+
 	schemaType, ok := schema["type"].(string)
 	if !ok {
-		return fmt.Errorf("schema missing 'type' field")
+		// A schema used only as a constraint (for example a pattern inside
+		// allOf/not) is valid without a type; apply its constraints directly.
+		return validateSchemaConstraints(data, schema)
 	}
 
 	switch schemaType {
@@ -422,7 +478,7 @@ func validateJSONAgainstSchema(data interface{}, schema map[string]interface{}) 
 	case "array":
 		return validateArray(data, schema)
 	case "string", "number", "integer", "boolean":
-		return validatePrimitive(data, schemaType)
+		return validatePrimitive(data, schemaType, schema)
 	default:
 		return fmt.Errorf("unsupported schema type: %s", schemaType)
 	}
@@ -447,21 +503,29 @@ func validateObject(data interface{}, schema map[string]interface{}) error {
 	if !ok {
 		return fmt.Errorf("invalid 'properties' in schema")
 	}
+	if min, ok := schemaInteger(schema["minProperties"]); ok && len(dataMap) < min {
+		return fmt.Errorf("expected at least %d properties, got %d", min, len(dataMap))
+	}
+	if max, ok := schemaInteger(schema["maxProperties"]); ok && len(dataMap) > max {
+		return fmt.Errorf("expected at most %d properties, got %d", max, len(dataMap))
+	}
+	for _, key := range schemaStrings(schema["required"]) {
+		if _, exists := dataMap[key]; !exists {
+			return fmt.Errorf("missing required field: %s", key)
+		}
+	}
 
 	for key, propSchema := range properties {
 		propData, exists := dataMap[key]
 		if !exists {
-			if required, ok := schema["required"].([]interface{}); ok {
-				for _, req := range required {
-					if req.(string) == key {
-						return fmt.Errorf("missing required field: %s", key)
-					}
-				}
-			}
 			continue
 		}
 
-		if err := validateJSONAgainstSchema(propData, propSchema.(map[string]interface{})); err != nil {
+		propertySchema, ok := propSchema.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("invalid schema for field '%s'", key)
+		}
+		if err := validateJSONAgainstSchema(propData, propertySchema); err != nil {
 			return fmt.Errorf("invalid field '%s': %w", key, err)
 		}
 	}
@@ -483,10 +547,25 @@ func validateArray(data interface{}, schema map[string]interface{}) error {
 	if !ok {
 		return fmt.Errorf("expected array, got %T", data)
 	}
+	if min, ok := schemaInteger(schema["minItems"]); ok && len(dataSlice) < min {
+		return fmt.Errorf("expected at least %d items, got %d", min, len(dataSlice))
+	}
+	if max, ok := schemaInteger(schema["maxItems"]); ok && len(dataSlice) > max {
+		return fmt.Errorf("expected at most %d items, got %d", max, len(dataSlice))
+	}
+	if unique, ok := schema["uniqueItems"].(bool); ok && unique {
+		for i := range dataSlice {
+			for j := 0; j < i; j++ {
+				if jsonValuesEqual(dataSlice[i], dataSlice[j]) {
+					return fmt.Errorf("duplicate item at index %d", i)
+				}
+			}
+		}
+	}
 
-	items, ok := schema["items"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid 'items' in schema")
+	items, hasItems := schema["items"].(map[string]interface{})
+	if !hasItems {
+		return validateSchemaConstraints(data, schema)
 	}
 
 	for i, item := range dataSlice {
@@ -507,19 +586,31 @@ func validateArray(data interface{}, schema map[string]interface{}) error {
 //
 // Returns:
 //   - error: nil if validation passes, otherwise returns validation errors
-func validatePrimitive(data interface{}, expectedType string) error {
+func validatePrimitive(data interface{}, expectedType string, schema map[string]interface{}) error {
 	switch expectedType {
 	case "string":
-		if _, ok := data.(string); !ok {
+		value, ok := data.(string)
+		if !ok {
 			return fmt.Errorf("expected string, got %T", data)
 		}
+		if err := validateString(value, schema); err != nil {
+			return err
+		}
 	case "number":
-		if _, ok := data.(float64); !ok {
+		value, ok := data.(float64)
+		if !ok {
 			return fmt.Errorf("expected number, got %T", data)
 		}
+		if err := validateNumber(value, schema); err != nil {
+			return err
+		}
 	case "integer":
-		if _, ok := data.(float64); !ok {
+		value, ok := data.(float64)
+		if !ok || math.Trunc(value) != value {
 			return fmt.Errorf("expected integer, got %T", data)
+		}
+		if err := validateNumber(value, schema); err != nil {
+			return err
 		}
 	case "boolean":
 		if _, ok := data.(bool); !ok {
@@ -527,4 +618,157 @@ func validatePrimitive(data interface{}, expectedType string) error {
 		}
 	}
 	return nil
+}
+
+func validateSchemaConstraints(data interface{}, schema map[string]interface{}) error {
+	switch value := data.(type) {
+	case string:
+		return validateString(value, schema)
+	case float64:
+		return validateNumber(value, schema)
+	case []interface{}:
+		if min, ok := schemaInteger(schema["minItems"]); ok && len(value) < min {
+			return fmt.Errorf("expected at least %d items, got %d", min, len(value))
+		}
+		if max, ok := schemaInteger(schema["maxItems"]); ok && len(value) > max {
+			return fmt.Errorf("expected at most %d items, got %d", max, len(value))
+		}
+	}
+	return nil
+}
+
+func validateString(value string, schema map[string]interface{}) error {
+	length := utf8.RuneCountInString(value)
+	if min, ok := schemaInteger(schema["minLength"]); ok && length < min {
+		return fmt.Errorf("string length %d is less than minimum %d", length, min)
+	}
+	if max, ok := schemaInteger(schema["maxLength"]); ok && length > max {
+		return fmt.Errorf("string length %d exceeds maximum %d", length, max)
+	}
+	if pattern, ok := schema["pattern"].(string); ok {
+		expression, err := regexp.Compile(pattern)
+		if err != nil {
+			return fmt.Errorf("invalid pattern: %w", err)
+		}
+		if !expression.MatchString(value) {
+			return fmt.Errorf("string does not match pattern")
+		}
+	}
+	if format, ok := schema["format"].(string); ok {
+		switch format {
+		case "email":
+			if !strings.Contains(value, "@") {
+				return fmt.Errorf("invalid email")
+			}
+		case "uri":
+			parsed, err := url.ParseRequestURI(value)
+			if err != nil || parsed.Scheme == "" {
+				return fmt.Errorf("invalid URI")
+			}
+		case "date-time":
+			if _, err := time.Parse(time.RFC3339, value); err != nil {
+				return fmt.Errorf("invalid date-time")
+			}
+		}
+	}
+	return nil
+}
+
+func validateNumber(value float64, schema map[string]interface{}) error {
+	if min, ok := schemaFloat(schema["minimum"]); ok && value < min {
+		return fmt.Errorf("number %v is less than minimum %v", value, min)
+	}
+	if max, ok := schemaFloat(schema["maximum"]); ok && value > max {
+		return fmt.Errorf("number %v exceeds maximum %v", value, max)
+	}
+	if min, ok := schemaFloat(schema["exclusiveMinimum"]); ok && value <= min {
+		return fmt.Errorf("number %v is not greater than %v", value, min)
+	}
+	if max, ok := schemaFloat(schema["exclusiveMaximum"]); ok && value >= max {
+		return fmt.Errorf("number %v is not less than %v", value, max)
+	}
+	if multiple, ok := schemaFloat(schema["multipleOf"]); ok && multiple > 0 {
+		quotient := value / multiple
+		if math.Abs(quotient-math.Round(quotient)) > 1e-9 {
+			return fmt.Errorf("number %v is not a multiple of %v", value, multiple)
+		}
+	}
+	return nil
+}
+
+func schemaList(value interface{}) []interface{} {
+	switch typed := value.(type) {
+	case []interface{}:
+		return typed
+	case []map[string]interface{}:
+		out := make([]interface{}, len(typed))
+		for i := range typed {
+			out[i] = typed[i]
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func schemaStrings(value interface{}) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []interface{}:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if stringValue, ok := item.(string); ok {
+				out = append(out, stringValue)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func schemaInteger(value interface{}) (int, bool) {
+	number, ok := schemaFloat(value)
+	return int(number), ok && number >= 0 && math.Trunc(number) == number
+}
+
+func schemaFloat(value interface{}) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		number, err := typed.Float64()
+		return number, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func schemaEnumContains(raw interface{}, data interface{}) bool {
+	for _, candidate := range schemaList(raw) {
+		if jsonValuesEqual(candidate, data) {
+			return true
+		}
+	}
+	if values, ok := raw.([]string); ok {
+		for _, candidate := range values {
+			if candidate == data {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func jsonValuesEqual(left, right interface{}) bool {
+	leftBytes, leftErr := json.Marshal(left)
+	rightBytes, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && bytes.Equal(leftBytes, rightBytes)
 }

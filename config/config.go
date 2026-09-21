@@ -28,7 +28,7 @@ import (
 //   - LLM_TOP_P: Top-p sampling parameter (default: 0.9)
 //   - LLM_FREQUENCY_PENALTY: Token frequency penalty (default: 0.0)
 //   - LLM_PRESENCE_PENALTY: Token presence penalty (default: 0.0)
-//   - LLM_TIMEOUT: Request timeout duration (default: 30s)
+//   - LLM_TIMEOUT: Optional request timeout duration; unset means no client timeout
 //   - LLM_MAX_RETRIES: Maximum retry attempts (default: 3)
 //   - LLM_RETRY_DELAY: Delay between retries (default: 2s)
 //   - LLM_LOG_LEVEL: Logging verbosity (default: "WARN")
@@ -54,7 +54,7 @@ type Config struct {
 	TopP                  float64           `env:"LLM_TOP_P" envDefault:"0.9" validate:"gte=0,lte=1"`
 	FrequencyPenalty      float64           `env:"LLM_FREQUENCY_PENALTY" envDefault:"0.0"`
 	PresencePenalty       float64           `env:"LLM_PRESENCE_PENALTY" envDefault:"0.0"`
-	Timeout               time.Duration     `env:"LLM_TIMEOUT" envDefault:"30s" validate:"gte=0"`
+	Timeout               time.Duration     `env:"LLM_TIMEOUT" validate:"gte=0"`
 	MaxRetries            int               `env:"LLM_MAX_RETRIES" envDefault:"3" validate:"gte=0"`
 	RetryDelay            time.Duration     `env:"LLM_RETRY_DELAY" envDefault:"2s" validate:"gte=0"`
 	APIKeys               map[string]string `validate:"required,apikey"`
@@ -149,7 +149,6 @@ func NewConfig() *Config {
 		Temperature:  0.7,
 		TopP:         0.9,
 		MaxTokens:    300,
-		Timeout:      30 * time.Second,
 		MaxRetries:   3,
 		RetryDelay:   2 * time.Second,
 		APIKeys:      make(map[string]string),

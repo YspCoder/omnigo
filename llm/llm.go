@@ -140,22 +140,33 @@ func (l *LLMImpl) effectiveMediaRequest(request *dto.MediaRequest) *dto.MediaReq
 	if request == nil {
 		return &dto.MediaRequest{}
 	}
-	if l.config == nil || l.config.SystemPrompt == "" {
+	if l.config == nil {
 		return request
 	}
+	needsModel := request.Model == "" && l.config.Model != ""
+	needsSystemPrompt := l.config.SystemPrompt != ""
 	for _, message := range request.Messages {
 		if message.Role == "system" {
-			return request
+			needsSystemPrompt = false
+			break
 		}
+	}
+	if !needsModel && !needsSystemPrompt {
+		return request
 	}
 
 	cloned := *request
-	cloned.Messages = make([]dto.Message, 0, len(request.Messages)+1)
-	cloned.Messages = append(cloned.Messages, dto.Message{
-		Role:    "system",
-		Content: l.config.SystemPrompt,
-	})
-	cloned.Messages = append(cloned.Messages, request.Messages...)
+	if needsModel {
+		cloned.Model = l.config.Model
+	}
+	if needsSystemPrompt {
+		cloned.Messages = make([]dto.Message, 0, len(request.Messages)+1)
+		cloned.Messages = append(cloned.Messages, dto.Message{
+			Role:    "system",
+			Content: l.config.SystemPrompt,
+		})
+		cloned.Messages = append(cloned.Messages, request.Messages...)
+	}
 	return &cloned
 }
 
