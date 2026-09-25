@@ -59,6 +59,7 @@ type customAPIResponse struct {
 	URL        string          `json:"url"`
 	VideoURL   string          `json:"video_url"`
 	ResultURL  string          `json:"result_url"`
+	Usage      *dto.Usage      `json:"usage"`
 	Data       customAPIData   `json:"data"`
 	Code       interface{}     `json:"code"`
 	ErrorCode  interface{}     `json:"error_code"`
@@ -97,6 +98,7 @@ func (a *CustomAdaptor) Media(ctx context.Context, cfg *ProviderConfig, request 
 
 	result := out.result()
 	resultURL := firstNonEmptyString(result.URL, customFirstImageURL(result.Data.Images), result.VideoURL, result.ResultURL)
+	usage, _ := customResponseUsage(&out)
 	resp := &dto.MediaResponse{
 		ID:           customString(result.ID),
 		Object:       result.Object,
@@ -106,6 +108,7 @@ func (a *CustomAdaptor) Media(ctx context.Context, cfg *ProviderConfig, request 
 		TaskID:       firstNonEmptyString(result.TaskID, customString(result.ID)),
 		Status:       firstNonEmptyString(result.Status, result.State),
 		URL:          resultURL,
+		Usage:        usage,
 		ErrorCode:    result.errorCode(),
 		ErrorMessage: result.errorMessage(),
 	}
@@ -136,8 +139,10 @@ func (a *CustomAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, tas
 		videoURL = customJSONPathString(raw, path)
 	}
 	resultURL := firstNonEmptyString(result.URL, customFirstImageURL(result.Data.Images), videoURL, result.ResultURL)
+	usage := customTaskStatusUsage(&out)
 	return &dto.TaskStatusResponse{
 		RequestID: firstNonEmptyString(result.RequestID, out.RequestID),
+		Usage:     usage,
 		Output: dto.TaskStatusOutput{
 			TaskID:     firstNonEmptyString(result.TaskID, customString(result.ID), out.TaskID, customString(out.ID), taskID),
 			TaskStatus: firstNonEmptyString(result.Status, result.State),
@@ -750,6 +755,35 @@ func (r *customAPIResponse) errorMessage() string {
 		}
 	}
 	return fallback
+}
+
+// customResponseUsage finds usage in the current response or any nested data
+// response. Some custom APIs wrap the task payload in one or more data objects,
+// while others return usage at the top level.
+func customResponseUsage(r *customAPIResponse) (dto.Usage, bool) {
+	seen := make(map[*customAPIResponse]struct{})
+	for current := r; current != nil; current = current.Data.Response {
+		if _, exists := seen[current]; exists {
+			break
+		}
+		seen[current] = struct{}{}
+		if current.Usage != nil {
+			return *current.Usage, true
+		}
+	}
+	return dto.Usage{}, false
+}
+
+func customTaskStatusUsage(r *customAPIResponse) *dto.TaskStatusUsage {
+	usage, ok := customResponseUsage(r)
+	if !ok {
+		return nil
+	}
+	return &dto.TaskStatusUsage{
+		PromptTokens:     usage.PromptTokens,
+		CompletionTokens: usage.CompletionTokens,
+		TotalTokens:      usage.TotalTokens,
+	}
 }
 
 func customString(value interface{}) string {

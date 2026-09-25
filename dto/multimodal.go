@@ -216,11 +216,14 @@ type TaskStatusOutput struct {
 	Message       string `json:"message,omitempty"`
 }
 
-// TaskStatusUsage holds usage details for task status response.
+// TaskStatusUsage holds media and token usage details for task status response.
 type TaskStatusUsage struct {
-	VideoDuration int `json:"video_duration,omitempty"`
-	VideoCount    int `json:"video_count,omitempty"`
-	SR            int `json:"SR,omitempty"`
+	VideoDuration    int `json:"video_duration,omitempty"`
+	VideoCount       int `json:"video_count,omitempty"`
+	SR               int `json:"SR,omitempty"`
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
 }
 
 // TaskListResponse represents a provider task list response.
