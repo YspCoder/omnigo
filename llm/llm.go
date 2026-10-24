@@ -39,6 +39,7 @@ type LLMImpl struct {
 	relay        *relay.Relay
 	adaptor      adapter.Adaptor
 	adaptorCfg   *adapter.ProviderConfig
+	capabilities adapter.ProviderCapabilities
 }
 
 // GenerateOption is a function type for configuring generation behavior.
@@ -61,11 +62,12 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 	}
 
 	llmClient := &LLMImpl{
-		logger:  logger,
-		config:  cfg,
-		Options: make(map[string]interface{}),
-		relay:   relay.NewRelay(),
-		adaptor: adp,
+		logger:       logger,
+		config:       cfg,
+		Options:      make(map[string]interface{}),
+		relay:        relay.NewRelay(),
+		adaptor:      adp,
+		capabilities: spec.Capabilities,
 	}
 
 	llmClient.adaptorCfg = &adapter.ProviderConfig{
@@ -260,6 +262,9 @@ func (l *LLMImpl) Generate(ctx context.Context, prompt *Prompt, opts ...Generate
 
 // GenerateWithResponse produces text and preserves the raw unified provider response.
 func (l *LLMImpl) GenerateWithResponse(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (*dto.GenerateResponse, error) {
+	if err := l.requireOperation(adapter.OperationChat); err != nil {
+		return nil, err
+	}
 	prompt = l.effectivePrompt(prompt)
 
 	request := l.textRequest(prompt, false, l.generationOptions())
@@ -282,6 +287,9 @@ func (l *LLMImpl) GenerateWithResponse(ctx context.Context, prompt *Prompt, opts
 
 // Stream initiates a streaming text response through the unified request pipeline.
 func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOption) (dto.TokenStream, error) {
+	if err := l.requireOperation(adapter.OperationStream); err != nil {
+		return nil, err
+	}
 	prompt = l.effectivePrompt(prompt)
 
 	request := l.textRequest(prompt, true, l.generationOptions())
@@ -296,11 +304,17 @@ func (l *LLMImpl) Media(ctx context.Context, request *dto.MediaRequest) (*dto.Me
 		return nil, err
 	}
 	if request.Type == dto.MediaTypeText && !l.textMediaUsesProviderMedia(request) {
+		if err := l.requireOperation(adapter.OperationChat); err != nil {
+			return nil, err
+		}
 		resp, err := l.relay.Chat(ctx, l.adaptor, l.adaptorCfg, request)
 		if err != nil {
 			return nil, err
 		}
 		return resp, nil
+	}
+	if err := l.requireOperation(adapter.OperationMedia); err != nil {
+		return nil, err
 	}
 	return l.relay.Media(ctx, l.adaptor, l.adaptorCfg, request)
 }
@@ -312,9 +326,15 @@ func (l *LLMImpl) StreamMedia(ctx context.Context, request *dto.MediaRequest) (d
 		return nil, err
 	}
 	if request.Type == dto.MediaTypeText && !l.textMediaUsesProviderMedia(request) {
+		if err := l.requireOperation(adapter.OperationStream); err != nil {
+			return nil, err
+		}
 		cloned := *request
 		cloned.Stream = true
 		return l.relay.Stream(ctx, l.adaptor, nil, l.adaptorCfg, &cloned)
+	}
+	if err := l.requireOperation(adapter.OperationStreamMedia); err != nil {
+		return nil, err
 	}
 	return l.relay.StreamMedia(ctx, l.adaptor, l.adaptorCfg, request)
 }
@@ -326,11 +346,28 @@ func (l *LLMImpl) textMediaUsesProviderMedia(request *dto.MediaRequest) bool {
 
 // TaskStatus queries a provider task status.
 func (l *LLMImpl) TaskStatus(ctx context.Context, taskID string, query ...map[string]string) (*dto.TaskStatusResponse, error) {
+	if err := l.requireOperation(adapter.OperationTaskStatus); err != nil {
+		return nil, err
+	}
 	return l.relay.TaskStatus(ctx, l.adaptor, l.adaptorCfg, taskID, query...)
 }
 
 func (l *LLMImpl) ListTasks(ctx context.Context, query map[string]string) (*dto.TaskListResponse, error) {
+	if err := l.requireOperation(adapter.OperationListTasks); err != nil {
+		return nil, err
+	}
 	return l.relay.ListTasks(ctx, l.adaptor, l.adaptorCfg, query)
+}
+
+func (l *LLMImpl) requireOperation(operation adapter.Operation) error {
+	if l.capabilities.Supports(operation) {
+		return nil
+	}
+	provider := ""
+	if l.adaptorCfg != nil {
+		provider = l.adaptorCfg.Name
+	}
+	return &adapter.UnsupportedOperationError{Provider: provider, Operation: operation}
 }
 
 func toDTOMessages(prompt *Prompt) []dto.Message {

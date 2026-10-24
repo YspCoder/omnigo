@@ -61,3 +61,52 @@ type Adaptor interface {
 type MediaRequestRouter interface {
 	UsesMediaRequest(request *dto.MediaRequest) bool
 }
+
+// Operation identifies a public provider operation.
+type Operation string
+
+const (
+	OperationChat        Operation = "chat"
+	OperationStream      Operation = "stream"
+	OperationMedia       Operation = "media"
+	OperationStreamMedia Operation = "stream_media"
+	OperationTaskStatus  Operation = "task_status"
+	OperationListTasks   Operation = "list_tasks"
+)
+
+// ProviderCapabilities describes the operation entry points implemented by a
+// provider. Declared=false keeps custom registry entries open for legacy
+// adaptors that do not publish capability metadata.
+type ProviderCapabilities struct {
+	Declared    bool
+	Chat        bool
+	Stream      bool
+	Media       bool
+	StreamMedia bool
+	TaskStatus  bool
+	ListTasks   bool
+}
+
+// Supports reports whether an operation is allowed by the declaration.
+// Undeclared capabilities are treated as unknown and therefore allowed.
+func (c ProviderCapabilities) Supports(operation Operation) bool {
+	if !c.Declared {
+		return true
+	}
+	switch operation {
+	case OperationChat:
+		return c.Chat
+	case OperationStream:
+		return c.Stream
+	case OperationMedia:
+		return c.Media
+	case OperationStreamMedia:
+		return c.StreamMedia
+	case OperationTaskStatus:
+		return c.TaskStatus
+	case OperationListTasks:
+		return c.ListTasks
+	default:
+		return false
+	}
+}

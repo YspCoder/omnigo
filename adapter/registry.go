@@ -20,7 +20,20 @@ type ProviderSpec struct {
 	Name           string
 	Type           ProviderType
 	Endpoint       string
+	Capabilities   ProviderCapabilities
 	AdaptorFactory func() Adaptor
+}
+
+func declaredCapabilities(chat, stream, media, streamMedia, taskStatus, listTasks bool) ProviderCapabilities {
+	return ProviderCapabilities{
+		Declared:    true,
+		Chat:        chat,
+		Stream:      stream,
+		Media:       media,
+		StreamMedia: streamMedia,
+		TaskStatus:  taskStatus,
+		ListTasks:   listTasks,
+	}
 }
 
 // Registry manages adaptor registration.
@@ -37,88 +50,99 @@ func NewRegistry(providerNames ...string) *Registry {
 
 	known := map[string]ProviderSpec{
 		"openai": {
-			Name:     "openai",
-			Type:     TypeOpenAI,
-			Endpoint: "https://api.openai.com/v1",
+			Name:         "openai",
+			Type:         TypeOpenAI,
+			Endpoint:     "https://api.openai.com/v1",
+			Capabilities: declaredCapabilities(true, true, true, false, true, false),
 			AdaptorFactory: func() Adaptor {
 				return &OpenAIAdaptor{}
 			},
 		},
 		"groq": {
-			Name:     "groq",
-			Type:     TypeOpenAI,
-			Endpoint: "https://api.groq.com/openai/v1",
+			Name:         "groq",
+			Type:         TypeOpenAI,
+			Endpoint:     "https://api.groq.com/openai/v1",
+			Capabilities: declaredCapabilities(true, true, true, false, true, false),
 			AdaptorFactory: func() Adaptor {
 				return &OpenAIAdaptor{}
 			},
 		},
 		"moonshot": {
-			Name:     "moonshot",
-			Type:     TypeOpenAI,
-			Endpoint: "https://api.moonshot.cn/v1",
+			Name:         "moonshot",
+			Type:         TypeOpenAI,
+			Endpoint:     "https://api.moonshot.cn/v1",
+			Capabilities: declaredCapabilities(true, true, true, false, true, false),
 			AdaptorFactory: func() Adaptor {
 				return &OpenAIAdaptor{}
 			},
 		},
 		"anthropic": {
-			Name:     "anthropic",
-			Type:     TypeCustom,
-			Endpoint: "https://api.anthropic.com/v1",
+			Name:         "anthropic",
+			Type:         TypeCustom,
+			Endpoint:     "https://api.anthropic.com/v1",
+			Capabilities: declaredCapabilities(true, false, false, false, false, false),
 			AdaptorFactory: func() Adaptor {
 				return &AnthropicAdaptor{}
 			},
 		},
 		"ali": {
-			Name:     "ali",
-			Type:     TypeAliAI,
-			Endpoint: "https://dashscope.aliyuncs.com",
+			Name:         "ali",
+			Type:         TypeAliAI,
+			Endpoint:     "https://dashscope.aliyuncs.com",
+			Capabilities: declaredCapabilities(true, true, true, true, true, true),
 			AdaptorFactory: func() Adaptor {
 				return &AliAdaptor{}
 			},
 		},
 		"google": {
-			Name:     "google",
-			Type:     TypeCustom,
-			Endpoint: "https://generativelanguage.googleapis.com",
+			Name:         "google",
+			Type:         TypeCustom,
+			Endpoint:     "https://generativelanguage.googleapis.com",
+			Capabilities: declaredCapabilities(true, true, true, false, true, false),
 			AdaptorFactory: func() Adaptor {
 				return &GoogleAdaptor{}
 			},
 		},
 		"ark": {
-			Name:     "ark",
-			Type:     TypeCustom,
-			Endpoint: "https://ark.cn-beijing.volces.com/api/v3",
+			Name:         "ark",
+			Type:         TypeCustom,
+			Endpoint:     "https://ark.cn-beijing.volces.com/api/v3",
+			Capabilities: declaredCapabilities(true, true, true, true, true, false),
 			AdaptorFactory: func() Adaptor {
 				return &ArkAdaptor{}
 			},
 		},
 		"vidu": {
-			Name:     "vidu",
-			Type:     TypeCustom,
-			Endpoint: "https://api.vidu.cn",
+			Name:         "vidu",
+			Type:         TypeCustom,
+			Endpoint:     "https://api.vidu.cn",
+			Capabilities: declaredCapabilities(false, false, true, true, true, true),
 			AdaptorFactory: func() Adaptor {
 				return &ViduAdaptor{}
 			},
 		},
 		"kling": {
-			Name:     "kling",
-			Type:     TypeCustom,
-			Endpoint: "https://api-beijing.klingai.com",
+			Name:         "kling",
+			Type:         TypeCustom,
+			Endpoint:     "https://api-beijing.klingai.com",
+			Capabilities: declaredCapabilities(false, false, true, true, true, true),
 			AdaptorFactory: func() Adaptor {
 				return &KlingAdaptor{}
 			},
 		},
 		"pai": {
-			Name:     "pai",
-			Type:     TypeCustom,
-			Endpoint: "https://app-api.pixverseai.cn",
+			Name:         "pai",
+			Type:         TypeCustom,
+			Endpoint:     "https://app-api.pixverseai.cn",
+			Capabilities: declaredCapabilities(false, false, true, true, true, true),
 			AdaptorFactory: func() Adaptor {
 				return &PaiAdaptor{}
 			},
 		},
 		"custom": {
-			Name: "custom",
-			Type: TypeCustom,
+			Name:         "custom",
+			Type:         TypeCustom,
+			Capabilities: declaredCapabilities(false, false, true, false, true, false),
 			AdaptorFactory: func() Adaptor {
 				return &CustomAdaptor{}
 			},
