@@ -183,7 +183,7 @@ func (a *ViduAdaptor) StreamMedia(ctx context.Context, cfg *ProviderConfig, r *d
 
 func (a *ViduAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, taskID string, _ ...map[string]string) (*dto.TaskStatusResponse, error) {
 	var out viduTaskResponse
-	if err := a.doJSON(ctx, cfg, http.MethodGet, "/ent/v2/tasks/"+taskID+"/creations", nil, &out); err != nil {
+	if err := a.doJSON(ctx, cfg, http.MethodGet, "/ent/v2/tasks/"+url.PathEscape(taskID)+"/creations", nil, &out); err != nil {
 		return nil, err
 	}
 
@@ -475,11 +475,26 @@ func (a *ViduAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[string
 		mergeExtraPayload(payload, r.Extra, consumed)
 		return payload, nil
 	case viduModeReference:
-		subjects := a.collectSubjects(r)
-		if len(subjects) == 0 {
-			return nil, fmt.Errorf("vidu reference-to-video requires subjects")
+		directReferences := false
+		switch strings.ToLower(strings.TrimSpace(r.Model)) {
+		case "viduq2-pro", "viduq3", "viduq3-mix", "viduq3-ad", "viduq3-drama", "viduq4-preview":
+			directReferences = true
 		}
-		payload["subjects"] = subjects
+		if subjects := r.Extra["subjects"]; subjects != nil {
+			payload["subjects"] = subjects
+		} else if directReferences {
+			if images := a.collectImages(r); len(images) > 0 {
+				payload["images"] = images
+			} else if !hasAnyExtraKey(r.Extra, "videos", "sounds") {
+				return nil, fmt.Errorf("vidu reference-to-video requires subjects or reference media")
+			}
+		} else {
+			subjects := a.collectSubjects(r)
+			if len(subjects) == 0 {
+				return nil, fmt.Errorf("vidu reference-to-video requires subjects")
+			}
+			payload["subjects"] = subjects
+		}
 		consumed["image"] = struct{}{}
 		consumed["images"] = struct{}{}
 		consumed["subjects"] = struct{}{}
@@ -633,13 +648,17 @@ func (a *ViduAdaptor) doJSON(ctx context.Context, cfg *ProviderConfig, method, p
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	req.Header.Set("Authorization", "Token "+cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 	for key, value := range cfg.Headers {
 		req.Header.Set(key, value)
 	}
 
-	resp, err := viduHTTPClient(cfg).Do(req)
+	client, err := providerHTTPClient(cfg)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -704,18 +723,10 @@ func viduBaseURL(cfg *ProviderConfig) string {
 	return "https://api.vidu.cn"
 }
 
-func viduHTTPClient(cfg *ProviderConfig) *http.Client {
-	if cfg != nil && cfg.HTTPClient != nil {
-		return cfg.HTTPClient
-	}
-	client := &http.Client{}
-	if cfg != nil && cfg.Timeout > 0 {
-		client.Timeout = cfg.Timeout
-	}
-	return client
-}
-
 func stringifyViduCode(v interface{}) string {
+	if v == nil {
+		return ""
+	}
 	return strings.TrimSpace(fmt.Sprint(v))
 }
 

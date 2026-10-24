@@ -24,11 +24,11 @@ func NormalizeTaskStatus(value string) (string, error) {
 	normalized = strings.NewReplacer("-", "_", " ", "_").Replace(normalized)
 
 	switch normalized {
-	case "queued", "pending", "submitted", "not_start":
+	case "queued", "pending", "submitted", "not_start", "created", "queueing":
 		return TaskStatusQueued, nil
 	case "in_progress", "running", "processing":
 		return TaskStatusInProgress, nil
-	case "succeeded", "success", "completed":
+	case "succeeded", "succeed", "success", "completed":
 		return TaskStatusSucceeded, nil
 	case "failed", "failure", "error", "rejected", "cancelled", "canceled":
 		return TaskStatusFailed, nil

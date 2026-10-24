@@ -293,7 +293,11 @@ func (a *NewAPIAssetAdaptor) doJSON(ctx context.Context, cfg *ProviderConfig, me
 		}
 	}
 
-	resp, err := newAPIAssetHTTPClient(cfg).Do(req)
+	client, err := providerHTTPClient(cfg)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("call asset API: %w", err)
 	}
@@ -326,17 +330,6 @@ func newAPIAssetEndpoint(cfg *ProviderConfig, path string) (string, error) {
 	endpoint.RawQuery = ""
 	endpoint.Fragment = ""
 	return endpoint.String(), nil
-}
-
-func newAPIAssetHTTPClient(cfg *ProviderConfig) *http.Client {
-	if cfg != nil && cfg.HTTPClient != nil {
-		return cfg.HTTPClient
-	}
-	client := &http.Client{}
-	if cfg != nil && cfg.Timeout > 0 {
-		client.Timeout = cfg.Timeout
-	}
-	return client
 }
 
 func newAPIAssetResponseError(statusCode int, raw []byte) error {

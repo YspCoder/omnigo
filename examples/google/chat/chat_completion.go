@@ -14,11 +14,15 @@ func main() {
 	if apiKey == "" {
 		log.Fatal("GOOGLE_API_KEY is not set")
 	}
+	model := os.Getenv("GOOGLE_MODEL")
+	if model == "" {
+		log.Fatal("GOOGLE_MODEL must name a model available to your account")
+	}
 
 	// Create LLM client for Google Gemini
 	llm, err := omnigo.NewLLM(
 		omnigo.SetProvider("google"),
-		omnigo.SetModel("gemini-2.0-flash-exp"), // Supporting the latest models
+		omnigo.SetModel(model),
 		omnigo.SetAPIKey(apiKey),
 	)
 	if err != nil {

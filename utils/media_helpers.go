@@ -151,7 +151,10 @@ func MediaPromptWithSystem(request *dto.MediaRequest) string {
 		return ""
 	}
 
-	prompt := FirstUserMessage(request.Messages)
+	prompt := request.Prompt
+	if prompt == "" {
+		prompt = FirstUserMessage(request.Messages)
+	}
 	systemPrompt := FirstSystemMessage(request.Messages)
 	if systemPrompt == "" {
 		return prompt

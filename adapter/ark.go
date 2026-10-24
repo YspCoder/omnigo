@@ -618,8 +618,8 @@ func stringValue(v interface{}) string {
 
 func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
 	req := model.GenerateImagesRequest{Model: r.Model, Prompt: utils.MediaPromptWithSystem(r)}
-	if r.Size != "" {
-		req.Size = &r.Resolution
+	if size := firstNonEmptyString(r.Resolution, r.Size); size != "" {
+		req.Size = &size
 	}
 	if r.Seed != 0 {
 		req.Seed = volcengine.Int64(int64(r.Seed))
@@ -669,7 +669,17 @@ func (a *ArkAdaptor) toImgReq(r *dto.MediaRequest) model.GenerateImagesRequest {
 func (a *ArkAdaptor) toVidReq(r *dto.MediaRequest) model.CreateContentGenerationTaskRequest {
 	content := make([]*model.CreateContentGenerationContentItem, 0, len(r.Messages))
 	customContent := make([]map[string]interface{}, 0, len(r.Messages))
-	for _, message := range r.Messages {
+	messages := r.Messages
+	if strings.TrimSpace(r.Prompt) != "" {
+		messages = make([]dto.Message, 0, len(r.Messages)+1)
+		for _, message := range r.Messages {
+			if message.Role != "user" {
+				messages = append(messages, message)
+			}
+		}
+		messages = append(messages, dto.Message{Role: "user", Content: r.Prompt})
+	}
+	for _, message := range messages {
 		text, ok := messageContentText(message.Content)
 		if !ok || strings.TrimSpace(text) == "" {
 			continue

@@ -71,20 +71,10 @@ func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, reques
 		return nil, err
 	}
 
-	params := openai.ChatCompletionNewParams{
-		Model:    request.Model,
-		Messages: toOpenAIMessages(request.Messages),
-	}
-	if err := applyOpenAIChatTools(&params, request); err != nil {
+	params, err := openAIChatParams(request)
+	if err != nil {
 		return nil, err
 	}
-	if request.Temperature != 0 {
-		params.Temperature = openai.Float(request.Temperature)
-	}
-	if request.MaxTokens != 0 {
-		params.MaxTokens = openai.Int(int64(request.MaxTokens))
-	}
-	params.SetExtraFields(request.Options)
 
 	resp, err := client.Chat.Completions.New(ctx, params)
 	if err != nil {
@@ -307,7 +297,7 @@ func openAIUsesResponsesAPI(config *ProviderConfig, messages []dto.Message) (boo
 		return false, fmt.Errorf("unsupported openai chat protocol %q", protocol)
 	}
 	for _, message := range messages {
-		if message.FileURL != "" || len(openAIMessageImageURLs(message)) > 0 {
+		if message.FileURL != "" {
 			return true, nil
 		}
 	}
@@ -425,7 +415,32 @@ func openAIResponsesToolChoice(value interface{}) interface{} {
 	if mode, ok := openAIToolChoiceMode(value); ok {
 		return mode
 	}
+	if choice, ok := value.(map[string]interface{}); ok && choice["type"] == "function" {
+		if function, ok := choice["function"].(map[string]interface{}); ok {
+			return map[string]interface{}{"type": "function", "name": function["name"]}
+		}
+	}
 	return value
+}
+
+func openAIChatParams(request *dto.MediaRequest) (openai.ChatCompletionNewParams, error) {
+	params := openai.ChatCompletionNewParams{
+		Model:    request.Model,
+		Messages: toOpenAIMessages(request.Messages),
+	}
+	if err := applyOpenAIChatTools(&params, request); err != nil {
+		return params, err
+	}
+	if request.Temperature != 0 {
+		params.Temperature = openai.Float(request.Temperature)
+	}
+	_, hasMaxTokens := request.Options["max_tokens"]
+	_, hasMaxCompletionTokens := request.Options["max_completion_tokens"]
+	if request.MaxTokens != 0 && !hasMaxTokens && !hasMaxCompletionTokens {
+		params.MaxTokens = openai.Int(int64(request.MaxTokens))
+	}
+	params.SetExtraFields(request.Options)
+	return params, nil
 }
 
 func toOpenAIMessages(messages []dto.Message) []openai.ChatCompletionMessageParamUnion {
@@ -571,8 +586,12 @@ func openAIMessageImageURLs(message dto.Message) []string {
 
 func openAIMessageTextContent(message dto.Message) string {
 	switch message.Content.(type) {
-	case nil, []interface{}, []string, map[string]interface{}, map[string]string:
+	case nil, []string:
 		return ""
+	case []interface{}, []map[string]interface{}, map[string]interface{}:
+		return arkContentText(message.Content)
+	case map[string]string:
+		return message.Content.(map[string]string)["text"]
 	default:
 		text := strings.TrimSpace(fmt.Sprint(message.Content))
 		if text == "" || text == "<nil>" {
@@ -584,7 +603,7 @@ func openAIMessageTextContent(message dto.Message) string {
 
 func openAIContentImageURLs(content interface{}) []string {
 	switch content.(type) {
-	case []interface{}, []string, map[string]interface{}, map[string]string:
+	case []interface{}, []string, []map[string]interface{}, []map[string]string, map[string]interface{}, map[string]string:
 		return utils.ContentImageURLs(content)
 	default:
 		return nil
@@ -664,21 +683,11 @@ func (a *OpenAIAdaptor) Stream(ctx context.Context, config *ProviderConfig, requ
 		return nil, err
 	}
 
-	params := openai.ChatCompletionNewParams{
-		Model:    request.Model,
-		Messages: toOpenAIMessages(request.Messages),
-	}
-	if err := applyOpenAIChatTools(&params, request); err != nil {
+	params, err := openAIChatParams(request)
+	if err != nil {
 		return nil, err
 	}
-	if request.Temperature != 0 {
-		params.Temperature = openai.Float(request.Temperature)
-	}
-	if request.MaxTokens != 0 {
-		params.MaxTokens = openai.Int(int64(request.MaxTokens))
-	}
 	params.StreamOptions = openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(true)}
-	params.SetExtraFields(request.Options)
 
 	stream := client.Chat.Completions.NewStreaming(ctx, params)
 	if err := stream.Err(); err != nil {

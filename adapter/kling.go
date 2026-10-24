@@ -269,12 +269,24 @@ func (a *KlingAdaptor) ListTasks(ctx context.Context, cfg *ProviderConfig, query
 	}
 
 	items := make([]dto.TaskListItem, 0)
+	var firstErr error
+	succeeded := false
 	for _, mode := range klingTaskModes {
 		resp, err := a.listTasksForMode(ctx, cfg, mode, query)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
+		succeeded = true
 		items = append(items, resp.Items...)
+	}
+	if !succeeded && firstErr != nil {
+		return nil, firstErr
 	}
 	return &dto.TaskListResponse{
 		Items: items,
@@ -602,6 +614,9 @@ func (a *KlingAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[strin
 		"task_type": {},
 		"endpoint":  {},
 	})
+	if quality := utils.GetStringExtra(r.Extra, "mode"); quality != "" && normalizeKlingMode(quality) == "" {
+		payload["mode"] = quality
+	}
 
 	prompt := strings.TrimSpace(utils.MediaPromptWithSystem(r))
 	if explicitPrompt := utils.GetStringExtra(r.Extra, "prompt"); explicitPrompt != "" {
@@ -647,6 +662,9 @@ func (a *KlingAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[strin
 			if _, ok := payload["duration"]; !ok {
 				payload["duration"] = r.Duration
 			}
+		}
+		if duration, ok := payload["duration"]; ok {
+			payload["duration"] = fmt.Sprint(duration)
 		}
 	case klingModeTextToAudio:
 		if prompt != "" {
@@ -743,7 +761,11 @@ func (a *KlingAdaptor) doJSONWithStatus(ctx context.Context, cfg *ProviderConfig
 		req.Header.Set(key, value)
 	}
 
-	resp, err := klingHTTPClient(cfg).Do(req)
+	client, err := providerHTTPClient(cfg)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -763,6 +785,9 @@ func (a *KlingAdaptor) doJSONWithStatus(ctx context.Context, cfg *ProviderConfig
 	if out != nil && len(raw) > 0 {
 		if err := json.Unmarshal(raw, out); err != nil {
 			return resp.StatusCode, err
+		}
+		if env, ok := out.(*klingEnvelope); ok && env.Code != nil && fmt.Sprint(env.Code) != "0" {
+			return resp.StatusCode, fmt.Errorf("kling api error: code=%v message=%s request_id=%s", env.Code, env.Message, env.RequestID)
 		}
 	}
 	return resp.StatusCode, nil
@@ -906,17 +931,6 @@ func klingBaseURL(cfg *ProviderConfig) string {
 		return cfg.BaseURL
 	}
 	return "https://api-beijing.klingai.com"
-}
-
-func klingHTTPClient(cfg *ProviderConfig) *http.Client {
-	if cfg != nil && cfg.HTTPClient != nil {
-		return cfg.HTTPClient
-	}
-	client := &http.Client{}
-	if cfg != nil && cfg.Timeout > 0 {
-		client.Timeout = cfg.Timeout
-	}
-	return client
 }
 
 func buildKlingQuery(query map[string]string) string {

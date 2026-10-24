@@ -24,7 +24,7 @@
 ## 特性
 
 - **统一调用 API**：屏蔽不同服务商的请求格式差异。
-- **可扩展的 Provider Registry**：默认提供 OpenAI 与 Ali（DashScope），支持自定义扩展。
+- **可扩展的 Provider Registry**：内置多家文本、图片、视频服务商，支持自定义扩展。
 - **流式与非流式统一处理**：一套接口支持 streaming 与非 streaming。
 - **结构化输出与校验**：支持 JSON Schema 校验与提示词结构化。
 - **可配置性强**：支持环境变量加载 + 代码选项式配置。
@@ -35,20 +35,26 @@
 当前内置 Provider Spec（可扩展）：
 
 - OpenAI (`openai`)
+- Groq (`groq`，OpenAI 兼容协议)
+- Moonshot / Kimi (`moonshot`，OpenAI 兼容协议)
+- Anthropic / Claude (`anthropic`)
 - Ali / DashScope (`ali`)
-- Jimeng / Volcengine (`jimeng`)
+- Volcengine Ark / 火山方舟 (`ark`)
 - Google / Gemini (`google`)
 - Vidu (`vidu`)
 - Kling AI (`kling`)
 - Pai / PixVerse (`pai`)
 - 第三方完整 URL (`custom`)
+- NewAPI 素材库（`newapi`）
 - NewAPI Ark 素材库（`newapi_ark`）
 
 > 说明：LLM 服务商名称传给 `SetProvider(...)`；素材库服务商名称传给 `NewAssetClient(...)`。
 
+模型名称由调用方指定，可用模型以账号所在区域及官方控制台为准。`jimeng` 未注册，火山视觉的即梦 `req_key` / AK-SK 协议与 `ark` 协议不同，不能互换。逐项检查结果与官方来源见 [服务商检查记录](docs/provider-review.md)。
+
 ### NewAPI Ark 素材库
 
-素材库统一通过 `NewAssetClient(...)` 创建，根据 `AssetProvider` 选择具体协议。NewAPI Ark 调用方需要显式配置完整的素材库 endpoint。
+素材库统一通过 `NewAssetClient(...)` 创建，根据 `AssetProvider` 选择具体协议。NewAPI Ark 调用方需要显式配置网关 BaseURL，也兼容以 `/v1/ark/asset` 结尾的完整 Action endpoint。
 
 ```go
 client, err := omnigo.NewAssetClient(
@@ -83,7 +89,7 @@ if err != nil {
 detail, err := client.GetAsset(context.Background(), asset.CloudAssetID)
 ```
 
-NewAPI Ark 只使用 API Key Bearer 鉴权，`BaseURL` 为必填项。`Version=2024-01-01`、`Content-Type=application/json` 及各方法对应的 Action 均已内置。其字符串资源 ID 分别映射到统一结果的 `CloudGroupID` 和 `CloudAssetID`。创建素材只登记公网 URL，不支持 Base64 或 multipart 文件上传。
+NewAPI Ark 使用 API Key Bearer 鉴权，`BaseURL` 为必填项。素材组走 `/v1/ark/asset` Action 接口，内置 `Version=2024-01-01`；素材走 `/v1/assets` REST 接口，创建使用 `/v1/assets/upload`。其字符串资源 ID 分别映射到统一结果的 `CloudGroupID` 和 `CloudAssetID`。创建素材将 `Purpose`（未设置时使用 `AssetName`）映射为 `purpose`，只登记公网 URL，不支持 Base64 或 multipart 文件上传。
 
 ### Kling AI 示例
 
@@ -97,8 +103,9 @@ videoReq := &dto.MediaRequest{
         {Role: "user", Content: "一只可爱的小兔子，戴着眼镜，坐在桌边，看报纸"},
     },
     Extra: map[string]interface{}{
-        "mode":  "text-to-video",
-        "sound": "on",
+        "task_type": "text-to-video",
+        "mode":      "pro",
+        "sound":     "on",
     },
 }
 
@@ -156,7 +163,7 @@ llm, err := omnigo.NewLLM(
 - `mask-selection` 是同步辅助接口，当前会把官方返回 JSON 放到 `MediaResponse.Text`，并把 `keyframe_url` 映射到 `MediaResponse.URL`。
 - `swap` 支持 `extra.auto_mask_selection=true`，会先调用 `mask-selection` 自动补 `keyframe_id` 和首个 `mask_id`。
 - `ListTasks(..., map[string]string{\"mode\": \"restyle\"})` 现在会返回 Pai 官方 `restyle/list` 中的可用风格项。
-- `modify` 已接入，但官方文档目前仍标记为 `developing`，建议优先在真实环境做一次验证后再在生产路径使用。
+- `modify` 已接入，官方文档已标记为 `released`；关键帧参数使用 `extra.keyframe_id`。
 
 ### 第三方完整 URL 示例
 
@@ -207,9 +214,9 @@ case dto.TaskStatusFailed:
 }
 ```
 
-`NormalizeTaskStatus` 会将 `pending/submitted/not_start` 映射为 `queued`，将 `running/processing/in_progress` 映射为 `in_progress`，将 `success/completed` 映射为 `succeeded`，并将 `failure/error/rejected/cancelled/canceled` 映射为 `failed`。也可直接使用 `dto.IsPending`、`dto.IsSucceeded`、`dto.IsFailed`。未知状态会保留原始值，并返回可通过 `errors.Is(err, dto.ErrUnsupportedTaskStatus)` 判断的兼容性错误。
+`NormalizeTaskStatus` 会将 `pending/submitted/not_start/created/queueing` 映射为 `queued`，将 `running/processing/in_progress` 映射为 `in_progress`，将 `succeed/success/completed` 映射为 `succeeded`，并将 `failure/error/rejected/cancelled/canceled` 映射为 `failed`。也可直接使用 `dto.IsPending`、`dto.IsSucceeded`、`dto.IsFailed`。未知状态会保留原始值，并返回可通过 `errors.Is(err, dto.ErrUnsupportedTaskStatus)` 判断的兼容性错误。
 
-`TaskStatus` 默认查询 `SetEndpoint` 后追加 `/{task_id}` 的地址。查询路径不符合该规则时，传入包含 `{task_id}` 的完整 URL 模板：
+`TaskStatus` 优先使用 `SetPollingURL`，未设置时查询 `SetEndpoint` 后追加 `/{task_id}` 的地址。轮询地址支持 `{task_id}` 占位符；也可以在单次查询中传入完整 URL 模板覆盖配置：
 
 ```go
 status, err := client.TaskStatus(context.Background(), resp.TaskID, map[string]string{
@@ -806,9 +813,9 @@ func main() {
 }
 ```
 
-### 视频生成示例 (Jimeng / 即梦)
+### 视频生成示例 (Volcengine Ark / 火山方舟)
 
-即梦 (Jimeng) 适配器支持动态模型映射。您可以通过 `SetModel` 指定模型编号（如 `jimeng_ti2v_v30_pro`），或在 `Extra` 中通过 `req_key` 覆盖。
+使用 `ark` 调用方舟视频任务 API。将 `ARK_VIDEO_MODEL` 设置为控制台中已开通的视频模型或推理接入点 ID。完整示例见 `examples/ark/video/generate_video.go`。
 
 ```go
 package main
@@ -823,14 +830,18 @@ import (
 )
 
 func main() {
-    apiKey := os.Getenv("JIMENG_API_KEY") // 火山引擎 API Key
+    apiKey := os.Getenv("ARK_API_KEY")
     if apiKey == "" {
-        log.Fatal("JIMENG_API_KEY is not set")
+        log.Fatal("ARK_API_KEY is not set")
+    }
+    model := os.Getenv("ARK_VIDEO_MODEL")
+    if model == "" {
+        log.Fatal("ARK_VIDEO_MODEL is not set")
     }
 
     llm, err := omnigo.NewLLM(
-        omnigo.SetProvider("jimeng"),
-        omnigo.SetModel("jimeng_ti2v_v30_pro"), // 指定即梦模型编号
+        omnigo.SetProvider("ark"),
+        omnigo.SetModel(model),
         omnigo.SetAPIKey(apiKey),
     )
     if err != nil {
@@ -841,7 +852,7 @@ func main() {
         Type:     dto.MediaTypeVideo,
         Messages: []dto.Message{{Role: "user", Content: "赛博朋克风格的白兔执行官在指挥中心，全息屏闪烁"}},
         Extra: map[string]interface{}{
-            "image_url": "https://example.com/character.png", // 可选的首帧图
+            "image": "https://example.com/character.png", // 可选的首帧图
         },
     }
 
@@ -1016,7 +1027,7 @@ log.Println("total:", tasks.Total, "items:", len(tasks.Items))
 
 ### 文本生成示例 (Google / Gemini)
 
-Google 适配器支持 Gemini 全系列模型。它采用了与 `google.golang.org/genai` (BackendGeminiAPI) 兼容的 REST 协议。
+Google 适配器使用 `google.golang.org/genai` 的 Gemini API 后端。聊天、Imagen 图像与 Veo 视频分别走对应接口；需要独立协议的能力应另行核对。请通过 `GOOGLE_MODEL` 指定账号可用的 Gemini 模型。
 
 ```go
 package main
@@ -1038,7 +1049,7 @@ func main() {
 
     llm, err := omnigo.NewLLM(
         omnigo.SetProvider("google"),
-        omnigo.SetModel("gemini-2.0-flash-exp"), // 指定模型名称
+        omnigo.SetModel(os.Getenv("GOOGLE_MODEL")),
         omnigo.SetAPIKey(apiKey),
     )
     if err != nil {
@@ -1086,7 +1097,7 @@ func main() {
 
     llm, err := omnigo.NewLLM(
         omnigo.SetProvider("google"),
-        omnigo.SetModel("imagen-3.0-generate-001"), // 指定视觉模型
+        omnigo.SetModel(os.Getenv("GOOGLE_IMAGE_MODEL")), // 指定可用的 Imagen 或 Gemini 图像模型
         omnigo.SetAPIKey(apiKey),
     )
     if err != nil {
@@ -1112,52 +1123,9 @@ func main() {
 }
 ```
 
-### 视频生成（示例）
+### 视频生成支持范围
 
-```go
-package main
-
-import (
-    "context"
-    "log"
-    "os"
-
-    "github.com/YspCoder/omnigo"
-    "github.com/YspCoder/omnigo/dto"
-)
-
-func main() {
-    apiKey := os.Getenv("OPENAI_API_KEY")
-    if apiKey == "" {
-        log.Fatal("OPENAI_API_KEY is not set")
-    }
-
-    llm, err := omnigo.NewLLM(
-        omnigo.SetProvider("openai"),
-        omnigo.SetModel("your-video-model"),
-        omnigo.SetAPIKey(apiKey),
-    )
-    if err != nil {
-        log.Fatalf("create LLM failed: %v", err)
-    }
-
-resp, err := llm.Media(context.Background(), &dto.MediaRequest{
-    Type:           dto.MediaTypeVideo,
-    Model:          "your-video-model",
-    Messages:       []dto.Message{{Role: "user", Content: "日落时分的城市航拍，暖色调"}},
-    Size:           "1024x1024",
-    Duration:       5,
-    Fps:            24,
-    ResponseFormat: "url",
-})
-    if err != nil {
-        log.Fatalf("video failed: %v", err)
-    }
-
-    log.Println("video status:", resp.Status)
-    log.Println("video url:", resp.Video.URL)
-}
-```
+视频生成请使用上面的 Ali、Ark、Vidu、Kling、Pai 示例，或使用 Google Veo 与第三方 `custom` 协议。当前 `openai` adapter 的 `Media` 仅实现图片生成和编辑，尚未接入 OpenAI 官方视频 API。
 
 ## 最佳实践
 

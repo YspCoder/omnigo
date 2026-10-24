@@ -398,7 +398,11 @@ func newAPIArkAssetCall[T any](ctx context.Context, cfg *ProviderConfig, action 
 		return nil, err
 	}
 
-	response, err := newAPIArkAssetHTTPClient(cfg).Do(request)
+	client, err := providerHTTPClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("call NewAPI Ark asset API: %w", err)
 	}
@@ -463,7 +467,11 @@ func newAPIArkRESTCall[T any](ctx context.Context, cfg *ProviderConfig, method, 
 		return nil, err
 	}
 
-	response, err := newAPIArkAssetHTTPClient(cfg).Do(request)
+	client, err := providerHTTPClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("call NewAPI Ark asset API: %w", err)
 	}
@@ -500,7 +508,8 @@ func newAPIArkRESTEndpoint(cfg *ProviderConfig, path string, query url.Values) (
 	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
 		return "", fmt.Errorf("NewAPI Ark asset API base URL must be an absolute http(s) URL: %q", rawBaseURL)
 	}
-	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/" + strings.TrimLeft(path, "/")
+	basePath := strings.TrimSuffix(strings.TrimRight(endpoint.Path, "/"), newAPIArkAssetAPIPath)
+	endpoint.Path = basePath + "/" + strings.TrimLeft(path, "/")
 	endpoint.RawPath = ""
 	if query == nil {
 		endpoint.RawQuery = ""
@@ -563,17 +572,6 @@ func setNewAPIArkAssetHeaders(request *http.Request, headers map[string]string) 
 	for key, value := range headers {
 		request.Header.Set(key, value)
 	}
-}
-
-func newAPIArkAssetHTTPClient(cfg *ProviderConfig) *http.Client {
-	if cfg != nil && cfg.HTTPClient != nil {
-		return cfg.HTTPClient
-	}
-	client := &http.Client{}
-	if cfg != nil && cfg.Timeout > 0 {
-		client.Timeout = cfg.Timeout
-	}
-	return client
 }
 
 func newAPIArkAssetError(statusCode int, action string, metadata NewAPIArkResponseMetadata, fallback string) *NewAPIArkAssetAPIError {

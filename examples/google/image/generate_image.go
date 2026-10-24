@@ -15,11 +15,15 @@ func main() {
 	if apiKey == "" {
 		log.Fatal("GOOGLE_API_KEY is not set")
 	}
+	model := os.Getenv("GOOGLE_IMAGE_MODEL")
+	if model == "" {
+		log.Fatal("GOOGLE_IMAGE_MODEL must name an Imagen or Gemini GenerateContent image model available to your account")
+	}
 
-	// Create LLM client for Google Imagen 3
+	// Create an image generation client for Google.
 	llm, err := omnigo.NewLLM(
 		omnigo.SetProvider("google"),
-		omnigo.SetModel("imagen-3.0-generate-001"), // Example Imagen 3 model
+		omnigo.SetModel(model),
 		omnigo.SetAPIKey(apiKey),
 	)
 	if err != nil {
@@ -42,7 +46,9 @@ func main() {
 	}
 
 	if resp.URL != "" {
-		fmt.Printf("Image Generated! URL/Data: %s...\n", resp.URL[:50])
+		fmt.Printf("Image Generated! URL: %s\n", resp.URL)
+	} else if len(resp.Data) > 0 && resp.Data[0].B64JSON != "" {
+		fmt.Printf("Image Generated! Base64 length: %d\n", len(resp.Data[0].B64JSON))
 	} else if resp.TaskID != "" {
 		fmt.Printf("Async Task ID: %s (Status: %s)\n", resp.TaskID, resp.Status)
 	}

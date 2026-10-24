@@ -33,23 +33,17 @@ func (a *GoogleAdaptor) getClient(ctx context.Context, cfg *ProviderConfig) (*ge
 		APIKey:  cfg.APIKey,
 		Backend: genai.BackendGeminiAPI,
 	}
+	httpClient, err := providerHTTPClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	cc.HTTPClient = httpClient
+	cc.HTTPOptions.Headers = make(http.Header, len(cfg.Headers))
+	for key, value := range cfg.Headers {
+		cc.HTTPOptions.Headers.Set(key, value)
+	}
 	if baseURL := strings.TrimSpace(cfg.BaseURL); baseURL != "" {
 		cc.HTTPOptions.BaseURL = baseURL
-	}
-	if cfg.Proxy != "" {
-		proxy := cfg.Proxy
-		if !strings.HasPrefix(proxy, "http") {
-			proxy = "http://" + proxy
-		}
-		pURL, err := url.Parse(proxy)
-		if err != nil {
-			return nil, fmt.Errorf("invalid proxy: %w", err)
-		}
-		cc.HTTPClient = &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyURL(pURL),
-			},
-		}
 	}
 	c, err := genai.NewClient(ctx, cc)
 	if err != nil {
@@ -72,16 +66,7 @@ func (a *GoogleAdaptor) Chat(ctx context.Context, cfg *ProviderConfig, r *dto.Me
 	if err != nil {
 		return nil, err
 	}
-	res := &dto.MediaResponse{}
-	for _, cand := range resp.Candidates {
-		if cand.Content != nil && len(cand.Content.Parts) > 0 {
-			res.Choices = append(res.Choices, dto.ChatChoice{Message: dto.Message{Role: cand.Content.Role, Content: cand.Content.Parts[0].Text}, FinishReason: string(cand.FinishReason)})
-		}
-	}
-	if len(res.Choices) > 0 {
-		res.Text = fmt.Sprint(res.Choices[0].Message.Content)
-	}
-	return res, nil
+	return googleContentResponse(resp), nil
 }
 
 func (a *GoogleAdaptor) Stream(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (dto.TokenStream, error) {
@@ -115,7 +100,7 @@ func (a *GoogleAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.M
 			if err != nil {
 				return nil, err
 			}
-			return a.toImgContentResp(resp), nil
+			return googleContentResponse(resp), nil
 		}
 		resp, err := c.Models.GenerateImages(ctx, model, utils.MediaPromptWithSystem(r), a.toImgCfg(r))
 		if err != nil {
@@ -210,7 +195,11 @@ func (a *GoogleAdaptor) toContents(ctx context.Context, c *genai.Client, r *dto.
 		if len(parts) == 0 {
 			continue
 		}
-		res = append(res, &genai.Content{Role: m.Role, Parts: parts})
+		role := m.Role
+		if role == "assistant" {
+			role = genai.RoleModel
+		}
+		res = append(res, &genai.Content{Role: role, Parts: parts})
 	}
 	return res, nil
 }
@@ -394,7 +383,7 @@ func isGoogleGenerateContentImageModel(model string) bool {
 
 func googleMessageParts(ctx context.Context, httpClient *http.Client, m dto.Message, includeExtraImages bool, r *dto.MediaRequest) ([]*genai.Part, error) {
 	parts := make([]*genai.Part, 0, 1+len(googleMessageImageInputs(m))+len(googleExtraImageInputs(r)))
-	if text := strings.TrimSpace(fmt.Sprint(m.Content)); text != "" {
+	if text, ok := messageContentText(m.Content); ok && strings.TrimSpace(text) != "" {
 		parts = append(parts, genai.NewPartFromText(text))
 	}
 	imageParts, err := googleImagePartsFromInputs(ctx, httpClient, googleMessageImageInputs(m))
@@ -622,7 +611,7 @@ func normalizeGoogleImageShape(size, resolution string) (aspectRatio, imageSize 
 
 func isGoogleImageAspectRatio(value string) bool {
 	switch strings.TrimSpace(value) {
-	case "1:1", "9:16", "16:9", "4:3", "3:4":
+	case "1:1", "1:4", "4:1", "1:8", "8:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9":
 		return true
 	default:
 		return false
@@ -631,31 +620,42 @@ func isGoogleImageAspectRatio(value string) bool {
 
 func isGoogleImageSize(value string) bool {
 	switch strings.ToUpper(strings.TrimSpace(value)) {
-	case "1K", "2K", "4K":
+	case "512", "1K", "2K", "4K":
 		return true
 	default:
 		return false
 	}
 }
 
-func (a *GoogleAdaptor) toImgContentResp(resp *genai.GenerateContentResponse) *dto.MediaResponse {
+func googleContentResponse(resp *genai.GenerateContentResponse) *dto.MediaResponse {
 	res := &dto.MediaResponse{}
 	if resp == nil {
 		return res
 	}
 
+	res.ID, res.Model = resp.ResponseID, resp.ModelVersion
+	if resp.UsageMetadata != nil {
+		res.Usage = dto.Usage{
+			PromptTokens:     int(resp.UsageMetadata.PromptTokenCount),
+			CompletionTokens: int(resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount),
+			TotalTokens:      int(resp.UsageMetadata.TotalTokenCount),
+		}
+	}
 	for _, cand := range resp.Candidates {
-		if cand == nil || cand.Content == nil {
+		if cand == nil {
 			continue
 		}
-		for _, part := range cand.Content.Parts {
-			if part == nil {
+		choice := dto.ChatChoice{Index: int(cand.Index), Message: dto.Message{Role: "assistant"}, FinishReason: string(cand.FinishReason)}
+		var text strings.Builder
+		var parts []*genai.Part
+		if cand.Content != nil {
+			parts = cand.Content.Parts
+		}
+		for _, part := range parts {
+			if part == nil || part.Thought {
 				continue
 			}
-			if text := strings.TrimSpace(part.Text); text != "" {
-				res.Text = text
-				res.Choices = append(res.Choices, dto.ChatChoice{Message: dto.Message{Role: cand.Content.Role, Content: text}, FinishReason: string(cand.FinishReason)})
-			}
+			text.WriteString(part.Text)
 			if part.InlineData != nil && len(part.InlineData.Data) > 0 {
 				res.Data = append(res.Data, dto.ImageData{B64JSON: base64.StdEncoding.EncodeToString(part.InlineData.Data)})
 			}
@@ -663,6 +663,11 @@ func (a *GoogleAdaptor) toImgContentResp(resp *genai.GenerateContentResponse) *d
 				res.Data = append(res.Data, dto.ImageData{URL: part.FileData.FileURI})
 			}
 		}
+		choice.Message.Content = text.String()
+		res.Choices = append(res.Choices, choice)
+	}
+	if len(res.Choices) > 0 {
+		res.Text, _ = res.Choices[0].Message.Content.(string)
 	}
 	if len(res.Data) > 0 {
 		res.URL = res.Data[0].URL
@@ -671,25 +676,42 @@ func (a *GoogleAdaptor) toImgContentResp(resp *genai.GenerateContentResponse) *d
 }
 
 type googleStream struct {
-	next func() (*genai.GenerateContentResponse, error, bool)
-	stop func()
+	next    func() (*genai.GenerateContentResponse, error, bool)
+	stop    func()
+	pending []*dto.StreamToken
 }
 
 func (w *googleStream) Next(ctx context.Context) (*dto.StreamToken, error) {
-	resp, err, ok := w.next()
-	if !ok {
-		return nil, io.EOF
-	}
-	if err != nil {
-		return nil, err
-	}
-	for _, cand := range resp.Candidates {
-		if cand == nil || cand.Content == nil || len(cand.Content.Parts) == 0 {
-			continue
+	for len(w.pending) == 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		return &dto.StreamToken{Text: cand.Content.Parts[0].Text, Type: "text"}, nil
+		resp, err, ok := w.next()
+		if !ok {
+			return nil, io.EOF
+		}
+		if err != nil {
+			return nil, err
+		}
+		converted := googleContentResponse(resp)
+		for _, choice := range converted.Choices {
+			text, _ := choice.Message.Content.(string)
+			if text == "" && choice.FinishReason == "" {
+				continue
+			}
+			token := &dto.StreamToken{Text: text, Type: "text", Index: choice.Index, FinishReason: choice.FinishReason}
+			if text == "" {
+				token.Type = "finish"
+			}
+			w.pending = append(w.pending, token)
+		}
+		if resp != nil && resp.UsageMetadata != nil {
+			w.pending = append(w.pending, &dto.StreamToken{Type: "usage", Usage: &converted.Usage})
+		}
 	}
-	return &dto.StreamToken{}, nil
+	token := w.pending[0]
+	w.pending = w.pending[1:]
+	return token, nil
 }
 
 func (w *googleStream) Close() error {

@@ -68,6 +68,13 @@ type customAPIResponse struct {
 	Error      *customAPIError `json:"error"`
 }
 
+func (r *customAPIResponse) UnmarshalJSON(data []byte) error {
+	type response customAPIResponse
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	return decoder.Decode((*response)(r))
+}
+
 func (a *CustomAdaptor) Chat(context.Context, *ProviderConfig, *dto.MediaRequest) (*dto.MediaResponse, error) {
 	return nil, fmt.Errorf("custom adaptor does not support chat")
 }
@@ -183,7 +190,11 @@ func (a *CustomAdaptor) doMultipartImage(ctx context.Context, cfg *ProviderConfi
 		return fmt.Errorf("custom image edit supports at most 9 images, got %d", len(inputs))
 	}
 
-	readers, err := openAIImageReferenceReaders(ctx, customHTTPClient(cfg), inputs)
+	client, err := providerHTTPClient(cfg)
+	if err != nil {
+		return err
+	}
+	readers, err := openAIImageReferenceReaders(ctx, client, inputs)
 	if err != nil {
 		return err
 	}
@@ -211,7 +222,7 @@ func (a *CustomAdaptor) doMultipartImage(ctx context.Context, cfg *ProviderConfi
 		if len(masks) > 1 {
 			return fmt.Errorf("custom image edit supports only one mask")
 		}
-		mask, err := openAIImageReferenceReader(ctx, customHTTPClient(cfg), masks[0], 0)
+		mask, err := openAIImageReferenceReader(ctx, client, masks[0], 0)
 		if err != nil {
 			return err
 		}
@@ -243,7 +254,11 @@ func (a *CustomAdaptor) doRequest(ctx context.Context, cfg *ProviderConfig, meth
 		}
 	}
 
-	resp, err := customHTTPClient(cfg).Do(req)
+	client, err := providerHTTPClient(cfg)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("call custom API: %w", err)
 	}
@@ -514,6 +529,9 @@ func customTaskEndpoint(cfg *ProviderConfig, taskID string, query map[string]str
 	}
 
 	rawEndpoint := customBaseURL(cfg)
+	if cfg != nil && strings.TrimSpace(cfg.PollingURL) != "" {
+		rawEndpoint = cfg.PollingURL
+	}
 	if endpoint := strings.TrimSpace(query["endpoint"]); endpoint != "" {
 		rawEndpoint = endpoint
 	}
@@ -557,17 +575,6 @@ func customBaseURL(cfg *ProviderConfig) string {
 		return ""
 	}
 	return cfg.BaseURL
-}
-
-func customHTTPClient(cfg *ProviderConfig) *http.Client {
-	if cfg != nil && cfg.HTTPClient != nil {
-		return cfg.HTTPClient
-	}
-	client := &http.Client{}
-	if cfg != nil && cfg.Timeout > 0 {
-		client.Timeout = cfg.Timeout
-	}
-	return client
 }
 
 func customIsImageEditEndpoint(endpoint *url.URL) bool {

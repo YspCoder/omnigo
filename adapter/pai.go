@@ -4,6 +4,7 @@ package adapter
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -286,13 +287,13 @@ func (a *PaiAdaptor) resolveMode(r *dto.MediaRequest) (string, string, error) {
 			return paiModeExtend, paiModeEndpoint[paiModeExtend], nil
 		}
 		images := paiImageInputs(r)
-		if utils.GetStringExtra(r.Extra, "first_frame_img") != "" || utils.GetStringExtra(r.Extra, "last_frame_img") != "" {
+		if hasAnyExtraKey(r.Extra, "first_frame_img", "last_frame_img") {
 			return paiModeTransition, paiModeEndpoint[paiModeTransition], nil
 		}
 		if len(images) >= 2 {
 			return paiModeTransition, paiModeEndpoint[paiModeTransition], nil
 		}
-		if len(images) == 1 {
+		if len(images) == 1 || hasAnyExtraKey(r.Extra, "img_id", "image_id") {
 			return paiModeImage, paiModeEndpoint[paiModeImage], nil
 		}
 		return paiModeText, paiModeEndpoint[paiModeText], nil
@@ -361,6 +362,7 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 		"keyframe_id":             {},
 		"multi_transition":        {},
 		"img_id":                  {},
+		"image_id":                {},
 		"lip_sync_tts_content":    {},
 		"lip_sync_tts_conent":     {},
 		"lip_sync_tts_speaker_id": {},
@@ -424,10 +426,7 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 		mergeExtraPayload(payload, r.Extra, consumed)
 		return payload, nil
 	case paiModeImage:
-		imgID, err := a.resolveImageID(ctx, cfg, firstNonEmptyString(
-			utils.GetStringExtra(r.Extra, "img_id"),
-			utils.GetStringExtra(r.Extra, "image_id"),
-		), paiImageInputs(r))
+		imgID, err := a.resolveImageID(ctx, cfg, r.Extra, paiImageInputs(r))
 		if err != nil {
 			return nil, err
 		}
@@ -469,10 +468,7 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 				payload["mask_id"] = maskResp.MaskInfo[0].MaskID
 			}
 		}
-		imgID, err := a.resolveImageID(ctx, cfg, firstNonEmptyString(
-			utils.GetStringExtra(r.Extra, "img_id"),
-			utils.GetStringExtra(r.Extra, "image_id"),
-		), paiImageInputs(r))
+		imgID, err := a.resolveImageID(ctx, cfg, r.Extra, paiImageInputs(r))
 		if err != nil {
 			return nil, err
 		}
@@ -490,17 +486,16 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 		if err != nil {
 			return nil, err
 		}
-		return map[string]interface{}{"multi_transition": segments}, nil
+		payload["multi_transition"] = segments
+		mergeExtraPayload(payload, r.Extra, consumed)
+		return payload, nil
 	case paiModeMimic:
 		videoID, sourceKey, err := paiResolveVideoReference(r.Extra)
 		if err != nil {
 			return nil, err
 		}
 		payload[sourceKey] = videoID
-		imgID, err := a.resolveImageID(ctx, cfg, firstNonEmptyString(
-			utils.GetStringExtra(r.Extra, "img_id"),
-			utils.GetStringExtra(r.Extra, "image_id"),
-		), paiImageInputs(r))
+		imgID, err := a.resolveImageID(ctx, cfg, r.Extra, paiImageInputs(r))
 		if err != nil {
 			return nil, err
 		}
@@ -580,10 +575,32 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 		if quality := firstNonEmptyString(r.Resolution, utils.GetStringExtra(r.Extra, "quality")); quality != "" {
 			payload["quality"] = quality
 		}
-		if keyframeIDs := paiIntSlice(r.Extra["keyframe_ids"]); len(keyframeIDs) > 0 {
-			payload["keyframe_ids"] = keyframeIDs
-		} else if keyframeID, ok := intValue(r.Extra["keyframe_id"]); ok {
-			payload["keyframe_ids"] = keyframeID
+		keyframe := r.Extra["keyframe_id"]
+		if legacy := r.Extra["keyframe_ids"]; legacy != nil {
+			var single interface{}
+			switch ids := legacy.(type) {
+			case []int:
+				if len(ids) == 1 {
+					single = ids[0]
+				}
+			case []interface{}:
+				if len(ids) == 1 {
+					single = ids[0]
+				}
+			}
+			if single == nil {
+				return nil, fmt.Errorf("pai modify keyframe_ids must contain exactly one keyframe; use keyframe_id")
+			}
+			if keyframe == nil {
+				keyframe = single
+			}
+		}
+		if keyframe != nil {
+			keyframeID, ok := uint64FromAny(keyframe)
+			if !ok {
+				return nil, fmt.Errorf("pai modify keyframe_id must be a non-negative integer")
+			}
+			payload["keyframe_id"] = keyframeID
 		}
 		if maskIDs := paiStringSlice(r.Extra["mask_ids"]); len(maskIDs) > 0 {
 			payload["mask_ids"] = maskIDs
@@ -663,7 +680,8 @@ func (a *PaiAdaptor) looksLikeModify(r *dto.MediaRequest) bool {
 	if r == nil || r.Extra == nil {
 		return false
 	}
-	return hasAnyExtraKey(r.Extra, "img_ids", "mask_ids", "keyframe_ids")
+	return hasAnyExtraKey(r.Extra, "img_ids", "mask_ids", "keyframe_ids") ||
+		(hasAnyExtraKey(r.Extra, "keyframe_id") && !hasAnyExtraKey(r.Extra, "img_id", "image_id", "mask_id", "auto_mask_selection"))
 }
 
 func paiImageInputs(r *dto.MediaRequest) []string {
@@ -704,11 +722,11 @@ func (a *PaiAdaptor) resolveTransitionImageIDs(ctx context.Context, cfg *Provide
 	if len(inputs) < 2 {
 		return 0, 0, fmt.Errorf("pai transition requires two images")
 	}
-	firstID, err := a.resolveImageID(ctx, cfg, "", []string{inputs[0]})
+	firstID, err := a.resolveImageID(ctx, cfg, nil, []string{inputs[0]})
 	if err != nil {
 		return 0, 0, err
 	}
-	lastID, err := a.resolveImageID(ctx, cfg, "", []string{inputs[1]})
+	lastID, err := a.resolveImageID(ctx, cfg, nil, []string{inputs[1]})
 	if err != nil {
 		return 0, 0, err
 	}
@@ -790,9 +808,15 @@ func (a *PaiAdaptor) maskSelection(ctx context.Context, cfg *ProviderConfig, ext
 	return &out, nil
 }
 
-func (a *PaiAdaptor) resolveImageID(ctx context.Context, cfg *ProviderConfig, explicit string, inputs []string) (uint64, error) {
-	if id, ok := uint64FromAny(explicit); ok {
-		return id, nil
+func (a *PaiAdaptor) resolveImageID(ctx context.Context, cfg *ProviderConfig, extra map[string]interface{}, inputs []string) (uint64, error) {
+	for _, key := range []string{"img_id", "image_id"} {
+		if hasAnyExtraKey(extra, key) {
+			id, ok := uint64FromAny(extra[key])
+			if !ok || id == 0 {
+				return 0, fmt.Errorf("pai %s must be a positive integer", key)
+			}
+			return id, nil
+		}
 	}
 	if len(inputs) == 0 {
 		return 0, fmt.Errorf("pai image mode requires image input")
@@ -823,7 +847,11 @@ func (a *PaiAdaptor) resolveImageIDs(ctx context.Context, cfg *ProviderConfig, r
 }
 
 func (a *PaiAdaptor) uploadImage(ctx context.Context, cfg *ProviderConfig, input string) (uint64, error) {
-	filename, contentType, data, err := paiReadImageInput(ctx, paiHTTPClient(cfg), input)
+	client, err := providerHTTPClient(cfg)
+	if err != nil {
+		return 0, err
+	}
+	filename, contentType, data, err := paiReadImageInput(ctx, client, input)
 	if err != nil {
 		return 0, err
 	}
@@ -851,7 +879,7 @@ func (a *PaiAdaptor) uploadImage(ctx context.Context, cfg *ProviderConfig, input
 		req.Header.Set("X-Upload-Content-Type", contentType)
 	}
 
-	resp, err := paiHTTPClient(cfg).Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -901,7 +929,11 @@ func (a *PaiAdaptor) doJSON(ctx context.Context, cfg *ProviderConfig, method, pa
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := paiHTTPClient(cfg).Do(req)
+	client, err := providerHTTPClient(cfg)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -937,7 +969,11 @@ func (a *PaiAdaptor) applyHeaders(req *http.Request, cfg *ProviderConfig) {
 }
 
 func paiTraceID() string {
-	return fmt.Sprintf("pai-%d", time.Now().UnixNano())
+	var id [16]byte
+	rand.Read(id[:])
+	id[6] = (id[6] & 0x0f) | 0x40
+	id[8] = (id[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", id[:4], id[4:6], id[6:8], id[8:10], id[10:])
 }
 
 func paiBaseURL(cfg *ProviderConfig) string {
@@ -945,17 +981,6 @@ func paiBaseURL(cfg *ProviderConfig) string {
 		return cfg.BaseURL
 	}
 	return "https://app-api.pixverseai.cn"
-}
-
-func paiHTTPClient(cfg *ProviderConfig) *http.Client {
-	if cfg != nil && cfg.HTTPClient != nil {
-		return cfg.HTTPClient
-	}
-	client := &http.Client{}
-	if cfg != nil && cfg.Timeout > 0 {
-		client.Timeout = cfg.Timeout
-	}
-	return client
 }
 
 func paiStatusText(status int) string {
@@ -1070,6 +1095,8 @@ func uint64FromAny(v interface{}) (uint64, bool) {
 		if err == nil {
 			return n, true
 		}
+	case json.Number:
+		return uint64FromAny(string(typed))
 	}
 	return 0, false
 }
@@ -1131,29 +1158,6 @@ func paiStringSlice(v interface{}) []string {
 		for _, item := range typed {
 			if s := strings.TrimSpace(paiStringFromAny(item)); s != "" {
 				out = append(out, s)
-			}
-		}
-		if len(out) == 0 {
-			return nil
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
-func paiIntSlice(v interface{}) []int {
-	switch typed := v.(type) {
-	case []int:
-		if len(typed) == 0 {
-			return nil
-		}
-		return typed
-	case []interface{}:
-		out := make([]int, 0, len(typed))
-		for _, item := range typed {
-			if n, ok := intValue(item); ok {
-				out = append(out, n)
 			}
 		}
 		if len(out) == 0 {

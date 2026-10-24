@@ -4,10 +4,12 @@ package adapter
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 
 	"github.com/YspCoder/omnigo/dto"
+	"github.com/YspCoder/omnigo/utils"
 	"github.com/liushuangls/go-anthropic/v2"
 )
 
@@ -40,6 +42,13 @@ func (a *AnthropicAdaptor) getClientWithError(config *ProviderConfig) (*anthropi
 		a.clientErr = err
 		return nil, err
 	}
+	if len(config.Headers) > 0 {
+		transport := httpClient.Transport
+		if transport == nil {
+			transport = http.DefaultTransport
+		}
+		httpClient.Transport = anthropicHeaderTransport{transport, copyMapString(config.Headers)}
+	}
 	opts := []anthropic.ClientOption{anthropic.WithHTTPClient(httpClient)}
 	if baseURL := strings.TrimSpace(config.BaseURL); baseURL != "" {
 		opts = append(opts, anthropic.WithBaseURL(baseURL))
@@ -49,6 +58,19 @@ func (a *AnthropicAdaptor) getClientWithError(config *ProviderConfig) (*anthropi
 	return client, nil
 }
 
+type anthropicHeaderTransport struct {
+	http.RoundTripper
+	headers map[string]string
+}
+
+func (t anthropicHeaderTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	request = request.Clone(request.Context())
+	for key, value := range t.headers {
+		request.Header.Set(key, value)
+	}
+	return t.RoundTripper.RoundTrip(request)
+}
+
 func (a *AnthropicAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
 	client, err := a.getClientWithError(config)
 	if err != nil {
@@ -56,11 +78,9 @@ func (a *AnthropicAdaptor) Chat(ctx context.Context, config *ProviderConfig, req
 	}
 
 	messages := make([]anthropic.Message, 0)
-	var system string
 
 	for _, m := range request.Messages {
 		if m.Role == "system" {
-			system = fmt.Sprint(m.Content)
 			continue
 		}
 		messages = append(messages, anthropic.Message{
@@ -72,21 +92,29 @@ func (a *AnthropicAdaptor) Chat(ctx context.Context, config *ProviderConfig, req
 	resp, err := client.CreateMessages(ctx, anthropic.MessagesRequest{
 		Model:     anthropic.Model(request.Model),
 		Messages:  messages,
-		System:    system,
+		System:    utils.FirstSystemMessage(request.Messages),
 		MaxTokens: request.MaxTokens,
 	})
 	if err != nil {
 		return nil, err
 	}
 
+	var text strings.Builder
+	for _, content := range resp.Content {
+		text.WriteString(content.GetText())
+	}
 	res := &dto.MediaResponse{
+		ID:     resp.ID,
+		Object: string(resp.Type),
+		Model:  string(resp.Model),
 		Choices: []dto.ChatChoice{{
 			Message: dto.Message{
-				Role:    "assistant",
-				Content: resp.Content[0].GetText(),
+				Role:    firstNonEmptyString(string(resp.Role), "assistant"),
+				Content: text.String(),
 			},
+			FinishReason: string(resp.StopReason),
 		}},
-		Text: resp.Content[0].GetText(),
+		Text: text.String(),
 		Usage: dto.Usage{
 			PromptTokens:     resp.Usage.InputTokens,
 			CompletionTokens: resp.Usage.OutputTokens,

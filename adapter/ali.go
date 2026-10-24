@@ -401,6 +401,31 @@ func (a *AliAdaptor) buildVideoRequest(r *dto.MediaRequest) (string, map[string]
 	if media := aliMediaInput(r, videoMode); len(media) > 0 {
 		input["media"] = media
 	}
+	if aliLegacyWanModel(model) {
+		images := aliCollectImages(r)
+		switch videoMode {
+		case aliVideoModeImage:
+			input["img_url"] = firstNonEmptyString(utils.GetStringExtra(r.Extra, "img_url"), firstAliImageURL(r))
+		case aliVideoModeKeyframe:
+			input["first_frame_url"] = firstNonEmptyString(utils.GetStringExtra(r.Extra, "first_frame_url"), firstAliImageURL(r))
+			lastFrame := utils.GetStringExtra(r.Extra, "last_frame_url")
+			if lastFrame == "" && len(images) > 1 {
+				lastFrame = images[1]
+			}
+			if lastFrame != "" {
+				input["last_frame_url"] = lastFrame
+			}
+		case aliVideoModeReference:
+			references := utils.GetStringSliceExtra(r.Extra, "reference_urls")
+			if len(references) == 0 {
+				references = utils.GetStringSliceExtra(r.Extra, "reference_video_urls")
+			}
+			if len(references) == 0 {
+				references = append(images, aliCollectVideos(r)...)
+			}
+			input["reference_urls"] = references
+		}
+	}
 
 	payload := map[string]interface{}{
 		"model": model,
@@ -413,6 +438,9 @@ func (a *AliAdaptor) buildVideoRequest(r *dto.MediaRequest) (string, map[string]
 
 	endpoint := aliVideoModeEndpoint[videoMode]
 	if mediaProtocol {
+		endpoint = aliVideoEndpoint
+	}
+	if aliLegacyWanModel(model) && videoMode == aliVideoModeImage {
 		endpoint = aliVideoEndpoint
 	}
 	if path := utils.GetStringExtra(r.Extra, "endpoint"); path != "" {
@@ -641,6 +669,7 @@ func aliHTTPClient(cfg *ProviderConfig) *http.Client {
 }
 
 func aliImageParameters(r *dto.MediaRequest) (parameters map[string]interface{}) {
+	parameters = make(map[string]interface{})
 	if r.Size != "" {
 		if aliIsAspectRatio(r.Size) {
 			parameters["size"] = aliAspectRatioSize(r.Size)
@@ -967,6 +996,9 @@ func aliCopyInputExtras(input, extra map[string]interface{}) {
 }
 
 func aliUsesMediaProtocol(model string, r *dto.MediaRequest, videoMode string) bool {
+	if aliLegacyWanModel(model) {
+		return false
+	}
 	if !aliIsWanModel(model) && !aliIsHappyHorseModel(model) {
 		return false
 	}
@@ -976,6 +1008,16 @@ func aliUsesMediaProtocol(model string, r *dto.MediaRequest, videoMode string) b
 	default:
 		return false
 	}
+}
+
+func aliLegacyWanModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	for _, prefix := range []string{"wanx2.1-", "wan2.2-", "wan2.5-", "wan2.6-"} {
+		if strings.HasPrefix(model, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func aliIsWanModel(model string) bool {
