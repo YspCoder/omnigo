@@ -25,6 +25,9 @@ type ProviderConfig struct {
 	AuthPrefix   string
 	Headers      map[string]string
 	HTTPClient   *http.Client
+	// runtime is initialized by PrepareProviderConfig and keeps the configured
+	// HTTP client stable for the lifetime of this provider configuration.
+	runtime      *providerRuntime
 	Timeout      time.Duration
 	MaxRetries   int
 	RetryDelay   time.Duration

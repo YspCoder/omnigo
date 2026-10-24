@@ -531,7 +531,11 @@ func (a *AliAdaptor) doJSON(ctx context.Context, cfg *ProviderConfig, method, pa
 		req.Header.Set(key, value)
 	}
 
-	resp, err := aliHTTPClient(cfg).Do(req)
+	client, err := providerHTTPClient(cfg)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -655,17 +659,6 @@ func aliBaseURL(cfg *ProviderConfig) string {
 		return cfg.BaseURL
 	}
 	return aliNativeBaseURL
-}
-
-func aliHTTPClient(cfg *ProviderConfig) *http.Client {
-	if cfg != nil && cfg.HTTPClient != nil {
-		return cfg.HTTPClient
-	}
-	client := &http.Client{}
-	if cfg != nil && cfg.Timeout > 0 {
-		client.Timeout = cfg.Timeout
-	}
-	return client
 }
 
 func aliImageParameters(r *dto.MediaRequest) (parameters map[string]interface{}) {

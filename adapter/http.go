@@ -7,10 +7,51 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
+type providerRuntime struct {
+	once   sync.Once
+	client *http.Client
+	err    error
+}
+
+// PrepareProviderConfig freezes the HTTP transport settings for a provider
+// configuration. Call it once before sharing the configuration across
+// concurrent requests. Adapters that receive an unprepared configuration keep
+// the legacy per-call behavior for compatibility with direct use.
+func PrepareProviderConfig(cfg *ProviderConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	if cfg.runtime == nil {
+		cfg.runtime = &providerRuntime{}
+	}
+	client, err := providerHTTPClient(cfg)
+	if err != nil {
+		return err
+	}
+	// Some native adapters read HTTPClient directly instead of going through
+	// providerHTTPClient. Point them at the same prepared client.
+	cfg.HTTPClient = client
+	return nil
+}
+
 func providerHTTPClient(cfg *ProviderConfig) (*http.Client, error) {
+	if cfg == nil {
+		return newProviderHTTPClient(nil)
+	}
+	if cfg.runtime != nil {
+		cfg.runtime.once.Do(func() {
+			cfg.runtime.client, cfg.runtime.err = newProviderHTTPClient(cfg)
+		})
+		return cfg.runtime.client, cfg.runtime.err
+	}
+	return newProviderHTTPClient(cfg)
+}
+
+func newProviderHTTPClient(cfg *ProviderConfig) (*http.Client, error) {
 	client := &http.Client{}
 	if cfg == nil {
 		return client, nil

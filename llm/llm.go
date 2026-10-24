@@ -4,6 +4,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 
@@ -78,13 +79,16 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 		BaseURL:      baseURL,
 		PollingURL:   cfg.PollingURL,
 		Organization: cfg.APIKeys["organization"],
-		Headers:      cfg.ExtraHeaders,
+		Headers:      maps.Clone(cfg.ExtraHeaders),
 		Proxy:        cfg.Proxy,
 		HTTPClient:   cfg.HTTPClient,
 		ChatProtocol: cfg.ChatProtocol,
 		Timeout:      cfg.Timeout,
 		MaxRetries:   cfg.MaxRetries,
 		RetryDelay:   cfg.RetryDelay,
+	}
+	if err := adapter.PrepareProviderConfig(llmClient.adaptorCfg); err != nil {
+		return nil, fmt.Errorf("prepare provider client: %w", err)
 	}
 
 	return llmClient, nil
@@ -134,39 +138,78 @@ func (l *LLMImpl) effectivePrompt(prompt *Prompt) *Prompt {
 	return &cloned
 }
 
-func (l *LLMImpl) effectiveMediaRequest(request *dto.MediaRequest) *dto.MediaRequest {
-	l.configMutex.RLock()
-	defer l.configMutex.RUnlock()
+// normalizeMediaRequest creates the canonical request passed to every adaptor.
+// It applies client defaults without mutating the caller's request, so provider
+// code only needs to handle provider-specific fields and protocols.
+func (l *LLMImpl) normalizeMediaRequest(request *dto.MediaRequest) (*dto.MediaRequest, error) {
 	if request == nil {
-		return &dto.MediaRequest{}
+		return nil, fmt.Errorf("media request is required")
 	}
-	if l.config == nil {
-		return request
+
+	l.configMutex.RLock()
+	var defaultModel, defaultSystemPrompt string
+	if l.config != nil {
+		defaultModel = l.config.Model
+		defaultSystemPrompt = l.config.SystemPrompt
 	}
-	needsModel := request.Model == "" && l.config.Model != ""
-	needsSystemPrompt := l.config.SystemPrompt != ""
+	l.configMutex.RUnlock()
+
+	cloned := cloneMediaRequest(request)
+	cloned.Type = dto.MediaType(strings.ToLower(strings.TrimSpace(string(cloned.Type))))
+	if cloned.Type == "" {
+		cloned.Type = dto.MediaTypeText
+	}
+	cloned.Model = strings.TrimSpace(cloned.Model)
+	if cloned.Model == "" {
+		cloned.Model = strings.TrimSpace(defaultModel)
+	}
+	cloned.Prompt = strings.TrimSpace(cloned.Prompt)
+	cloned.Size = strings.TrimSpace(cloned.Size)
+	cloned.Resolution = strings.TrimSpace(cloned.Resolution)
+	cloned.ResponseFormat = strings.TrimSpace(cloned.ResponseFormat)
+
+	hasSystemPrompt := false
 	for _, message := range request.Messages {
-		if message.Role == "system" {
-			needsSystemPrompt = false
+		if strings.EqualFold(strings.TrimSpace(message.Role), "system") {
+			hasSystemPrompt = true
 			break
 		}
 	}
-	if !needsModel && !needsSystemPrompt {
-		return request
+	for index := range cloned.Messages {
+		cloned.Messages[index].Role = strings.ToLower(strings.TrimSpace(cloned.Messages[index].Role))
 	}
-
-	cloned := *request
-	if needsModel {
-		cloned.Model = l.config.Model
-	}
-	if needsSystemPrompt {
+	if !hasSystemPrompt && strings.TrimSpace(defaultSystemPrompt) != "" {
+		messages := cloned.Messages
 		cloned.Messages = make([]dto.Message, 0, len(request.Messages)+1)
 		cloned.Messages = append(cloned.Messages, dto.Message{
 			Role:    "system",
-			Content: l.config.SystemPrompt,
+			Content: strings.TrimSpace(defaultSystemPrompt),
 		})
-		cloned.Messages = append(cloned.Messages, request.Messages...)
+		cloned.Messages = append(cloned.Messages, messages...)
 	}
+	return cloned, nil
+}
+
+// effectiveMediaRequest is retained for internal callers and older tests. New
+// request paths should use normalizeMediaRequest so validation errors propagate.
+func (l *LLMImpl) effectiveMediaRequest(request *dto.MediaRequest) *dto.MediaRequest {
+	normalized, err := l.normalizeMediaRequest(request)
+	if err != nil {
+		return &dto.MediaRequest{Type: dto.MediaTypeText}
+	}
+	return normalized
+}
+
+func cloneMediaRequest(request *dto.MediaRequest) *dto.MediaRequest {
+	cloned := *request
+	cloned.Messages = append([]dto.Message(nil), request.Messages...)
+	for index := range cloned.Messages {
+		cloned.Messages[index].ToolCalls = append([]dto.ToolCall(nil), request.Messages[index].ToolCalls...)
+	}
+	cloned.Extra = maps.Clone(request.Extra)
+	cloned.Metadata = maps.Clone(request.Metadata)
+	cloned.Options = maps.Clone(request.Options)
+	cloned.Tools = append([]dto.Tool(nil), request.Tools...)
 	return &cloned
 }
 
@@ -249,7 +292,11 @@ func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOpti
 
 // Media executes a unified multimodal request.
 func (l *LLMImpl) Media(ctx context.Context, request *dto.MediaRequest) (*dto.MediaResponse, error) {
-	request = l.effectiveMediaRequest(request)
+	var err error
+	request, err = l.normalizeMediaRequest(request)
+	if err != nil {
+		return nil, err
+	}
 	if request.Type == dto.MediaTypeText && !l.textMediaUsesProviderMedia(request) {
 		resp, err := l.relay.Chat(ctx, l.adaptor, l.adaptorCfg, request)
 		if err != nil {
@@ -261,7 +308,11 @@ func (l *LLMImpl) Media(ctx context.Context, request *dto.MediaRequest) (*dto.Me
 }
 
 func (l *LLMImpl) StreamMedia(ctx context.Context, request *dto.MediaRequest) (dto.TokenStream, error) {
-	request = l.effectiveMediaRequest(request)
+	var err error
+	request, err = l.normalizeMediaRequest(request)
+	if err != nil {
+		return nil, err
+	}
 	if request.Type == dto.MediaTypeText && !l.textMediaUsesProviderMedia(request) {
 		cloned := *request
 		cloned.Stream = true
