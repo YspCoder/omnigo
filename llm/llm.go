@@ -31,7 +31,6 @@ type LLM interface {
 
 // LLMImpl implements the LLM interface and manages interactions with specific providers.
 type LLMImpl struct {
-	providerName string
 	Options      map[string]interface{}
 	optionsMutex sync.RWMutex
 	logger       utils.Logger
@@ -62,12 +61,11 @@ func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry)
 	}
 
 	llmClient := &LLMImpl{
-		providerName: spec.Name,
-		logger:       logger,
-		config:       cfg,
-		Options:      make(map[string]interface{}),
-		relay:        relay.NewRelay(),
-		adaptor:      adp,
+		logger:  logger,
+		config:  cfg,
+		Options: make(map[string]interface{}),
+		relay:   relay.NewRelay(),
+		adaptor: adp,
 	}
 
 	llmClient.adaptorCfg = &adapter.ProviderConfig{
@@ -322,15 +320,8 @@ func (l *LLMImpl) StreamMedia(ctx context.Context, request *dto.MediaRequest) (d
 }
 
 func (l *LLMImpl) textMediaUsesProviderMedia(request *dto.MediaRequest) bool {
-	if request == nil {
-		return false
-	}
-	switch l.providerName {
-	case "vidu":
-		return true
-	default:
-		return false
-	}
+	router, ok := l.adaptor.(adapter.MediaRequestRouter)
+	return ok && router.UsesMediaRequest(request)
 }
 
 // TaskStatus queries a provider task status.

@@ -197,7 +197,10 @@ type stubAdaptor struct {
 	response *dto.MediaResponse
 	stream   dto.TokenStream
 	media    *dto.MediaResponse
+	useMedia bool
 }
+
+func (s stubAdaptor) UsesMediaRequest(*dto.MediaRequest) bool { return s.useMedia }
 
 func (s stubAdaptor) Chat(_ context.Context, _ *adapter.ProviderConfig, _ *dto.MediaRequest) (*dto.MediaResponse, error) {
 	return s.response, nil
@@ -270,11 +273,10 @@ func TestStreamMediaTypeTextUsesChatStream(t *testing.T) {
 
 func TestMediaTypeTextUsesProviderMediaForVidu(t *testing.T) {
 	client := &LLMImpl{
-		providerName: "vidu",
-		config:       &config.Config{Model: "text-to-audio"},
-		relay:        relay.NewRelay(),
-		adaptor:      stubAdaptor{media: &dto.MediaResponse{TaskID: "task-1", Status: "created"}},
-		adaptorCfg:   &adapter.ProviderConfig{},
+		config:     &config.Config{Model: "text-to-audio"},
+		relay:      relay.NewRelay(),
+		adaptor:    stubAdaptor{media: &dto.MediaResponse{TaskID: "task-1", Status: "created"}, useMedia: true},
+		adaptorCfg: &adapter.ProviderConfig{},
 	}
 
 	resp, err := client.Media(context.Background(), &dto.MediaRequest{

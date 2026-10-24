@@ -71,6 +71,12 @@ var (
 
 type ViduAdaptor struct{}
 
+// UsesMediaRequest routes Vidu's text-shaped audio and video requests through
+// its native media API. Other providers continue to use Chat by default.
+func (a *ViduAdaptor) UsesMediaRequest(request *dto.MediaRequest) bool {
+	return request != nil
+}
+
 type viduErrorResponse struct {
 	Code     interface{} `json:"code"`
 	Reason   string      `json:"reason"`

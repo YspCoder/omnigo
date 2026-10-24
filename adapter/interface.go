@@ -54,3 +54,10 @@ type Adaptor interface {
 	// StreamMedia executes a streaming multimodal request.
 	StreamMedia(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error)
 }
+
+// MediaRequestRouter lets a provider select its native media endpoint for a
+// request that otherwise looks like text. It is optional so existing custom
+// adaptors remain source compatible.
+type MediaRequestRouter interface {
+	UsesMediaRequest(request *dto.MediaRequest) bool
+}
