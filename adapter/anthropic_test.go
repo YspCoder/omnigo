@@ -38,10 +38,16 @@ func TestAnthropicClientUsesConfiguredBaseURL(t *testing.T) {
 	defer server.Close()
 
 	config := &ProviderConfig{
-		APIKey:  "test-api-key",
-		BaseURL: "  " + server.URL + "/proxy/v1/  ",
-		Headers: map[string]string{"X-Api-Key": "override-key", "X-Tenant-ID": "tenant"},
+		APIKey:     "test-api-key",
+		BaseURL:    "  " + server.URL + "/proxy/v1/  ",
+		Headers:    map[string]string{"X-Api-Key": "override-key", "X-Tenant-ID": "tenant"},
+		HTTPClient: server.Client(),
 	}
+	if err := PrepareProviderConfig(config); err != nil {
+		t.Fatal(err)
+	}
+	sharedClient := config.HTTPClient
+	sharedTransport := sharedClient.Transport
 	for model, want := range map[string]string{"claude-3-haiku": "hello world", "empty": ""} {
 		response, err := (&AnthropicAdaptor{}).Chat(context.Background(), config, &dto.MediaRequest{
 			Model: model,
@@ -54,6 +60,9 @@ func TestAnthropicClientUsesConfiguredBaseURL(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if config.HTTPClient != sharedClient || sharedClient.Transport != sharedTransport {
+			t.Fatal("Anthropic header wrapping modified the shared HTTP client")
 		}
 		if got := <-requests; got != "/proxy/v1/messages" {
 			t.Fatalf("request path = %q, want %q", got, "/proxy/v1/messages")

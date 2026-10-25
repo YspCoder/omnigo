@@ -50,8 +50,12 @@ type GenerateConfig struct {
 	UseJSONSchema bool
 }
 
-// NewLLM creates a new LLM instance with the specified configuration.
+// NewLLM creates a new LLM instance with a snapshot of the configuration.
 func NewLLM(cfg *config.Config, logger utils.Logger, registry *adapter.Registry) (LLM, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("configuration is required")
+	}
+	cfg = cfg.Clone()
 	adp, spec, err := registry.BuildAdaptor(cfg.Provider)
 	if err != nil {
 		return nil, err
@@ -307,6 +311,7 @@ func (l *LLMImpl) Media(ctx context.Context, request *dto.MediaRequest) (*dto.Me
 		if err := l.requireOperation(adapter.OperationChat); err != nil {
 			return nil, err
 		}
+		applyTextPrompt(request)
 		resp, err := l.relay.Chat(ctx, l.adaptor, l.adaptorCfg, request)
 		if err != nil {
 			return nil, err
@@ -329,9 +334,9 @@ func (l *LLMImpl) StreamMedia(ctx context.Context, request *dto.MediaRequest) (d
 		if err := l.requireOperation(adapter.OperationStream); err != nil {
 			return nil, err
 		}
-		cloned := *request
-		cloned.Stream = true
-		return l.relay.Stream(ctx, l.adaptor, nil, l.adaptorCfg, &cloned)
+		applyTextPrompt(request)
+		request.Stream = true
+		return l.relay.Stream(ctx, l.adaptor, nil, l.adaptorCfg, request)
 	}
 	if err := l.requireOperation(adapter.OperationStreamMedia); err != nil {
 		return nil, err
@@ -342,6 +347,20 @@ func (l *LLMImpl) StreamMedia(ctx context.Context, request *dto.MediaRequest) (d
 func (l *LLMImpl) textMediaUsesProviderMedia(request *dto.MediaRequest) bool {
 	router, ok := l.adaptor.(adapter.MediaRequestRouter)
 	return ok && router.UsesMediaRequest(request)
+}
+
+// applyTextPrompt fills a normalized chat request without altering conversation
+// history, including assistant tool calls and tool results.
+func applyTextPrompt(request *dto.MediaRequest) {
+	if request.Prompt == "" {
+		return
+	}
+	for _, message := range request.Messages {
+		if message.Role != "system" {
+			return
+		}
+	}
+	request.Messages = append(request.Messages, dto.Message{Role: "user", Content: request.Prompt})
 }
 
 // TaskStatus queries a provider task status.

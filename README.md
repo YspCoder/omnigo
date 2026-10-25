@@ -364,6 +364,10 @@ export LLM_SYSTEM_PROMPT_CACHE_TYPE="ephemeral"
 
 未设置 `SetEndpoint` 时使用 Provider Registry 中的默认地址；显式设置的地址优先。通过 `adapter.RegisterProvider` 注册的服务商可直接由 `omnigo.NewLLM` 使用。
 
+客户端在构造时保存配置快照，之后修改原配置不会改变已有客户端。实例方法 `SetSystemPrompt`、`SetOption` 和日志级别设置仍可更新该实例；更换服务商、认证或连接设置时创建新客户端。HTTP client 的配置独立复制，底层 Transport 与连接池继续复用。
+
+文本 `Media` / `StreamMedia` 请求可以只填写 `Prompt`：没有非 system 消息时会自动转为 user 消息；已有会话（包括工具调用和工具结果）优先，调用方的请求不会被改写。服务商声明使用原生媒体路由时仍由适配器处理 `Prompt`。
+
 OpenAI 及其兼容协议的文本调用支持 `SetTemperature`、`SetTopP`、`SetFrequencyPenalty`、`SetPresencePenalty`、`SetSeed`，流式与非流式共用这些参数。`SetOption` 的同名字段覆盖配置值；`SetTemperature(0)` 和 `SetTopP(0)` 会明确发送零值。
 
 OpenAI adapter 的聊天、流式连接、图片创建、Responses 和任务查询共用以下设置：

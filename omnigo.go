@@ -168,6 +168,7 @@ func NewLLM(opts ...ConfigOption) (LLM, error) {
 	for _, opt := range opts {
 		opt(cfg)
 	}
+	cfg = cfg.Clone()
 
 	// For Ollama, ensure we have a dummy API key if none is provided
 	if cfg.Provider == "ollama" {

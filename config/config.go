@@ -4,6 +4,7 @@
 package config
 
 import (
+	"maps"
 	"net/http"
 	"os"
 	"strings"
@@ -77,6 +78,35 @@ type Config struct {
 	SecretKey             string `env:"LLM_SECRET_KEY"`
 	EnableCaching         bool   `env:"LLM_ENABLE_CACHING" envDefault:"false"`
 	EnableStreaming       bool   `env:"LLM_ENABLE_STREAMING" envDefault:"false"`
+}
+
+// Clone snapshots configuration values for an independent client instance.
+// HTTP transports, cookie jars and callbacks remain shared for connection reuse.
+func (c *Config) Clone() *Config {
+	if c == nil {
+		return nil
+	}
+	cloned := *c
+	cloned.APIKeys = maps.Clone(c.APIKeys)
+	cloned.ExtraHeaders = maps.Clone(c.ExtraHeaders)
+	cloned.Seed = cloneValue(c.Seed)
+	cloned.MinP = cloneValue(c.MinP)
+	cloned.RepeatPenalty = cloneValue(c.RepeatPenalty)
+	cloned.RepeatLastN = cloneValue(c.RepeatLastN)
+	cloned.Mirostat = cloneValue(c.Mirostat)
+	cloned.MirostatEta = cloneValue(c.MirostatEta)
+	cloned.MirostatTau = cloneValue(c.MirostatTau)
+	cloned.TfsZ = cloneValue(c.TfsZ)
+	cloned.HTTPClient = cloneValue(c.HTTPClient)
+	return &cloned
+}
+
+func cloneValue[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 // LoadConfig creates a new Config instance, loading values from environment

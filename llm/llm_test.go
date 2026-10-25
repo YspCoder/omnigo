@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/YspCoder/omnigo/adapter"
@@ -30,6 +31,7 @@ func TestNewLLM_AllowsAKSKWithoutAPIKey(t *testing.T) {
 }
 
 func TestNewLLMPassesExtraHeadersToAdaptor(t *testing.T) {
+	seed := 42
 	cfg := &config.Config{
 		Provider:     "custom",
 		Model:        "test-model",
@@ -37,6 +39,8 @@ func TestNewLLMPassesExtraHeadersToAdaptor(t *testing.T) {
 		PollingURL:   "https://example.com/v1/tasks/{task_id}",
 		APIKeys:      map[string]string{"custom": "test-api-key"},
 		ExtraHeaders: map[string]string{"X-Tenant-ID": "tenant-1"},
+		Seed:         &seed,
+		SystemPrompt: "original system prompt",
 	}
 
 	client, err := NewLLM(cfg, utils.NewLogger(utils.LogLevelOff), adapter.NewRegistry("custom"))
@@ -49,6 +53,25 @@ func TestNewLLMPassesExtraHeadersToAdaptor(t *testing.T) {
 	}
 	if got := impl.adaptorCfg.PollingURL; got != cfg.PollingURL {
 		t.Fatalf("PollingURL = %q, want %q", got, cfg.PollingURL)
+	}
+	second, err := NewLLM(cfg, utils.NewLogger(utils.LogLevelOff), adapter.NewRegistry("custom"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Model = "changed-model"
+	cfg.ExtraHeaders["X-Tenant-ID"] = "changed-tenant"
+	cfg.APIKeys["custom"] = "changed-key"
+	seed = 99
+	impl.SetSystemPrompt("instance prompt", CacheTypeEphemeral)
+	if cfg.SystemPrompt != "original system prompt" || second.(*LLMImpl).effectivePrompt(NewPrompt("hello")).SystemPrompt != "original system prompt" {
+		t.Fatal("system prompt changed outside this client")
+	}
+	request := impl.effectiveMediaRequest(&dto.MediaRequest{})
+	if request.Model != "test-model" || len(request.Messages) != 1 || request.Messages[0].Content != "instance prompt" || impl.generationOptions()["seed"] != 42 {
+		t.Fatalf("client defaults drifted: request=%+v options=%v", request, impl.generationOptions())
+	}
+	if impl.adaptorCfg.Headers["X-Tenant-ID"] != "tenant-1" || impl.adaptorCfg.APIKey != "test-api-key" {
+		t.Fatal("provider configuration drifted")
 	}
 }
 
@@ -194,19 +217,26 @@ func TestGenerateWithResponseReturnsPrimaryChoiceContent(t *testing.T) {
 }
 
 type stubAdaptor struct {
-	response *dto.MediaResponse
-	stream   dto.TokenStream
-	media    *dto.MediaResponse
-	useMedia bool
+	response     *dto.MediaResponse
+	stream       dto.TokenStream
+	media        *dto.MediaResponse
+	useMedia     bool
+	checkRequest func(*dto.MediaRequest)
 }
 
 func (s stubAdaptor) UsesMediaRequest(*dto.MediaRequest) bool { return s.useMedia }
 
-func (s stubAdaptor) Chat(_ context.Context, _ *adapter.ProviderConfig, _ *dto.MediaRequest) (*dto.MediaResponse, error) {
+func (s stubAdaptor) Chat(_ context.Context, _ *adapter.ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
+	if s.checkRequest != nil {
+		s.checkRequest(request)
+	}
 	return s.response, nil
 }
 
-func (s stubAdaptor) Stream(_ context.Context, _ *adapter.ProviderConfig, _ *dto.MediaRequest) (dto.TokenStream, error) {
+func (s stubAdaptor) Stream(_ context.Context, _ *adapter.ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
+	if s.checkRequest != nil {
+		s.checkRequest(request)
+	}
 	return s.stream, nil
 }
 
@@ -228,23 +258,30 @@ func (s stubAdaptor) StreamMedia(_ context.Context, _ *adapter.ProviderConfig, _
 
 func TestMediaTypeTextUsesChat(t *testing.T) {
 	client := &LLMImpl{
-		config:     &config.Config{Model: "test-model"},
-		relay:      relay.NewRelay(),
-		adaptor:    stubAdaptor{response: &dto.MediaResponse{Choices: []dto.ChatChoice{{Message: dto.Message{Content: "hello from chat"}}}, Text: "hello from chat"}},
+		config: &config.Config{Model: "test-model"},
+		relay:  relay.NewRelay(),
+		adaptor: stubAdaptor{
+			response: &dto.MediaResponse{Choices: []dto.ChatChoice{{Message: dto.Message{Content: "hello from chat"}}}, Text: "hello from chat"},
+			checkRequest: func(request *dto.MediaRequest) {
+				if len(request.Messages) != 1 || request.Messages[0].Role != "user" || request.Messages[0].Content != "hello" {
+					t.Fatalf("chat messages = %+v", request.Messages)
+				}
+			},
+		},
 		adaptorCfg: &adapter.ProviderConfig{},
 	}
 
-	resp, err := client.Media(context.Background(), &dto.MediaRequest{
-		Type: dto.MediaTypeText,
-		Messages: []dto.Message{
-			{Role: "user", Content: "hello"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Media error = %v", err)
-	}
-	if resp.Text != "hello from chat" {
-		t.Fatalf("text = %q, want hello from chat", resp.Text)
+	for _, request := range []*dto.MediaRequest{
+		{Type: dto.MediaTypeText, Messages: []dto.Message{{Role: "user", Content: "hello"}}},
+		{Type: dto.MediaTypeText, Prompt: "hello"},
+	} {
+		resp, err := client.Media(context.Background(), request)
+		if err != nil {
+			t.Fatalf("Media error = %v", err)
+		}
+		if resp.Text != "hello from chat" {
+			t.Fatalf("text = %q, want hello from chat", resp.Text)
+		}
 	}
 }
 
@@ -316,12 +353,44 @@ func TestPromptConversionPreservesHistory(t *testing.T) {
 }
 
 func TestStreamMediaDoesNotMutateRequest(t *testing.T) {
-	client := &LLMImpl{config: &config.Config{}, relay: relay.NewRelay(), adaptor: stubAdaptor{stream: &stubTokenStream{}}, adaptorCfg: &adapter.ProviderConfig{}}
-	request := &dto.MediaRequest{Type: dto.MediaTypeText, Messages: []dto.Message{{Role: "user", Content: "hello"}}}
-	if _, err := client.StreamMedia(context.Background(), request); err != nil {
-		t.Fatal(err)
-	}
-	if request.Stream {
-		t.Fatal("caller request mutated")
+	for _, tc := range []struct {
+		name    string
+		message dto.Message
+	}{
+		{"prompt only", dto.Message{}},
+		{"existing user", dto.Message{Role: "user", Content: "hello"}},
+		{"tool call", dto.Message{Role: "assistant", ToolCalls: []dto.ToolCall{{ID: "call-1", Type: "function"}}}},
+		{"tool result", dto.Message{Role: "tool", ToolCallID: "call-1", Content: "result"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := &dto.MediaRequest{Type: dto.MediaTypeText, Prompt: "hello"}
+			wantRole := tc.message.Role
+			if wantRole == "" {
+				wantRole = "user"
+			} else {
+				request.Messages = []dto.Message{tc.message}
+			}
+			messageCount := len(request.Messages)
+			client := &LLMImpl{
+				config: &config.Config{SystemPrompt: "system"}, relay: relay.NewRelay(), adaptorCfg: &adapter.ProviderConfig{},
+				adaptor: stubAdaptor{stream: &stubTokenStream{}, checkRequest: func(got *dto.MediaRequest) {
+					if !got.Stream || len(got.Messages) != 2 || got.Messages[0].Content != "system" || got.Messages[1].Role != wantRole {
+						t.Fatalf("stream request = %+v", got)
+					}
+					if wantRole == "user" && got.Messages[1].Content != "hello" {
+						t.Fatalf("user input lost: %+v", got.Messages)
+					}
+					if tc.message.Role != "" && !reflect.DeepEqual(got.Messages[1], tc.message) {
+						t.Fatalf("conversation message changed: %+v", got.Messages[1])
+					}
+				}},
+			}
+			if _, err := client.StreamMedia(context.Background(), request); err != nil {
+				t.Fatal(err)
+			}
+			if request.Stream || len(request.Messages) != messageCount || request.Model != "" {
+				t.Fatal("caller request mutated")
+			}
+		})
 	}
 }

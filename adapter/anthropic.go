@@ -47,7 +47,9 @@ func (a *AnthropicAdaptor) getClientWithError(config *ProviderConfig) (*anthropi
 		if transport == nil {
 			transport = http.DefaultTransport
 		}
-		httpClient.Transport = anthropicHeaderTransport{transport, copyMapString(config.Headers)}
+		cloned := *httpClient
+		cloned.Transport = anthropicHeaderTransport{transport, copyMapString(config.Headers)}
+		httpClient = &cloned
 	}
 	opts := []anthropic.ClientOption{anthropic.WithHTTPClient(httpClient)}
 	if baseURL := strings.TrimSpace(config.BaseURL); baseURL != "" {

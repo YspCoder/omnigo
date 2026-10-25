@@ -35,6 +35,8 @@ type ProviderConfig struct {
 }
 
 // Adaptor defines provider-specific implementations for unified multimodal requests.
+// SDK adaptors bind their client to the first configuration they receive. Use a
+// separate adaptor per provider configuration and keep connection settings stable.
 type Adaptor interface {
 	// Chat executes a text-generation request using the unified multimodal DTO.
 	Chat(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error)
