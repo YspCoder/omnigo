@@ -4,6 +4,7 @@ package adapter
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"iter"
@@ -130,7 +131,7 @@ func (a *GoogleAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.M
 		if err != nil {
 			return nil, err
 		}
-		return a.toVidResp(op), nil
+		return a.toVidResp(ctx, op)
 	default:
 		return nil, fmt.Errorf("unsupported media type for Google: %s", r.Type)
 	}
@@ -158,7 +159,10 @@ func (a *GoogleAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, 
 			code, message = mapErr(op.Error)
 		} else {
 			status = "SUCCEEDED"
-			videoURL, videoB64JSON, videoMIMEType = a.googleVideoPayload(ctx, c, op.Response)
+			videoURL, videoB64JSON, videoMIMEType, err = a.googleVideoPayload(ctx, c, op.Response)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -229,8 +233,8 @@ func (a *GoogleAdaptor) toGenCfg(r *dto.MediaRequest) *genai.GenerateContentConf
 			Parts: []*genai.Part{genai.NewPartFromText(systemPrompt)},
 		}
 	}
-	if r.Temperature != 0 {
-		cfg.Temperature = genai.Ptr(float32(r.Temperature))
+	if temperature, ok := requestTemperature(r); ok {
+		cfg.Temperature = genai.Ptr(float32(temperature))
 	}
 	if r.MaxTokens != 0 {
 		cfg.MaxOutputTokens = int32(r.MaxTokens)
@@ -303,23 +307,27 @@ func (a *GoogleAdaptor) toVidCfg(r *dto.MediaRequest) *genai.GenerateVideosConfi
 	return cfg
 }
 
-func (a *GoogleAdaptor) toVidResp(op *genai.GenerateVideosOperation) *dto.MediaResponse {
+func (a *GoogleAdaptor) toVidResp(ctx context.Context, op *genai.GenerateVideosOperation) (*dto.MediaResponse, error) {
 	res := &dto.MediaResponse{
 		TaskID: op.Name,
 	}
 	if !op.Done {
 		res.Status = "RUNNING"
-		return res
+		return res, nil
 	}
 	if len(op.Error) > 0 {
 		res.Status = "FAILED"
 		res.ErrorCode, res.ErrorMessage = mapErr(op.Error)
-		return res
+		return res, nil
 	}
 	res.Status = "SUCCEEDED"
-	res.Video.URL, res.Video.B64JSON, res.Video.MIMEType = a.googleVideoPayload(context.Background(), a.client, op.Response)
+	var err error
+	res.Video.URL, res.Video.B64JSON, res.Video.MIMEType, err = a.googleVideoPayload(ctx, a.client, op.Response)
+	if err != nil {
+		return nil, err
+	}
 	res.URL = res.Video.URL
-	return res
+	return res, nil
 }
 
 func firstGeneratedVideo(resp *genai.GenerateVideosResponse) *genai.GeneratedVideo {
@@ -333,10 +341,13 @@ func firstGeneratedVideo(resp *genai.GenerateVideosResponse) *genai.GeneratedVid
 	return v
 }
 
-func (a *GoogleAdaptor) googleVideoPayload(ctx context.Context, c *genai.Client, resp *genai.GenerateVideosResponse) (url, b64JSON, mimeType string) {
+func (a *GoogleAdaptor) googleVideoPayload(ctx context.Context, c *genai.Client, resp *genai.GenerateVideosResponse) (url, b64JSON, mimeType string, err error) {
+	if err := ctx.Err(); err != nil {
+		return "", "", "", err
+	}
 	v := firstGeneratedVideo(resp)
 	if v == nil || v.Video == nil {
-		return "", "", ""
+		return "", "", "", nil
 	}
 
 	url = v.Video.URI
@@ -347,14 +358,62 @@ func (a *GoogleAdaptor) googleVideoPayload(ctx context.Context, c *genai.Client,
 
 	videoBytes := v.Video.VideoBytes
 	if len(videoBytes) == 0 && c != nil && c.ClientConfig().Backend != genai.BackendVertexAI {
-		if data, err := c.Files.Download(ctx, genai.NewDownloadURIFromGeneratedVideo(v), nil); err == nil {
+		data, err := googleDownloadVideo(ctx, c, v.Video.URI)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", "", "", ctxErr
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return "", "", "", err
+		}
+		if err == nil {
 			videoBytes = data
 		}
 	}
 	if len(videoBytes) > 0 {
 		b64JSON = base64.StdEncoding.EncodeToString(videoBytes)
 	}
-	return url, b64JSON, mimeType
+	return url, b64JSON, mimeType, nil
+}
+
+// googleDownloadVideo keeps SDK URL/auth handling while checking and closing
+// the HTTP response, which Files.Download does not do in the current SDK.
+func googleDownloadVideo(ctx context.Context, client *genai.Client, uri string) ([]byte, error) {
+	config := client.ClientConfig()
+	config.HTTPOptions.Headers = config.HTTPOptions.Headers.Clone()
+	httpClient := *googleHTTPClient(client)
+	transport := &googleDownloadTransport{RoundTripper: httpClient.Transport}
+	if transport.RoundTripper == nil {
+		transport.RoundTripper = http.DefaultTransport
+	}
+	httpClient.Transport = transport
+	config.HTTPClient = &httpClient
+	downloadClient, err := genai.NewClient(ctx, &config)
+	if err != nil {
+		return nil, err
+	}
+	// Use a private Video because the SDK stores downloaded bytes in it before
+	// returning; a failed download must not cache an error body as video data.
+	data, err := downloadClient.Files.Download(ctx, genai.NewDownloadURIFromVideo(&genai.Video{URI: uri}), nil)
+	if response := transport.response; response != nil {
+		if response.Body != nil {
+			response.Body.Close()
+		}
+		if err == nil && (response.StatusCode < 200 || response.StatusCode >= 300) {
+			return nil, fmt.Errorf("google video download: HTTP status %d", response.StatusCode)
+		}
+	}
+	return data, err
+}
+
+type googleDownloadTransport struct {
+	http.RoundTripper
+	response *http.Response
+}
+
+func (t *googleDownloadTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := t.RoundTripper.RoundTrip(request)
+	t.response = response
+	return response, err
 }
 
 func mapErr(errMap map[string]any) (code, message string) {

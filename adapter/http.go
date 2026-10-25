@@ -92,6 +92,33 @@ func newProviderHTTPClient(cfg *ProviderConfig) (*http.Client, error) {
 	return client, nil
 }
 
+// httpClientWithHeaders keeps SDK-specific headers off the shared HTTP client.
+func httpClientWithHeaders(client *http.Client, headers map[string]string) *http.Client {
+	if len(headers) == 0 {
+		return client
+	}
+	cloned := *client
+	transport := cloned.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	cloned.Transport = providerHeaderTransport{transport, copyMapString(headers)}
+	return &cloned
+}
+
+type providerHeaderTransport struct {
+	http.RoundTripper
+	headers map[string]string
+}
+
+func (t providerHeaderTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	request = request.Clone(request.Context())
+	for key, value := range t.headers {
+		request.Header.Set(key, value)
+	}
+	return t.RoundTripper.RoundTrip(request)
+}
+
 // Keep retry policy outside the SDK so raw and SDK API requests use the same settings.
 type retryHTTPClient struct {
 	client     *http.Client

@@ -34,8 +34,12 @@ func (a *ArkAdaptor) getClient(config *ProviderConfig) *arkruntime.Client {
 	if config.BaseURL != "" {
 		opts = append(opts, arkruntime.WithBaseUrl(config.BaseURL))
 	}
-	if config.HTTPClient != nil {
-		opts = append(opts, arkruntime.WithHTTPClient(config.HTTPClient))
+	httpClient := config.HTTPClient
+	if httpClient == nil && len(config.Headers) > 0 {
+		httpClient = arkruntime.NewClientConfig("", "", "").HTTPClient
+	}
+	if httpClient != nil {
+		opts = append(opts, arkruntime.WithHTTPClient(httpClientWithHeaders(httpClient, config.Headers)))
 	}
 	if config.APIKey != "" {
 		a.client = arkruntime.NewClientWithApiKey(config.APIKey, opts...)
@@ -137,7 +141,11 @@ func (a *ArkAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, id str
 		return nil, err
 	}
 	res := &dto.TaskStatusResponse{
-		Usage: &dto.TaskStatusUsage{},
+		Usage: &dto.TaskStatusUsage{
+			PromptTokens:     resp.Usage.PromptTokens,
+			CompletionTokens: resp.Usage.CompletionTokens,
+			TotalTokens:      resp.Usage.TotalTokens,
+		},
 		Output: dto.TaskStatusOutput{
 			TaskID:       resp.ID,
 			TaskStatus:   resp.Status,
@@ -190,9 +198,8 @@ func (a *ArkAdaptor) toChatReq(r *dto.MediaRequest) *responses.ResponsesRequest 
 		maxOutputTokens := int64(r.MaxTokens)
 		req.MaxOutputTokens = &maxOutputTokens
 	}
-	if r.Temperature != 0 {
-		t := r.Temperature
-		req.Temperature = &t
+	if temperature, ok := requestTemperature(r); ok {
+		req.Temperature = &temperature
 	}
 	for _, m := range r.Messages {
 		content := toArkResponsesMessageContent(m)

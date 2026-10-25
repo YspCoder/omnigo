@@ -370,6 +370,8 @@ export LLM_SYSTEM_PROMPT_CACHE_TYPE="ephemeral"
 
 OpenAI 及其兼容协议的文本调用支持 `SetTemperature`、`SetTopP`、`SetFrequencyPenalty`、`SetPresencePenalty`、`SetSeed`，流式与非流式共用这些参数。`SetOption` 的同名字段覆盖配置值；`SetTemperature(0)` 和 `SetTopP(0)` 会明确发送零值。
 
+Google 和 Ark 的文本请求也会保留显式设置的零温度；单次 `Options["temperature"]` 优先于请求中的 `Temperature`。
+
 OpenAI adapter 的聊天、流式连接、图片创建、Responses 和任务查询共用以下设置：
 
 - `SetExtraHeaders` 设置额外 Header，同名 Header 会覆盖默认值，包括 `Authorization`。

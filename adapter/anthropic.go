@@ -4,7 +4,6 @@ package adapter
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strings"
 	"sync"
 
@@ -42,15 +41,7 @@ func (a *AnthropicAdaptor) getClientWithError(config *ProviderConfig) (*anthropi
 		a.clientErr = err
 		return nil, err
 	}
-	if len(config.Headers) > 0 {
-		transport := httpClient.Transport
-		if transport == nil {
-			transport = http.DefaultTransport
-		}
-		cloned := *httpClient
-		cloned.Transport = anthropicHeaderTransport{transport, copyMapString(config.Headers)}
-		httpClient = &cloned
-	}
+	httpClient = httpClientWithHeaders(httpClient, config.Headers)
 	opts := []anthropic.ClientOption{anthropic.WithHTTPClient(httpClient)}
 	if baseURL := strings.TrimSpace(config.BaseURL); baseURL != "" {
 		opts = append(opts, anthropic.WithBaseURL(baseURL))
@@ -58,19 +49,6 @@ func (a *AnthropicAdaptor) getClientWithError(config *ProviderConfig) (*anthropi
 	client := anthropic.NewClient(config.APIKey, opts...)
 	a.client = client
 	return client, nil
-}
-
-type anthropicHeaderTransport struct {
-	http.RoundTripper
-	headers map[string]string
-}
-
-func (t anthropicHeaderTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	request = request.Clone(request.Context())
-	for key, value := range t.headers {
-		request.Header.Set(key, value)
-	}
-	return t.RoundTripper.RoundTrip(request)
 }
 
 func (a *AnthropicAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
