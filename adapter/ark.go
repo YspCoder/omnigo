@@ -50,15 +50,19 @@ func (a *ArkAdaptor) getClient(config *ProviderConfig) *arkruntime.Client {
 }
 
 func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, r *dto.MediaRequest) (*dto.MediaResponse, error) {
-	chatReq := a.toChatReq(r)
+	chatReq, err := a.toChatReq(r)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := a.getClient(config).CreateResponses(ctx, chatReq)
 	if err != nil {
 		return nil, err
 	}
 	text := arkResponsesText(resp)
 	msg := dto.Message{
-		Role:    arkResponsesRole(resp),
-		Content: text,
+		Role:      arkResponsesRole(resp),
+		Content:   text,
+		ToolCalls: arkResponseToolCalls(resp),
 	}
 	res := &dto.MediaResponse{
 		ID:      resp.GetId(),
@@ -72,6 +76,9 @@ func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, r *dto.Me
 		}},
 		Usage: arkResponsesUsage(resp.GetUsage()),
 	}
+	if len(msg.ToolCalls) > 0 {
+		res.Choices[0].FinishReason = "tool_calls"
+	}
 	if resp.GetError() != nil {
 		res.ErrorMessage = resp.GetError().GetMessage()
 		return res, fmt.Errorf("ark responses api error: %s", res.ErrorMessage)
@@ -80,7 +87,10 @@ func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, r *dto.Me
 }
 
 func (a *ArkAdaptor) Stream(ctx context.Context, config *ProviderConfig, r *dto.MediaRequest) (dto.TokenStream, error) {
-	chatReq := a.toChatReq(r)
+	chatReq, err := a.toChatReq(r)
+	if err != nil {
+		return nil, err
+	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	s, err := a.getClient(config).CreateResponsesStream(streamCtx, chatReq)
 	if err != nil {
@@ -202,10 +212,12 @@ func (a *ArkAdaptor) ListTasks(ctx context.Context, cfg *ProviderConfig, query m
 }
 
 type arkResponsesRequest struct {
-	Model           string                     `json:"model"`
-	Input           []arkResponsesInputMessage `json:"input"`
-	MaxOutputTokens *int64                     `json:"max_output_tokens,omitempty"`
-	Temperature     *float64                   `json:"temperature,omitempty"`
+	Model           string                `json:"model"`
+	Input           []interface{}         `json:"input"`
+	Tools           []openAIResponsesTool `json:"tools,omitempty"`
+	ToolChoice      interface{}           `json:"tool_choice,omitempty"`
+	MaxOutputTokens *int64                `json:"max_output_tokens,omitempty"`
+	Temperature     *float64              `json:"temperature,omitempty"`
 }
 
 type arkResponsesInputMessage struct {
@@ -213,8 +225,13 @@ type arkResponsesInputMessage struct {
 	Content []map[string]interface{} `json:"content"`
 }
 
-func (a *ArkAdaptor) toChatReq(r *dto.MediaRequest) *responses.ResponsesRequest {
-	req := &arkResponsesRequest{Model: r.Model}
+func (a *ArkAdaptor) toChatReq(r *dto.MediaRequest) (*responses.ResponsesRequest, error) {
+	req := &arkResponsesRequest{Model: r.Model, Tools: toOpenAIResponsesTools(r.Tools), ToolChoice: openAIResponsesToolChoice(r.ToolChoice)}
+	for _, tool := range r.Tools {
+		if tool.Type != "" && tool.Type != "function" || strings.TrimSpace(tool.Function.Name) == "" {
+			return nil, fmt.Errorf("ark tools require a named function")
+		}
+	}
 	if r.MaxTokens > 0 {
 		maxOutputTokens := int64(r.MaxTokens)
 		req.MaxOutputTokens = &maxOutputTokens
@@ -223,24 +240,41 @@ func (a *ArkAdaptor) toChatReq(r *dto.MediaRequest) *responses.ResponsesRequest 
 		req.Temperature = &temperature
 	}
 	for _, m := range r.Messages {
-		content := toArkResponsesMessageContent(m)
-		if len(content) == 0 {
+		if m.Role == "tool" {
+			if m.ToolCallID == "" {
+				return nil, fmt.Errorf("ark tool result requires tool_call_id")
+			}
+			output, ok := m.Content.(string)
+			if !ok {
+				raw, err := json.Marshal(m.Content)
+				if err != nil {
+					return nil, err
+				}
+				output = string(raw)
+			}
+			req.Input = append(req.Input, map[string]interface{}{"type": "function_call_output", "call_id": m.ToolCallID, "output": output})
 			continue
 		}
-		req.Input = append(req.Input, arkResponsesInputMessage{
-			Role:    arkNormalizeMessageRole(m.Role),
-			Content: content,
-		})
+		content := toArkResponsesMessageContent(m)
+		if len(content) > 0 {
+			req.Input = append(req.Input, arkResponsesInputMessage{Role: arkNormalizeMessageRole(m.Role), Content: content})
+		}
+		for _, call := range m.ToolCalls {
+			if call.ID == "" || call.Function.Name == "" || !json.Valid(call.Function.Arguments) {
+				return nil, fmt.Errorf("ark tool history requires call ID, name and valid JSON arguments")
+			}
+			req.Input = append(req.Input, map[string]interface{}{"type": "function_call", "call_id": call.ID, "name": call.Function.Name, "arguments": string(call.Function.Arguments)})
+		}
 	}
 	data, err := json.Marshal(req)
 	if err != nil {
-		return &responses.ResponsesRequest{Model: r.Model}
+		return nil, fmt.Errorf("encode ark request: %w", err)
 	}
 	typed := &responses.ResponsesRequest{}
 	if err := json.Unmarshal(data, typed); err != nil {
-		return &responses.ResponsesRequest{Model: r.Model}
+		return nil, fmt.Errorf("convert ark request: %w", err)
 	}
-	return typed
+	return typed, nil
 }
 
 type arkChatMessageContentPart struct {
@@ -1023,11 +1057,16 @@ func formatUnixMillis(ts int64) string {
 }
 
 type arkStream struct {
-	r   *arkutils.ResponsesStreamReader
-	err error
+	r       *arkutils.ResponsesStreamReader
+	err     error
+	tools   map[int]*arkToolStreamState
+	pending []*dto.StreamToken
 }
 
 func (w *arkStream) Next(ctx context.Context) (*dto.StreamToken, error) {
+	if token := w.nextPending(); token != nil {
+		return token, nil
+	}
 	if w.err != nil {
 		err := w.err
 		w.err = io.EOF
@@ -1043,6 +1082,9 @@ func (w *arkStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 		}
 		if evtErr := resp.GetError(); evtErr != nil {
 			return nil, fmt.Errorf("ark responses stream error: %s", evtErr.GetMessage())
+		}
+		if token := w.toolEvent(resp); token != nil {
+			return token, nil
 		}
 		if text := resp.GetText(); text != nil {
 			delta := firstNonEmptyString(text.GetDelta(), text.GetText())
@@ -1068,8 +1110,22 @@ func (w *arkStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 			continue
 		}
 		w.err = terminalErr
+		for index, item := range terminal.GetOutput() {
+			if call := item.GetFunctionToolCall(); call != nil {
+				if token := w.toolDelta(index, call, "", true); token != nil {
+					w.pending = append(w.pending, token)
+				}
+			}
+		}
 		if usage := usagePointer(arkResponsesUsage(terminal.GetUsage())); usage != nil {
-			return &dto.StreamToken{Type: "usage", Usage: usage, FinishReason: arkResponsesFinishReason(terminal)}, nil
+			finish := arkResponsesFinishReason(terminal)
+			if len(w.tools) > 0 && terminalErr == io.EOF {
+				finish = "tool_calls"
+			}
+			w.pending = append(w.pending, &dto.StreamToken{Type: "usage", Usage: usage, FinishReason: finish})
+		}
+		if token := w.nextPending(); token != nil {
+			return token, nil
 		}
 		return nil, terminalErr
 	}

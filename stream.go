@@ -18,8 +18,10 @@ type (
 	// StreamConfig holds configuration options for streaming.
 	StreamConfig = llm.StreamConfig
 
-	// RetryStrategy defines the interface for handling stream interruptions.
+	// RetryStrategy defines retries while establishing a stream.
 	RetryStrategy = llm.RetryStrategy
+
+	DefaultRetryStrategy = llm.DefaultRetryStrategy
 )
 
 // StreamOption is a function type that modifies StreamConfig

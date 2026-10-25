@@ -170,11 +170,16 @@ func (b *googleVideoTestBody) Close() error {
 }
 
 func TestSDKStreamCancellation(t *testing.T) {
-	for _, provider := range []string{"google", "ark-text", "ark-image"} {
+	for _, provider := range []string{"google", "google-image", "google-video", "google-interactions", "ark-text", "ark-image"} {
 		for _, mode := range []string{"deadline", "close"} {
 			t.Run(provider+"/"+mode, func(t *testing.T) {
 				started, released := make(chan struct{}), make(chan struct{})
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if provider == "google-video" && r.Method == http.MethodPost {
+						w.Header().Set("Content-Type", "application/json")
+						io.WriteString(w, `{"name":"operations/video-1","done":false}`)
+						return
+					}
 					w.Header().Set("Content-Type", "text/event-stream")
 					w.(http.Flusher).Flush()
 					close(started)
@@ -191,6 +196,14 @@ func TestSDKStreamCancellation(t *testing.T) {
 				switch provider {
 				case "google":
 					stream, err = (&GoogleAdaptor{}).Stream(ctx, cfg, request)
+				case "google-image", "google-video", "google-interactions":
+					request.Type, request.Model = dto.MediaTypeImage, "gemini-image"
+					if provider == "google-video" {
+						request.Type, request.Model = dto.MediaTypeVideo, "veo-test"
+					} else if provider == "google-interactions" {
+						cfg.ChatProtocol = "interactions"
+					}
+					stream, err = (&GoogleAdaptor{}).StreamMedia(ctx, cfg, request)
 				case "ark-text":
 					stream, err = (&ArkAdaptor{}).Stream(ctx, cfg, request)
 				case "ark-image":

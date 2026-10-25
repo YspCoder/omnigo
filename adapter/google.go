@@ -55,6 +55,9 @@ func (a *GoogleAdaptor) getClient(ctx context.Context, cfg *ProviderConfig) (*ge
 }
 
 func (a *GoogleAdaptor) Chat(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (*dto.MediaResponse, error) {
+	if googleUsesInteractions(cfg, r) {
+		return a.interaction(ctx, cfg, r)
+	}
 	c, err := a.getClient(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -63,7 +66,11 @@ func (a *GoogleAdaptor) Chat(ctx context.Context, cfg *ProviderConfig, r *dto.Me
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.Models.GenerateContent(ctx, r.Model, contents, a.toGenCfg(r))
+	config, err := a.toGenCfg(r)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.Models.GenerateContent(ctx, r.Model, contents, config)
 	if err != nil {
 		return nil, err
 	}
@@ -71,6 +78,9 @@ func (a *GoogleAdaptor) Chat(ctx context.Context, cfg *ProviderConfig, r *dto.Me
 }
 
 func (a *GoogleAdaptor) Stream(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (dto.TokenStream, error) {
+	if googleUsesInteractions(cfg, r) {
+		return a.interactionStream(ctx, cfg, r)
+	}
 	c, err := a.getClient(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -80,12 +90,20 @@ func (a *GoogleAdaptor) Stream(ctx context.Context, cfg *ProviderConfig, r *dto.
 		return nil, err
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
-	seq := c.Models.GenerateContentStream(streamCtx, r.Model, contents, a.toGenCfg(r))
+	config, err := a.toGenCfg(r)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	seq := c.Models.GenerateContentStream(streamCtx, r.Model, contents, config)
 	next, stop := iter.Pull2(seq)
 	return newCancellableStream(&googleStream{next: next, stop: stop}, cancel), nil
 }
 
 func (a *GoogleAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (*dto.MediaResponse, error) {
+	if googleUsesInteractions(cfg, r) {
+		return a.interaction(ctx, cfg, r)
+	}
 	c, err := a.getClient(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -98,7 +116,11 @@ func (a *GoogleAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.M
 			if err != nil {
 				return nil, err
 			}
-			resp, err := c.Models.GenerateContent(ctx, model, contents, a.toImgContentCfg(r))
+			config, err := a.toImgContentCfg(r)
+			if err != nil {
+				return nil, err
+			}
+			resp, err := c.Models.GenerateContent(ctx, model, contents, config)
 			if err != nil {
 				return nil, err
 			}
@@ -113,7 +135,7 @@ func (a *GoogleAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.M
 			if img.Image == nil {
 				continue
 			}
-			data := dto.ImageData{}
+			data := dto.ImageData{MIMEType: img.Image.MIMEType}
 			if img.Image.GCSURI != "" {
 				data.URL = img.Image.GCSURI
 			}
@@ -138,6 +160,9 @@ func (a *GoogleAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.M
 }
 
 func (a *GoogleAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, id string, _ ...map[string]string) (*dto.TaskStatusResponse, error) {
+	if googleUsesInteractions(config, nil) || strings.HasPrefix(id, "interactions/") {
+		return a.interactionStatus(ctx, config, id)
+	}
 	c, err := a.getClient(ctx, config)
 	if err != nil {
 		return nil, err
@@ -183,19 +208,23 @@ func (a *GoogleAdaptor) ListTasks(ctx context.Context, config *ProviderConfig, q
 	return nil, fmt.Errorf("task list not supported by Google adaptor")
 }
 
-func (a *GoogleAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
-	return nil, fmt.Errorf("streaming media not supported by Google adaptor")
-}
-
 // Helpers
 func (a *GoogleAdaptor) toContents(ctx context.Context, c *genai.Client, r *dto.MediaRequest) ([]*genai.Content, error) {
 	messages := utils.NonSystemMessages(r.Messages)
 	lastUserIdx := lastGoogleUserMessageIndex(messages)
 	res := make([]*genai.Content, 0, len(messages))
+	names := make(map[string]string)
 	for idx, m := range messages {
-		parts, err := googleMessageParts(ctx, googleHTTPClient(c), m, idx == lastUserIdx, r)
+		parts, err := googleFunctionParts(m, names)
 		if err != nil {
 			return nil, err
+		}
+		if m.Role != "tool" {
+			content, err := googleMessageParts(ctx, googleHTTPClient(c), m, idx == lastUserIdx, r)
+			if err != nil {
+				return nil, err
+			}
+			parts = append(content, parts...)
 		}
 		if len(parts) == 0 {
 			continue
@@ -203,6 +232,8 @@ func (a *GoogleAdaptor) toContents(ctx context.Context, c *genai.Client, r *dto.
 		role := m.Role
 		if role == "assistant" {
 			role = genai.RoleModel
+		} else if role == "tool" {
+			role = genai.RoleUser
 		}
 		res = append(res, &genai.Content{Role: role, Parts: parts})
 	}
@@ -225,7 +256,7 @@ func (a *GoogleAdaptor) toMediaPromptContents(ctx context.Context, c *genai.Clie
 	return []*genai.Content{{Role: genai.RoleUser, Parts: parts}}, nil
 }
 
-func (a *GoogleAdaptor) toGenCfg(r *dto.MediaRequest) *genai.GenerateContentConfig {
+func (a *GoogleAdaptor) toGenCfg(r *dto.MediaRequest) (*genai.GenerateContentConfig, error) {
 	cfg := &genai.GenerateContentConfig{}
 	if systemPrompt := utils.FirstSystemMessage(r.Messages); systemPrompt != "" {
 		cfg.SystemInstruction = &genai.Content{
@@ -239,7 +270,7 @@ func (a *GoogleAdaptor) toGenCfg(r *dto.MediaRequest) *genai.GenerateContentConf
 	if r.MaxTokens != 0 {
 		cfg.MaxOutputTokens = int32(r.MaxTokens)
 	}
-	return cfg
+	return cfg, googleApplyTools(cfg, r)
 }
 
 func (a *GoogleAdaptor) toImgCfg(r *dto.MediaRequest) *genai.GenerateImagesConfig {
@@ -254,8 +285,11 @@ func (a *GoogleAdaptor) toImgCfg(r *dto.MediaRequest) *genai.GenerateImagesConfi
 	return cfg
 }
 
-func (a *GoogleAdaptor) toImgContentCfg(r *dto.MediaRequest) *genai.GenerateContentConfig {
-	cfg := a.toGenCfg(r)
+func (a *GoogleAdaptor) toImgContentCfg(r *dto.MediaRequest) (*genai.GenerateContentConfig, error) {
+	cfg, err := a.toGenCfg(r)
+	if err != nil {
+		return nil, err
+	}
 	cfg.ResponseModalities = []string{"TEXT", "IMAGE"}
 	cfg.ImageConfig = &genai.ImageConfig{}
 	cfg.ImageConfig.AspectRatio, cfg.ImageConfig.ImageSize = normalizeGoogleImageShape(r.Size, r.Resolution)
@@ -264,7 +298,7 @@ func (a *GoogleAdaptor) toImgContentCfg(r *dto.MediaRequest) *genai.GenerateCont
 			cfg.ImageConfig.PersonGeneration = v
 		}
 	}
-	return cfg
+	return cfg, nil
 }
 
 func (a *GoogleAdaptor) toVidCfg(r *dto.MediaRequest) *genai.GenerateVideosConfig {
@@ -716,14 +750,20 @@ func googleContentResponse(resp *genai.GenerateContentResponse) *dto.MediaRespon
 				continue
 			}
 			text.WriteString(part.Text)
+			if part.FunctionCall != nil {
+				choice.Message.ToolCalls = append(choice.Message.ToolCalls, googleToolCall(part, choice.Index, len(choice.Message.ToolCalls)))
+			}
 			if part.InlineData != nil && len(part.InlineData.Data) > 0 {
-				res.Data = append(res.Data, dto.ImageData{B64JSON: base64.StdEncoding.EncodeToString(part.InlineData.Data)})
+				res.Data = append(res.Data, dto.ImageData{B64JSON: base64.StdEncoding.EncodeToString(part.InlineData.Data), MIMEType: part.InlineData.MIMEType})
 			}
 			if part.FileData != nil && part.FileData.FileURI != "" {
-				res.Data = append(res.Data, dto.ImageData{URL: part.FileData.FileURI})
+				res.Data = append(res.Data, dto.ImageData{URL: part.FileData.FileURI, MIMEType: part.FileData.MIMEType})
 			}
 		}
 		choice.Message.Content = text.String()
+		if len(choice.Message.ToolCalls) > 0 {
+			choice.FinishReason = "tool_calls"
+		}
 		res.Choices = append(res.Choices, choice)
 	}
 	if len(res.Choices) > 0 {
@@ -736,9 +776,10 @@ func googleContentResponse(resp *genai.GenerateContentResponse) *dto.MediaRespon
 }
 
 type googleStream struct {
-	next    func() (*genai.GenerateContentResponse, error, bool)
-	stop    func()
-	pending []*dto.StreamToken
+	next       func() (*genai.GenerateContentResponse, error, bool)
+	stop       func()
+	pending    []*dto.StreamToken
+	toolCounts map[int]int
 }
 
 func (w *googleStream) Next(ctx context.Context) (*dto.StreamToken, error) {
@@ -756,14 +797,29 @@ func (w *googleStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 		converted := googleContentResponse(resp)
 		for _, choice := range converted.Choices {
 			text, _ := choice.Message.Content.(string)
-			if text == "" && choice.FinishReason == "" {
+			if text == "" && choice.FinishReason == "" && len(choice.Message.ToolCalls) == 0 {
 				continue
 			}
 			token := &dto.StreamToken{Text: text, Type: "text", Index: choice.Index, FinishReason: choice.FinishReason}
 			if text == "" {
 				token.Type = "finish"
 			}
+			for _, call := range choice.Message.ToolCalls {
+				if w.toolCounts == nil {
+					w.toolCounts = make(map[int]int)
+				}
+				index := w.toolCounts[choice.Index]
+				w.toolCounts[choice.Index]++
+				if strings.HasPrefix(call.ID, "google_call_") {
+					call.ID = fmt.Sprintf("google_call_%d_%d", choice.Index, index)
+				}
+				token.Type = "function_call"
+				token.ToolCalls = append(token.ToolCalls, dto.ToolCallDelta{Index: index, ID: call.ID, Type: call.Type, Metadata: call.Metadata, Function: dto.ToolCallFunctionDelta{Name: call.Function.Name, Arguments: string(call.Function.Arguments)}})
+			}
 			w.pending = append(w.pending, token)
+		}
+		for index, data := range converted.Data {
+			w.pending = append(w.pending, googleImageToken(index, data))
 		}
 		if resp != nil && resp.UsageMetadata != nil {
 			w.pending = append(w.pending, &dto.StreamToken{Type: "usage", Usage: &converted.Usage})

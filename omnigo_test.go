@@ -324,3 +324,16 @@ func TestGenerateJSONSchemaPointer(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicGenerateRetainsFailedResponseUsage(t *testing.T) {
+	client := newClient(t, omnigo.SetChatProtocol("responses"), omnigo.SetHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return mockResponse(r, 200, `{"id":"failed","status":"failed","output_text":"partial","usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5},"error":{"code":"server_error","message":"interrupted"}}`), nil
+	})}))
+	resp, err := client.GenerateWithResponse(context.Background(), omnigo.NewPrompt("hello"))
+	if err == nil || resp == nil || resp.Raw == nil || resp.Raw.Usage.TotalTokens != 5 {
+		t.Fatalf("response=%+v err=%v", resp, err)
+	}
+	if text, err := client.Generate(context.Background(), omnigo.NewPrompt("hello")); err == nil || text != "partial" {
+		t.Fatalf("text=%q err=%v", text, err)
+	}
+}

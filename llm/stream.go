@@ -1,12 +1,12 @@
 package llm
 
 import (
-	"bufio"
-	"bytes"
 	"io"
+	"math"
 	"time"
 
 	"github.com/YspCoder/omnigo/dto"
+	"github.com/YspCoder/omnigo/utils"
 )
 
 // Re-export or use dto types
@@ -18,15 +18,16 @@ type StreamOption func(*StreamConfig)
 
 // StreamConfig holds configuration options for streaming.
 type StreamConfig struct {
-	// BufferSize is reserved. Nonzero values are rejected; streams are pull-based.
+	// BufferSize enables bounded token prefetching. Zero keeps pull-based reads.
 	BufferSize int
 
-	// RetryStrategy is reserved. Non-nil values are rejected to avoid replaying
-	// a partially consumed generation and billing it again.
+	// RetryStrategy retries failed stream creation. Once a stream is returned,
+	// read failures are propagated without replaying a generation.
+	// A strategy instance must not be shared by concurrent Stream calls.
 	RetryStrategy RetryStrategy
 }
 
-// RetryStrategy defines how to handle stream interruptions.
+// RetryStrategy controls retries while opening a stream.
 type RetryStrategy interface {
 	// ShouldRetry determines if a retry should be attempted.
 	ShouldRetry(error) bool
@@ -52,102 +53,26 @@ func (s *DefaultRetryStrategy) ShouldRetry(err error) bool {
 
 func (s *DefaultRetryStrategy) NextDelay() time.Duration {
 	s.attempts++
-	delay := s.InitialWait * time.Duration(1<<uint(s.attempts-1))
-	if delay > s.MaxWait {
-		delay = s.MaxWait
+	limit := s.MaxWait
+	if limit <= 0 {
+		limit = time.Duration(math.MaxInt64)
 	}
-	return delay
+	delay := max(0, s.InitialWait)
+	for i := 1; i < s.attempts && delay > 0 && delay < limit; i++ {
+		if delay > limit/2 {
+			return limit
+		}
+		delay *= 2
+	}
+	return min(delay, limit)
 }
 
 func (s *DefaultRetryStrategy) Reset() {
 	s.attempts = 0
 }
 
-// SSEDecoder handles Server-Sent Events (SSE) streaming
-type SSEDecoder struct {
-	reader  *bufio.Scanner
-	current Event
-	err     error
-	done    bool
-}
+// SSEDecoder and Event retain the public decoder API shared by the adaptors.
+type SSEDecoder = utils.SSEDecoder
+type Event = utils.SSEEvent
 
-type Event struct {
-	Type string
-	Data []byte
-}
-
-func NewSSEDecoder(reader io.Reader) *SSEDecoder {
-	scanner := bufio.NewScanner(reader)
-	// Provider payloads can contain long JSON lines (for example, tool call
-	// arguments). Keep the scanner's useful default while allowing those lines
-	// to pass through without turning into an opaque "token too long" error.
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
-	return &SSEDecoder{reader: scanner}
-}
-
-func (d *SSEDecoder) Next() bool {
-	if d.done || d.err != nil {
-		return false
-	}
-
-	event := ""
-	data := bytes.NewBuffer(nil)
-
-	for d.reader.Scan() {
-		line := d.reader.Bytes()
-		// Scanner strips '\n' but leaves the '\r' from CRLF responses.
-		// Normalize it so blank lines delimit events consistently across
-		// providers and transports.
-		line = bytes.TrimSuffix(line, []byte{'\r'})
-
-		// Dispatch event on empty line
-		if len(line) == 0 {
-			d.current = Event{
-				Type: event,
-				Data: data.Bytes(),
-			}
-			return true
-		}
-
-		// Split "event: value" into parts
-		name, value, _ := bytes.Cut(line, []byte(":"))
-
-		// Remove optional space after colon
-		if len(value) > 0 && value[0] == ' ' {
-			value = value[1:]
-		}
-
-		switch string(name) {
-		case "":
-			continue // Skip comments
-		case "event":
-			event = string(value)
-		case "data":
-			data.Write(value)
-			data.WriteRune('\n')
-		}
-	}
-
-	if err := d.reader.Err(); err != nil {
-		d.err = err
-		d.done = true
-		return false
-	}
-	// SSE permits the final event to end at EOF without a blank delimiter.
-	// Deliver it once before reporting end-of-stream.
-	if event != "" || data.Len() > 0 {
-		d.current = Event{Type: event, Data: data.Bytes()}
-		d.done = true
-		return true
-	}
-	d.done = true
-	return false
-}
-
-func (d *SSEDecoder) Event() Event {
-	return d.current
-}
-
-func (d *SSEDecoder) Err() error {
-	return d.err
-}
+func NewSSEDecoder(reader io.Reader) *SSEDecoder { return utils.NewSSEDecoder(reader) }

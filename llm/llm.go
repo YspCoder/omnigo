@@ -169,7 +169,7 @@ func (l *LLMImpl) normalizeMediaRequest(request *dto.MediaRequest) (*dto.MediaRe
 	if cloned.Model == "" {
 		cloned.Model = strings.TrimSpace(defaultModel)
 	}
-	if cloned.MaxTokens == 0 {
+	if cloned.Type == dto.MediaTypeText && cloned.MaxTokens == 0 {
 		cloned.MaxTokens = defaultMaxTokens
 	}
 	cloned.Prompt = strings.TrimSpace(cloned.Prompt)
@@ -290,7 +290,9 @@ func (l *LLMImpl) GenerateWithResponse(ctx context.Context, prompt *Prompt, opts
 		return &dto.GenerateResponse{Text: resp.Text, Raw: resp}, err
 	}
 	if len(resp.Choices) > 0 {
-		content := fmt.Sprint(resp.Choices[0].Message.Content)
+		// Providers extract visible text into Text. Structured thinking/tool
+		// blocks remain in Raw and must not be printed as user-facing text.
+		content, _ := resp.Choices[0].Message.Content.(string)
 		resp.Text = content
 		return &dto.GenerateResponse{Text: content, Raw: resp}, err
 	}
@@ -311,13 +313,15 @@ func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOpti
 			option(&streamConfig)
 		}
 	}
-	if streamConfig.BufferSize != 0 || streamConfig.RetryStrategy != nil {
-		return nil, fmt.Errorf("stream buffering and automatic retries are not supported")
+	if streamConfig.BufferSize < 0 {
+		return nil, fmt.Errorf("stream buffer size must not be negative")
 	}
 	prompt = l.effectivePrompt(prompt)
 
 	request := l.textRequest(prompt, true, l.generationOptions())
-	return l.relay.Stream(ctx, l.adaptor, nil, l.adaptorCfg, request)
+	return openConfiguredStream(ctx, streamConfig, func(ctx context.Context) (dto.TokenStream, error) {
+		return l.relay.Stream(ctx, l.adaptor, nil, l.adaptorCfg, request)
+	})
 }
 
 // Media executes a unified multimodal request.
@@ -416,7 +420,7 @@ func toDTOMessages(prompt *Prompt) []dto.Message {
 		}
 		for _, call := range m.ToolCalls {
 			message.ToolCalls = append(message.ToolCalls, dto.ToolCall{
-				ID: call.ID, Type: call.Type,
+				ID: call.ID, Type: call.Type, Metadata: maps.Clone(call.Metadata),
 				Function: dto.ToolCallFunction{Name: call.Function.Name, Arguments: call.Function.Arguments},
 			})
 		}

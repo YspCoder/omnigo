@@ -163,7 +163,7 @@ func TestEffectiveMediaRequestUsesConfiguredModelWithoutMutatingRequest(t *testi
 	if effective.Model != "configured-media-model" {
 		t.Fatalf("model = %q, want configured-media-model", effective.Model)
 	}
-	if effective.MaxTokens != 300 || request.MaxTokens != 0 {
+	if effective.MaxTokens != 0 || request.MaxTokens != 0 {
 		t.Fatalf("max tokens = %d, original = %d", effective.MaxTokens, request.MaxTokens)
 	}
 	if request.Model != "" {
@@ -171,6 +171,14 @@ func TestEffectiveMediaRequestUsesConfiguredModelWithoutMutatingRequest(t *testi
 	}
 	if len(effective.Messages) != 1 || effective.Messages[0].Content != "draw a cat" {
 		t.Fatalf("messages changed unexpectedly: %+v", effective.Messages)
+	}
+	request.Type = dto.MediaTypeText
+	if got := client.effectiveMediaRequest(request).MaxTokens; got != 300 {
+		t.Fatalf("text max tokens = %d", got)
+	}
+	request.Type, request.MaxTokens = dto.MediaTypeImage, 4096
+	if got := client.effectiveMediaRequest(request).MaxTokens; got != 4096 {
+		t.Fatalf("explicit image max tokens = %d", got)
 	}
 }
 
@@ -217,6 +225,13 @@ func TestGenerateWithResponseReturnsPrimaryChoiceContent(t *testing.T) {
 	}
 	if resp.Raw == nil || len(resp.Raw.Choices) != 1 {
 		t.Fatalf("raw response not preserved: %#v", resp.Raw)
+	}
+	for _, content := range []interface{}{nil, []map[string]interface{}{{"type": "thinking", "thinking": "internal", "signature": "signed"}}} {
+		client.adaptor = stubAdaptor{response: &dto.MediaResponse{Choices: []dto.ChatChoice{{Message: dto.Message{Content: content}}}}}
+		result, err := client.GenerateWithResponse(context.Background(), NewPrompt("hello"))
+		if err != nil || result.Text != "" || result.Raw == nil {
+			t.Fatalf("non-text content leaked: %+v error=%v", result, err)
+		}
 	}
 }
 

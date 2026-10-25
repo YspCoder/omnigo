@@ -197,8 +197,9 @@ type openAIResponsesOutputItem struct {
 }
 
 type openAIResponsesOutputContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type    string `json:"type"`
+	Text    string `json:"text"`
+	Refusal string `json:"refusal"`
 }
 
 type openAIResponsesError struct {
@@ -206,10 +207,7 @@ type openAIResponsesError struct {
 	Code    string `json:"code,omitempty"`
 }
 
-func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
-	if _, err := a.getClient(config); err != nil {
-		return nil, err
-	}
+func openAIResponsesBody(request *dto.MediaRequest, stream bool) ([]byte, error) {
 	input, err := toOpenAIResponsesInput(request.Messages)
 	if err != nil {
 		return nil, err
@@ -231,7 +229,7 @@ func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *Provid
 	if err != nil {
 		return nil, err
 	}
-	if len(request.Options) > 0 {
+	if len(request.Options) > 0 || stream {
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(body, &fields); err != nil {
 			return nil, err
@@ -243,18 +241,28 @@ func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *Provid
 			}
 			fields[key] = encoded
 		}
+		if stream {
+			fields["stream"] = json.RawMessage("true")
+		}
 		body, err = json.Marshal(fields)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(openAIBaseURL(config), "/")+"/responses", bytes.NewReader(body))
+	return body, nil
+}
+
+func (a *OpenAIAdaptor) doOpenAIRequest(ctx context.Context, config *ProviderConfig, endpoint, contentType string, body []byte) (*http.Response, error) {
+	if _, err := a.getClient(config); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(openAIBaseURL(config), "/")+endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+config.APIKey)
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 	if config.Organization != "" {
 		req.Header.Set("OpenAI-Organization", config.Organization)
 	}
@@ -262,7 +270,15 @@ func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *Provid
 		req.Header.Set(key, value)
 	}
 
-	resp, err := a.apiClient.Do(req)
+	return a.apiClient.Do(req)
+}
+
+func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
+	body, err := openAIResponsesBody(request, false)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.doOpenAIRequest(ctx, config, "/responses", "application/json", body)
 	if err != nil {
 		return nil, err
 	}
@@ -280,6 +296,10 @@ func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *Provid
 	if err := json.Unmarshal(rawBody, &parsed); err != nil {
 		return nil, err
 	}
+	return openAIResponsesResult(&parsed)
+}
+
+func openAIResponsesResult(parsed *openAIResponsesResponse) (*dto.MediaResponse, error) {
 	text := strings.TrimSpace(parsed.OutputText)
 	if text == "" {
 		text = strings.TrimSpace(extractOpenAIResponsesText(parsed.Output))
@@ -414,10 +434,11 @@ func extractOpenAIResponsesText(items []openAIResponsesOutputItem) string {
 	parts := make([]string, 0, 4)
 	for _, item := range items {
 		for _, content := range item.Content {
-			if strings.TrimSpace(content.Text) == "" {
+			text := firstNonEmptyString(content.Text, content.Refusal)
+			if strings.TrimSpace(text) == "" {
 				continue
 			}
-			parts = append(parts, strings.TrimSpace(content.Text))
+			parts = append(parts, strings.TrimSpace(text))
 		}
 	}
 	return strings.Join(parts, "\n")
@@ -666,8 +687,6 @@ func (w *openAIStreamWrapper) Next(ctx context.Context) (*dto.StreamToken, error
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	stop := context.AfterFunc(ctx, func() { w.stream.Close() })
-	defer stop()
 	for len(w.pending) == 0 {
 		if !w.stream.Next() {
 			if err := ctx.Err(); err != nil {
@@ -714,7 +733,7 @@ func (a *OpenAIAdaptor) Stream(ctx context.Context, config *ProviderConfig, requ
 		return nil, err
 	}
 	if useResponses {
-		return nil, fmt.Errorf("openai responses streaming is not supported")
+		return a.streamResponses(ctx, config, request)
 	}
 	client, err := a.getClient(config)
 	if err != nil {
@@ -727,81 +746,28 @@ func (a *OpenAIAdaptor) Stream(ctx context.Context, config *ProviderConfig, requ
 	}
 	params.StreamOptions = openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(true)}
 
-	stream := client.Chat.Completions.NewStreaming(ctx, params)
+	streamCtx, cancel := context.WithCancel(ctx)
+	stream := client.Chat.Completions.NewStreaming(streamCtx, params, option.WithMiddleware(func(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+		response, err := next(req)
+		if response != nil && response.Body != nil {
+			response.Body = bodyWithContext(streamCtx, response.Body)
+		}
+		return response, err
+	}))
 	if err := stream.Err(); err != nil {
 		stream.Close()
+		cancel()
 		return nil, err
 	}
-	return &openAIStreamWrapper{stream: stream}, nil
+	return newCancellableStream(&openAIStreamWrapper{stream: stream}, cancel), nil
 }
 
 func (a *OpenAIAdaptor) Media(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
-	client, err := a.getClient(config)
-	if err != nil {
-		return nil, err
-	}
-	async, _ := utils.GetBoolExtra(request.Extra, "async")
-
 	switch request.Type {
 	case dto.MediaTypeImage:
-		inputs := utils.ParseExtraImageInputs(request.Extra)
-		if len(inputs) > 0 {
-			referenceImages, err := openAIImageReferenceReaders(ctx, a.httpClient, inputs)
-			if err != nil {
-				return nil, err
-			}
-
-			params := openai.ImageEditParams{
-				Prompt: utils.MediaPromptWithSystem(request),
-				Model:  request.Model,
-				Image:  openAIImageEditInput(referenceImages),
-			}
-			if request.N > 0 {
-				params.N = openai.Int(int64(request.N))
-			}
-			if request.Size != "" {
-				params.Size = openai.ImageEditParamsSize(request.Size)
-			}
-			if request.ResponseFormat != "" {
-				params.ResponseFormat = openai.ImageEditParamsResponseFormat(request.ResponseFormat)
-			}
-			if request.Resolution != "" {
-				params.Quality = openai.ImageEditParamsQuality(request.Resolution)
-			}
-			resp, err := client.Images.Edit(ctx, params)
-			if err != nil {
-				return nil, err
-			}
-			if async {
-				return openAIAsyncImageResponse(resp)
-			}
-			return openAIImageResponse(resp), nil
-		}
-
-		params := openai.ImageGenerateParams{
-			Prompt: utils.MediaPromptWithSystem(request),
-			Model:  request.Model,
-		}
-		if request.N > 0 {
-			params.N = openai.Int(int64(request.N))
-		}
-		if request.Size != "" {
-			params.Size = openai.ImageGenerateParamsSize(request.Size)
-		}
-		if request.ResponseFormat != "" {
-			params.ResponseFormat = openai.ImageGenerateParamsResponseFormat(request.ResponseFormat)
-		}
-		if request.Resolution != "" {
-			params.Quality = openai.ImageGenerateParamsQuality(request.Resolution)
-		}
-		resp, err := client.Images.Generate(ctx, params)
-		if err != nil {
-			return nil, err
-		}
-		if async {
-			return openAIAsyncImageResponse(resp)
-		}
-		return openAIImageResponse(resp), nil
+		return a.generateImage(ctx, config, request)
+	case dto.MediaTypeVideo:
+		return nil, openAIVideoRetiredError()
 	default:
 		return nil, fmt.Errorf("unsupported media mode: %s", request.Type)
 	}
@@ -989,6 +955,9 @@ func openAIImageFilename(index int, contentType string) string {
 }
 
 func (a *OpenAIAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, taskID string, query ...map[string]string) (*dto.TaskStatusResponse, error) {
+	if config == nil || strings.TrimSpace(config.PollingURL) == "" {
+		return nil, openAIVideoRetiredError()
+	}
 	if _, err := a.getClient(config); err != nil {
 		return nil, err
 	}
@@ -1119,9 +1088,18 @@ func openAIErrorMessage(task openAIAsyncTaskResponse) string {
 }
 
 func (a *OpenAIAdaptor) ListTasks(ctx context.Context, config *ProviderConfig, query map[string]string) (*dto.TaskListResponse, error) {
-	return nil, fmt.Errorf("task list not supported by OpenAI")
+	return nil, openAIVideoRetiredError()
 }
 
 func (a *OpenAIAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
-	return nil, fmt.Errorf("streaming media not supported by OpenAI adaptor")
+	switch request.Type {
+	case dto.MediaTypeText:
+		return a.Stream(ctx, config, request)
+	case dto.MediaTypeImage:
+		return a.streamImages(ctx, config, request)
+	case dto.MediaTypeVideo:
+		return nil, openAIVideoRetiredError()
+	default:
+		return nil, fmt.Errorf("unsupported streaming media mode: %s", request.Type)
+	}
 }

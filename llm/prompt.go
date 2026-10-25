@@ -39,6 +39,7 @@ type ToolCall struct {
 		Name      string          `json:"name"`      // Name of the function to call
 		Arguments json.RawMessage `json:"arguments"` // Arguments for the function call
 	} `json:"function"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // Prompt represents a complete prompt structure that can be sent to an LLM.

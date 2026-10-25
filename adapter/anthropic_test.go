@@ -3,9 +3,14 @@ package adapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/YspCoder/omnigo/dto"
 )
@@ -71,6 +76,160 @@ func TestAnthropicClientUsesConfiguredBaseURL(t *testing.T) {
 			t.Fatalf("response = %+v", response)
 		}
 	}
+}
+
+func TestAnthropicToolsAndMultimodalRoundTrip(t *testing.T) {
+	var bodies []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		bodies = append(bodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"msg_tools","role":"assistant","model":"test","content":[{"type":"thinking","thinking":"reason","signature":"signed"},{"type":"text","text":"Checking"},{"type":"tool_use","id":"call_1","name":"weather","input":{"city":"Paris"}}],"stop_reason":"tool_use","usage":{"input_tokens":2,"output_tokens":3}}`)
+	}))
+	defer server.Close()
+	config := &ProviderConfig{BaseURL: server.URL, HTTPClient: server.Client()}
+	request := &dto.MediaRequest{Model: "test", MaxTokens: 64,
+		Options: map[string]any{"temperature": 0.7, "top_p": 0.9},
+		Messages: []dto.Message{{Role: "user", Content: []map[string]any{
+			{"type": "text", "text": "Describe"},
+			{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,aGVsbG8="}},
+		}, FileURL: "https://example.com/test.pdf"}},
+		Tools:      []dto.Tool{{Type: "function", Function: dto.ToolFunction{Name: "weather", Parameters: map[string]any{"type": "object"}}}},
+		ToolChoice: map[string]any{"type": "function", "function": map[string]any{"name": "weather"}},
+	}
+	adaptor := &AnthropicAdaptor{}
+	response, err := adaptor.Chat(context.Background(), config, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := response.Choices[0].Message
+	if response.Text != "Checking" || len(message.ToolCalls) != 1 || string(message.ToolCalls[0].Function.Arguments) != `{"city":"Paris"}` {
+		t.Fatalf("tool response = %+v", response)
+	}
+	request.Messages = append(request.Messages, message, dto.Message{Role: "tool", ToolCallID: "call_1", Content: "sunny"})
+	if _, err := adaptor.Chat(context.Background(), config, request); err != nil {
+		t.Fatal(err)
+	}
+	body := bodies[1]
+	if _, exists := body["top_p"]; exists {
+		t.Fatal("both temperature and top_p were sent to Claude")
+	}
+	if choice := body["tool_choice"].(map[string]any); choice["type"] != "tool" || choice["name"] != "weather" {
+		t.Fatalf("tool choice = %v", choice)
+	}
+	messages := body["messages"].([]any)
+	content := messages[0].(map[string]any)["content"].([]any)
+	image := content[1].(map[string]any)["source"].(map[string]any)
+	document := content[2].(map[string]any)["source"].(map[string]any)
+	if image["type"] != "base64" || image["media_type"] != "image/png" || document["url"] != "https://example.com/test.pdf" {
+		t.Fatalf("multimodal content = %v", content)
+	}
+	assistant := messages[1].(map[string]any)["content"].([]any)
+	if len(assistant) != 3 || assistant[0].(map[string]any)["signature"] != "signed" || assistant[2].(map[string]any)["id"] != "call_1" {
+		t.Fatalf("assistant round trip = %v", assistant)
+	}
+	result := messages[2].(map[string]any)
+	if result["role"] != "user" || result["content"].([]any)[0].(map[string]any)["tool_use_id"] != "call_1" {
+		t.Fatalf("tool result = %v", result)
+	}
+}
+
+func TestAnthropicStreamLifecycle(t *testing.T) {
+	const start = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_test\",\"usage\":{\"input_tokens\":2,\"cache_read_input_tokens\":5,\"cache_creation_input_tokens\":3,\"output_tokens\":0}}}\n\n"
+	const text = "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n"
+	const tool = "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"call_1\",\"name\":\"lookup\",\"input\":{}}}\n\n"
+	const arguments = "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"x\\\":1}\"}}\n\n"
+	const toolStop = "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n"
+	const finish = "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":4,\"server_tool_use\":{\"web_search_requests\":1}}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	for _, tt := range []struct {
+		name, body, arguments string
+		wantError             bool
+	}{
+		{"tools", start + text + tool + arguments + toolStop + finish, `{"x":1}`, false},
+		{"empty arguments", start + text + tool + toolStop + finish, `{}`, false},
+		{"truncated", start + text, "", true},
+		{"provider error", start + "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"busy\"}}\n\n", "", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			stream, err := (&AnthropicAdaptor{}).Stream(context.Background(), streamTestConfig(tt.body, "text/event-stream", &calls), &dto.MediaRequest{Model: "test", MaxTokens: 16, Prompt: "hello"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stream.Close()
+			var args, output, reason string
+			var usage *dto.Usage
+			for {
+				token, nextErr := stream.Next(context.Background())
+				if nextErr != nil {
+					err = nextErr
+					break
+				}
+				output += token.Text
+				for _, call := range token.ToolCalls {
+					if call.Index != 1 {
+						t.Fatalf("tool index = %d", call.Index)
+					}
+					args += call.Function.Arguments
+				}
+				if token.Usage != nil {
+					usage = token.Usage
+				}
+				if token.FinishReason != "" {
+					reason = token.FinishReason
+				}
+			}
+			if tt.wantError == errors.Is(err, io.EOF) {
+				t.Fatalf("terminal error = %v", err)
+			}
+			if usage == nil || usage.PromptTokens != 10 || args != tt.arguments {
+				t.Fatalf("usage = %+v; arguments = %s", usage, args)
+			}
+			if !tt.wantError && (usage.TotalTokens != 14 || reason != "tool_use" || output != "hello" || !strings.Contains(string(usage.RawUsage), "web_search_requests")) {
+				t.Fatalf("usage = %+v, reason = %s, output = %s", usage, reason, output)
+			}
+			if _, err := stream.Next(context.Background()); !errors.Is(err, io.EOF) {
+				t.Fatalf("after terminal = %v", err)
+			}
+		})
+	}
+	t.Run("close interrupts read", func(t *testing.T) {
+		cancelled := make(chan struct{})
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, start)
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+			close(cancelled)
+		}))
+		defer server.Close()
+		stream, err := (&AnthropicAdaptor{}).Stream(context.Background(), &ProviderConfig{BaseURL: server.URL, HTTPClient: server.Client()}, &dto.MediaRequest{Model: "test", MaxTokens: 8, Prompt: "hello"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stream.Close()
+		if _, err := stream.Next(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		read := make(chan error, 1)
+		go func() { _, err := stream.Next(context.Background()); read <- err }()
+		if err := stream.Close(); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-cancelled:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Close did not cancel the HTTP request")
+		}
+		select {
+		case <-read:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Close did not release Next")
+		}
+	})
 }
 
 func TestAnthropicUsageIncludesCacheTokens(t *testing.T) {

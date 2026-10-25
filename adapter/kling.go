@@ -161,8 +161,10 @@ type klingSingleTokenStream struct {
 
 type klingPollingStream struct {
 	adaptor   *KlingAdaptor
+	ctx       context.Context
 	cfg       *ProviderConfig
 	taskID    string
+	query     map[string]string
 	last      string
 	usage     *dto.Usage
 	usageSent bool
@@ -180,6 +182,9 @@ func (a *KlingAdaptor) Stream(context.Context, *ProviderConfig, *dto.MediaReques
 func (a *KlingAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (*dto.MediaResponse, error) {
 	if r == nil {
 		return nil, fmt.Errorf("kling request is required")
+	}
+	if klingUsesTasks(utils.GetStringExtra(r.Extra, "protocol"), utils.GetStringExtra(r.Extra, "endpoint")) {
+		return a.createNativeTask(ctx, cfg, r)
 	}
 
 	mode, endpoint, err := a.resolveMode(r)
@@ -200,27 +205,41 @@ func (a *KlingAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.Me
 }
 
 func (a *KlingAdaptor) StreamMedia(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (dto.TokenStream, error) {
-	resp, err := a.Media(ctx, cfg, r)
+	streamCtx, cancel := context.WithCancel(ctx)
+	resp, err := a.Media(streamCtx, cfg, r)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 	if resp.TaskID == "" {
 		if resp.URL == "" && resp.Video.URL == "" {
+			cancel()
 			return nil, fmt.Errorf("kling did not return a task id or result url")
 		}
-		return &klingSingleTokenStream{
+		return newCancellableStream(&klingSingleTokenStream{
 			token: &dto.StreamToken{
 				Type:  "url",
 				URL:   firstNonEmptyString(resp.Video.URL, resp.URL),
 				Text:  resp.Status,
 				Usage: usagePointer(resp.Usage),
 			},
-		}, nil
+		}, cancel), nil
 	}
-	return &klingPollingStream{adaptor: a, cfg: cfg, taskID: resp.TaskID, last: resp.Status, usage: usagePointer(resp.Usage)}, nil
+	query := map[string]string{}
+	if klingUsesTasks(utils.GetStringExtra(r.Extra, "protocol"), utils.GetStringExtra(r.Extra, "endpoint")) {
+		query["protocol"] = "tasks"
+	} else if mode, _, err := a.resolveMode(r); err == nil {
+		query["mode"] = mode
+	}
+	return newCancellableStream(&klingPollingStream{adaptor: a, cfg: cfg, taskID: resp.TaskID,
+		query: query, last: resp.Status, usage: usagePointer(resp.Usage), ctx: streamCtx}, cancel), nil
 }
 
 func (a *KlingAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, taskID string, query ...map[string]string) (*dto.TaskStatusResponse, error) {
+	q := firstQueryMap(query)
+	if klingUsesTasks(q["protocol"], q["endpoint"]) {
+		return a.nativeTaskStatus(ctx, cfg, taskID)
+	}
 	if mode := resolveKlingTaskStatusMode(firstQueryMap(query)); mode != "" {
 		return a.taskStatusForMode(ctx, cfg, taskID, mode)
 	}
@@ -271,6 +290,9 @@ func (a *KlingAdaptor) taskStatusForModeWithStatus(ctx context.Context, cfg *Pro
 }
 
 func (a *KlingAdaptor) ListTasks(ctx context.Context, cfg *ProviderConfig, query map[string]string) (*dto.TaskListResponse, error) {
+	if klingUsesTasks(query["protocol"], query["endpoint"]) {
+		return a.listNativeTasks(ctx, cfg, query)
+	}
 	if mode := normalizeKlingMode(query["mode"]); mode != "" && mode != klingModeTTS && mode != klingModeIdentifyFace {
 		return a.listTasksForMode(ctx, cfg, mode, query)
 	}
@@ -624,6 +646,7 @@ func (a *KlingAdaptor) buildPayload(mode string, r *dto.MediaRequest) (map[strin
 		"mode":      {},
 		"task_type": {},
 		"endpoint":  {},
+		"protocol":  {},
 	})
 	if quality := utils.GetStringExtra(r.Extra, "mode"); quality != "" && normalizeKlingMode(quality) == "" {
 		payload["mode"] = quality
@@ -821,6 +844,9 @@ func (w *klingPollingStream) Next(ctx context.Context) (*dto.StreamToken, error)
 	if err := w.streamError(ctx); err != nil {
 		return nil, err
 	}
+	if w.ctx != nil {
+		ctx = w.ctx
+	}
 	if !w.usageSent {
 		w.usageSent = true
 		if w.usage != nil {
@@ -828,13 +854,13 @@ func (w *klingPollingStream) Next(ctx context.Context) (*dto.StreamToken, error)
 		}
 	}
 	for {
-		status, err := w.adaptor.TaskStatus(ctx, w.cfg, w.taskID)
+		status, err := w.adaptor.TaskStatus(ctx, w.cfg, w.taskID, w.query)
 		if err != nil {
 			return nil, err
 		}
 		state := status.Output.TaskStatus
 		usageChanged := updateStreamUsage(&w.usage, streamUsage(status.Usage))
-		if state == w.last && state != "succeed" && state != "failed" {
+		if state == w.last && !dto.IsSucceeded(state) && !dto.IsFailed(state) {
 			if usageChanged {
 				return &dto.StreamToken{Type: "usage", Usage: w.usage}, nil
 			}
@@ -846,14 +872,15 @@ func (w *klingPollingStream) Next(ctx context.Context) (*dto.StreamToken, error)
 			}
 		}
 		w.last = state
-		token := &dto.StreamToken{Type: "progress", Text: state, Usage: w.usage}
-		switch state {
-		case "succeed":
+		token := &dto.StreamToken{Type: "progress", Text: state, Usage: w.usage,
+			Metadata: map[string]any{"response": status}}
+		switch {
+		case dto.IsSucceeded(state):
 			w.done.Store(true)
 			token.Type = "url"
 			token.URL = firstNonEmptyString(status.Output.URL, status.Output.VideoURL)
 			return token, nil
-		case "failed":
+		case dto.IsFailed(state):
 			if status.Output.Message != "" {
 				token.Text = status.Output.Message
 			}
@@ -991,7 +1018,7 @@ func buildKlingQuery(query map[string]string) string {
 			continue
 		}
 		switch key {
-		case "mode", "task_type", "endpoint":
+		case "mode", "task_type", "endpoint", "protocol":
 			continue
 		default:
 			values.Set(key, value)
@@ -1072,6 +1099,13 @@ func klingImageInputs(r *dto.MediaRequest) []string {
 
 	for _, imageURL := range allImageURLs(r.Messages) {
 		appendURL(imageURL)
+	}
+	for _, message := range r.Messages {
+		if _, text := message.Content.(string); !text {
+			for _, imageURL := range utils.ContentImageURLs(message.Content) {
+				appendURL(imageURL)
+			}
+		}
 	}
 	for _, imageURL := range utils.ParseExtraImageInputs(r.Extra) {
 		appendURL(imageURL)

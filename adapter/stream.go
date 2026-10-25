@@ -45,6 +45,40 @@ func (s *mediaStreamState) Close() error {
 	return nil
 }
 
+// bodyWithContext also interrupts transports that do not observe request
+// cancellation. Only the body is closed concurrently, never decoder state.
+func bodyWithContext(ctx context.Context, body io.ReadCloser) io.ReadCloser {
+	wrapped := &contextBody{ReadCloser: body, ctx: ctx}
+	wrapped.stop = context.AfterFunc(ctx, func() { wrapped.closeSource() })
+	return wrapped
+}
+
+type contextBody struct {
+	io.ReadCloser
+	ctx  context.Context
+	stop func() bool
+	once sync.Once
+	err  error
+}
+
+func (b *contextBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil && b.ctx.Err() != nil {
+		err = b.ctx.Err()
+	}
+	return n, err
+}
+
+func (b *contextBody) closeSource() error {
+	b.once.Do(func() { b.err = b.ReadCloser.Close() })
+	return b.err
+}
+
+func (b *contextBody) Close() error {
+	b.stop()
+	return b.closeSource()
+}
+
 // cancellableStream interrupts reads through the SDK request context. Closing
 // the decoder is serialized with Next because SDK iterators are not concurrent.
 type cancellableStream struct {

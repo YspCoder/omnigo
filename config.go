@@ -72,7 +72,7 @@ var (
 	SetAccessKey    = config.SetAccessKey    // Sets the access key for the current provider
 	SetSecretKey    = config.SetSecretKey    // Sets the secret key for the current provider
 	SetProxy        = config.SetProxy        // Sets an optional outbound HTTP proxy
-	SetChatProtocol = config.SetChatProtocol // Selects chat or responses for OpenAI text calls
+	SetChatProtocol = config.SetChatProtocol // OpenAI chat/responses or Google interactions
 	SetHTTPClient   = config.SetHTTPClient   // Sets the provider HTTP client
 
 	// Generation parameters

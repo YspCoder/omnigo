@@ -52,6 +52,8 @@
 
 模型名称由调用方指定，可用模型以账号所在区域及官方控制台为准。`jimeng` 未注册，火山视觉的即梦 `req_key` / AK-SK 协议与 `ark` 协议不同，不能互换。逐项检查结果与官方来源见 [服务商检查记录](docs/provider-review.md)。
 
+新增协议和调用方式见 [服务商能力与迁移说明](docs/provider-capabilities.md)：包括 Responses／图像流式、Claude 多模态及工具调用、Google Interactions、Google／Ark 工具调用、Wan 原生素材、Kling `/tasks` 协议，以及流式缓冲与重试边界。
+
 ### NewAPI Ark 素材库
 
 素材库统一通过 `NewAssetClient(...)` 创建，根据 `AssetProvider` 选择具体协议。NewAPI Ark 调用方需要显式配置网关 BaseURL，也兼容以 `/v1/ark/asset` 结尾的完整 Action endpoint。
@@ -1034,7 +1036,7 @@ log.Println("total:", tasks.Total, "items:", len(tasks.Items))
 
 ### 文本生成示例 (Google / Gemini)
 
-Google 适配器使用 `google.golang.org/genai` 的 Gemini API 后端。聊天、Imagen 图像与 Veo 视频分别走对应接口；需要独立协议的能力应另行核对。请通过 `GOOGLE_MODEL` 指定账号可用的 Gemini 模型。
+Google 适配器默认使用 `google.golang.org/genai` 的 Gemini API 后端，聊天、Imagen 图像与 Veo 视频分别走对应接口；也可通过 `SetChatProtocol("interactions")` 显式选择 Interactions。新协议用法见 [能力说明](docs/provider-capabilities.md)。请通过 `GOOGLE_MODEL` 指定账号可用的 Gemini 模型。
 
 ```go
 package main

@@ -409,7 +409,11 @@ func (a *AliAdaptor) buildVideoRequest(r *dto.MediaRequest) (string, map[string]
 
 	mediaProtocol := aliUsesMediaProtocol(model, r, videoMode)
 	aliCopyInputExtras(input, r.Extra)
-	if media := aliMediaInput(r, videoMode); len(media) > 0 {
+	media, err := aliVideoMedia(r, videoMode)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(media) > 0 {
 		input["media"] = media
 	}
 	if aliLegacyWanModel(model) {
@@ -856,6 +860,39 @@ func aliMediaInput(r *dto.MediaRequest, videoMode string) []map[string]interface
 		out = append(out, item)
 	}
 	return out
+}
+
+// Explicit native media takes precedence over inferred image/video inputs.
+func aliVideoMedia(r *dto.MediaRequest, mode string) ([]map[string]interface{}, error) {
+	media := aliMediaInput(r, mode)
+	raw, explicit := r.Extra["media"]
+	audio := utils.GetStringExtra(r.Extra, "driving_audio")
+	if !explicit && audio == "" {
+		return media, nil
+	}
+	if !aliUsesMediaProtocol(r.Model, r, mode) {
+		return nil, fmt.Errorf("ali media/driving_audio requires a model and mode using the native media protocol")
+	}
+	if explicit {
+		data, err := json.Marshal(raw)
+		if err != nil {
+			return nil, fmt.Errorf("ali media: %w", err)
+		}
+		if err := json.Unmarshal(data, &media); err != nil || len(media) == 0 {
+			return nil, fmt.Errorf("ali media must be a nonempty array of objects")
+		}
+	}
+	hasAudio := false
+	for i, item := range media {
+		if utils.GetStringExtra(item, "type") == "" || utils.GetStringExtra(item, "url") == "" {
+			return nil, fmt.Errorf("ali media[%d] requires type and url", i)
+		}
+		hasAudio = hasAudio || item["type"] == "driving_audio"
+	}
+	if audio != "" && !hasAudio {
+		media = append(media, map[string]interface{}{"type": "driving_audio", "url": audio})
+	}
+	return media, nil
 }
 
 func aliMediaObjectsFromRequest(r *dto.MediaRequest) []map[string]interface{} {

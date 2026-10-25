@@ -10,7 +10,8 @@ type StreamToken struct {
 	// Text is the actual token text or status message
 	Text string
 
-	// Type indicates the event type: text, function_call, usage, finish, error, progress, or url.
+	// Type indicates the event type, such as text, function_call, usage, finish,
+	// error, progress, image, video, or url; native event types may also occur.
 	Type string
 
 	// Index is the position of this token in the sequence
@@ -39,6 +40,7 @@ type ToolCallDelta struct {
 	ID       string
 	Type     string
 	Function ToolCallFunctionDelta
+	Metadata map[string]interface{}
 }
 
 type ToolCallFunctionDelta struct {

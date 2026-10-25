@@ -4,21 +4,23 @@
 
 同日以 `6f0dd9d` 为基线追加复查，修复结果见下方“追加复查”。
 
+同日继续补齐新能力；当前调用方法与协议边界见 [服务商能力与迁移说明](provider-capabilities.md)。
+
 范围覆盖全部 11 个内置调用服务商，以及 NewAPI、NewAPI Ark 两个素材库适配器。已修复已确认的用量映射、流式终态、默认参数及错误传播问题。没有新增依赖或升级 SDK，也没有调用真实收费 API。
 
 ## 各服务商修复结果
 
 | 服务商 | 修复后的行为 | 仍需区分的边界 |
 | --- | --- | --- |
-| OpenAI | Chat、Chat Stream、Responses、图片生成/编辑及兼容网关任务查询保留 token、明细和原生 usage；Responses 截断保留 incomplete 状态及 length 结束原因 | Responses 流式、图像流式和官方视频协议仍未实现 |
+| OpenAI | Chat、Chat Stream、Responses 普通/流式、图片生成/编辑普通/流式及兼容网关任务查询保留 token、明细和原生 usage；Responses 截断保留 incomplete 状态及 length 结束原因 | 官方 Sora / Videos API 已于 2026-09-24 下线，未启用 |
 | Groq | 复用 Chat/Stream 映射；兼容顶层 usage 与 x_groq.usage，保留 usage_breakdown 等扩展 | 不能仅因共用 OpenAI 适配器就推断官方支持图像/视频生成 |
 | Moonshot / Kimi | Chat/Stream 保留三项 token、缓存/推理明细及原生 usage | 汇总已经包含缓存/推理，不再次相加 |
-| Anthropic / Claude | 输入合计包含普通输入、缓存读取和缓存创建；保留 SDK 用量细项；传递温度和 Options 中显式零 | 当前只实现普通文本；SDK 无法保留它未识别的未来字段 |
+| Anthropic / Claude | 普通/流式输入合计包含普通输入、缓存读取和缓存创建；保留 SDK 用量细项；支持工具及原生图片/文档输入 | 不生成图片/视频；SDK 无法保留它未识别的未来字段 |
 | Ali / DashScope | 兼容 Chat/Stream 保留 token；创建、同步图片、任务查询、任务列表、媒体流统一解析原生 usage；支持 input/output 别名及媒体计费字段 | 图片模型可按张计费；视频用量不应强行转换成 token |
-| Google / Gemini | GenerateContent 普通、文本流及 Gemini 原生图片保留三项与 SDK 明细；输入计入工具输入，输出计入 thoughts | 当前 Imagen/Veo SDK 没有 token usage 字段；媒体流未实现 |
+| Google / Gemini | GenerateContent 普通/流式、原生图片流及 Interactions 保留用量；补齐工具与签名回传、Imagen 结果事件及 Veo 轮询流 | 当前 Imagen/Veo SDK 没有 token usage 字段 |
 | Volcengine Ark | 普通文本、文本流、图片、图片流、视频任务查询及视频流保留用量；失败任务有实际用量时不再清空；图片错误正确传播 | SDK 的值类型字段不能完全区分原生字段缺失与显式零 |
 | Vidu | 任务查询、任务列表及视频流保留 credits | 当前核对的协议报告积分，不报告 token |
-| Kling | 创建、查询、列表及视频流保留 final_unit_deduction 和 final_balance_deduction；异常任务 data 返回解析错误 | 仍使用已接入的 legacy 协议，新协议未接入 |
+| Kling | legacy 保留原扣费字段；新版模型路径与 /tasks 查询/列表/流式保留 billing、usage、多结果和游标 | 新协议显式选择，不自动改写旧模型和路径 |
 | Pai / PixVerse | 创建及 mask 响应保留 credits；视频流首次即返回创建用量，终态仍保留快照 | 当前 ListTasks 为 restyle 风格目录，没有任务计费字段；查询接口不会凭空补出创建响应的 credits |
 | Custom | 标准 token 和 input/output 别名统一映射；空 usage 不再遮蔽内层；显式零保留；多层 data 结果可读取 | 保持首个非空外层 usage 优先，不跨层累计；私有协议仍需按部署实例联调 |
 | NewAPI / NewAPI Ark 素材库 | 构造时快照配置、复制 Headers、准备共享 HTTP transport | 素材 CRUD 无需生成 token 用量；私有网关扩展未端到端验证 |
@@ -47,16 +49,16 @@ MediaResponse、TaskStatusResponse、StreamToken 和可用的 TaskListItem 均�
 - Kling 的任务 data 缺失、null 或类型异常不再被吞掉。
 - Custom 多层包装中的任务 ID、状态和结果 URL 可以被读取。
 - NewAssetClient 不再直接持有调用者配置对象，代理 transport 可复用。
-- StreamOption 回调会执行。BufferSize 非零或 RetryStrategy 非 nil 时明确返回“不支持”错误，避免静默忽略；本轮没有实现自动重试或缓冲，也不会自动重放已消费的生成流。
+- StreamOption 支持正数 BufferSize 有界预读和 RetryStrategy 创建失败重试；零缓冲保持按需读取，负数报错。已经建立的流不自动重放；关闭和取消会释放底层流。
 
 ## 尚未实现与未验证
 
-这些保留为能力待办，不宣称已修复：
+上述 Responses/图片流、Anthropic 多模态/工具/流、Google/Ark 工具、Google Interactions、Wan 原生 media/驱动音频、Kling 新协议均已补齐。运行时 RegisterProvider 工厂注册原本就已实现，不能再列为缺失能力。
 
-- OpenAI Responses 流式、图像流式及官方视频 API。
-- Anthropic 流式、工具调用、原生多模态；Google/Ark 通用 Tools/ToolCalls 完整转换。
-- Google Interactions；Ali Wan 2.7 驱动音频与任意原生 media 输入；Kling 新版模型路径和 /tasks 协议。
-- 任意运行时 RegisterProvider 扩展、Custom/NewAPI 私有协议及真实账号的权限、模型差异与计费结果。
+以下仍属于外部验证或协议边界：
+
+- 官方已退役的 OpenAI Videos API；私有兼容网关是否仍提供视频需按实例核验。
+- Custom/NewAPI 私有协议及真实账号的权限、模型差异与计费结果。
 - 上游没有提供的 token、Imagen/Veo SDK 未暴露的用量、SDK 未识别的未来字段，均不能靠本地映射补全。
 
 ## 追加复查
@@ -69,6 +71,10 @@ MediaResponse、TaskStatusResponse、StreamToken 和可用的 TaskListItem 均�
 - 已归一化用量通过 Custom 转发时保留 billing 与原始 raw_usage，避免每次转发重复嵌套；`raw_usage:null` 和只有 null 计数的对象不再误判为已报告用量，明确的零仍保留。
 
 追加回归覆盖单张失败后的剩余图片、同状态下的新用量与终态回退、失败响应的公开入口透传、Pai 辅助调用次数和失败计费，以及用量重复转发后的稳定性。以上使用模拟 HTTP 响应验证。
+
+新能力轮次另修复了 `omnigo` 最外层 GenerateWithResponse 对错误响应的丢弃，并保留 Generate 的部分文本；结构化 thinking/tool 内容不会被 fmt.Sprint 当作可见文本。新增工具签名 Metadata、任务列表 NextCursor、任务原生 Outputs 与结构化 Result。OpenAI 与 Google Interactions 共用 SSE 解码，保留 llm 原有解码 API。
+
+文本默认 MaxTokens 仅应用于文本请求，避免把低文本预算套到 Google 图像生成。响应 Metadata 保留 Interactions 原生步骤，ImageData.MIMEType 保留图像格式。
 
 ## 验证
 

@@ -25,6 +25,8 @@ type ToolCall struct {
 	ID       string           `json:"id"`
 	Type     string           `json:"type"`
 	Function ToolCallFunction `json:"function"`
+	// Metadata preserves provider state required when replaying a tool call.
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // ToolCallFunction contains the function name and its JSON arguments.
@@ -152,20 +154,21 @@ func (u *Usage) UnmarshalJSON(raw []byte) error {
 
 // MediaResponse represents the unified response for text/image/video generation.
 type MediaResponse struct {
-	ID           string       `json:"id,omitempty"`
-	Object       string       `json:"object,omitempty"`
-	Created      int64        `json:"created,omitempty"`
-	Model        string       `json:"model,omitempty"`
-	Choices      []ChatChoice `json:"choices,omitempty"`
-	Usage        Usage        `json:"usage,omitempty"`
-	Data         []ImageData  `json:"data,omitempty"`
-	RequestID    string       `json:"request_id,omitempty"`
-	TaskID       string       `json:"task_id,omitempty"`
-	Status       string       `json:"status,omitempty"`
-	URL          string       `json:"url,omitempty"`
-	Text         string       `json:"text,omitempty"`
-	ErrorCode    string       `json:"code,omitempty"`
-	ErrorMessage string       `json:"message,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	ID           string                 `json:"id,omitempty"`
+	Object       string                 `json:"object,omitempty"`
+	Created      int64                  `json:"created,omitempty"`
+	Model        string                 `json:"model,omitempty"`
+	Choices      []ChatChoice           `json:"choices,omitempty"`
+	Usage        Usage                  `json:"usage,omitempty"`
+	Data         []ImageData            `json:"data,omitempty"`
+	RequestID    string                 `json:"request_id,omitempty"`
+	TaskID       string                 `json:"task_id,omitempty"`
+	Status       string                 `json:"status,omitempty"`
+	URL          string                 `json:"url,omitempty"`
+	Text         string                 `json:"text,omitempty"`
+	ErrorCode    string                 `json:"code,omitempty"`
+	ErrorMessage string                 `json:"message,omitempty"`
 	Video        struct {
 		URL      string `json:"url,omitempty"`
 		B64JSON  string `json:"b64_json,omitempty"`
@@ -176,20 +179,21 @@ type MediaResponse struct {
 // MarshalJSON removes duplicated URL fields and empty video object in JSON output.
 func (m MediaResponse) MarshalJSON() ([]byte, error) {
 	type mediaResponseJSON struct {
-		ID           string       `json:"id,omitempty"`
-		Object       string       `json:"object,omitempty"`
-		Created      int64        `json:"created,omitempty"`
-		Model        string       `json:"model,omitempty"`
-		Choices      []ChatChoice `json:"choices,omitempty"`
-		Usage        *Usage       `json:"usage,omitempty"`
-		Data         []ImageData  `json:"data,omitempty"`
-		RequestID    string       `json:"request_id,omitempty"`
-		TaskID       string       `json:"task_id,omitempty"`
-		Status       string       `json:"status,omitempty"`
-		URL          string       `json:"url,omitempty"`
-		Text         string       `json:"text,omitempty"`
-		ErrorCode    string       `json:"code,omitempty"`
-		ErrorMessage string       `json:"message,omitempty"`
+		Metadata     map[string]interface{} `json:"metadata,omitempty"`
+		ID           string                 `json:"id,omitempty"`
+		Object       string                 `json:"object,omitempty"`
+		Created      int64                  `json:"created,omitempty"`
+		Model        string                 `json:"model,omitempty"`
+		Choices      []ChatChoice           `json:"choices,omitempty"`
+		Usage        *Usage                 `json:"usage,omitempty"`
+		Data         []ImageData            `json:"data,omitempty"`
+		RequestID    string                 `json:"request_id,omitempty"`
+		TaskID       string                 `json:"task_id,omitempty"`
+		Status       string                 `json:"status,omitempty"`
+		URL          string                 `json:"url,omitempty"`
+		Text         string                 `json:"text,omitempty"`
+		ErrorCode    string                 `json:"code,omitempty"`
+		ErrorMessage string                 `json:"message,omitempty"`
 		Video        *struct {
 			URL      string `json:"url,omitempty"`
 			B64JSON  string `json:"b64_json,omitempty"`
@@ -198,6 +202,7 @@ func (m MediaResponse) MarshalJSON() ([]byte, error) {
 	}
 
 	out := mediaResponseJSON{
+		Metadata:     m.Metadata,
 		ID:           m.ID,
 		Object:       m.Object,
 		Created:      m.Created,
@@ -236,8 +241,9 @@ func (m MediaResponse) MarshalJSON() ([]byte, error) {
 
 // ImageData holds the image payload.
 type ImageData struct {
-	URL     string `json:"url,omitempty"`
-	B64JSON string `json:"b64_json,omitempty"`
+	URL      string `json:"url,omitempty"`
+	B64JSON  string `json:"b64_json,omitempty"`
+	MIMEType string `json:"mime_type,omitempty"`
 }
 
 // TaskStatusResponse represents the task status query response.
@@ -268,6 +274,10 @@ type TaskStatusOutput struct {
 	ActualPrompt  string `json:"actual_prompt,omitempty"`
 	Code          string `json:"code,omitempty"`
 	Message       string `json:"message,omitempty"`
+	// Outputs retains every native task result when more than one is returned.
+	Outputs []json.RawMessage `json:"outputs,omitempty"`
+	// Result preserves structured responses from background text/image APIs.
+	Result *MediaResponse `json:"result,omitempty"`
 }
 
 // TaskStatusUsage holds media and token usage details for task status response.
@@ -283,12 +293,13 @@ type TaskStatusUsage struct {
 
 // TaskListResponse represents a provider task list response.
 type TaskListResponse struct {
-	Items    []TaskListItem `json:"items,omitempty"`
-	Tasks    []TaskListItem `json:"tasks,omitempty"`
-	Total    int            `json:"total,omitempty"`
-	PageNum  int            `json:"page_num,omitempty"`
-	PageSize int            `json:"page_size,omitempty"`
-	HasMore  bool           `json:"has_more,omitempty"`
+	Items      []TaskListItem `json:"items,omitempty"`
+	Tasks      []TaskListItem `json:"tasks,omitempty"`
+	Total      int            `json:"total,omitempty"`
+	PageNum    int            `json:"page_num,omitempty"`
+	PageSize   int            `json:"page_size,omitempty"`
+	HasMore    bool           `json:"has_more,omitempty"`
+	NextCursor string         `json:"next_cursor,omitempty"`
 }
 
 // TaskListItem represents a single task in a task list response.

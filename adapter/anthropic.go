@@ -3,12 +3,12 @@ package adapter
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 
 	"github.com/YspCoder/omnigo/dto"
-	"github.com/YspCoder/omnigo/utils"
 	"github.com/liushuangls/go-anthropic/v2"
 )
 
@@ -52,64 +52,64 @@ func (a *AnthropicAdaptor) getClientWithError(config *ProviderConfig) (*anthropi
 }
 
 func (a *AnthropicAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
+	params, err := anthropicRequest(request)
+	if err != nil {
+		return nil, err
+	}
 	client, err := a.getClientWithError(config)
 	if err != nil {
 		return nil, err
 	}
 
-	messages := make([]anthropic.Message, 0)
-
-	for _, m := range request.Messages {
-		if m.Role == "system" {
-			continue
-		}
-		messages = append(messages, anthropic.Message{
-			Role:    anthropic.ChatRole(m.Role),
-			Content: []anthropic.MessageContent{anthropic.NewTextMessageContent(fmt.Sprint(m.Content))},
-		})
-	}
-
-	params := anthropic.MessagesRequest{
-		Model:     anthropic.Model(request.Model),
-		Messages:  messages,
-		System:    utils.FirstSystemMessage(request.Messages),
-		MaxTokens: request.MaxTokens,
-	}
-	if temperature, ok := requestTemperature(request); ok {
-		params.SetTemperature(float32(temperature))
-	}
 	resp, err := client.CreateMessages(ctx, params)
-	if err != nil {
+	if err != nil && resp.ID == "" && len(resp.Content) == 0 {
 		return nil, err
 	}
+	return anthropicResponse(resp), err
+}
 
+func anthropicResponse(resp anthropic.MessagesResponse) *dto.MediaResponse {
 	var text strings.Builder
+	var calls []dto.ToolCall
+	structured := false
 	for _, content := range resp.Content {
 		text.WriteString(content.GetText())
+		if tool := content.MessageContentToolUse; content.Type == anthropic.MessagesContentTypeToolUse && tool != nil {
+			calls = append(calls, dto.ToolCall{ID: tool.ID, Type: "function", Function: dto.ToolCallFunction{
+				Name: tool.Name, Arguments: append(json.RawMessage(nil), tool.Input...),
+			}})
+		} else if content.Type != anthropic.MessagesContentTypeText || len(content.Citations) > 0 {
+			structured = true
+		}
 	}
-	usage := usageFromValue(resp.Usage)
-	usage.PromptTokens = resp.Usage.InputTokens + resp.Usage.CacheReadInputTokens + resp.Usage.CacheCreationInputTokens
-	usage.CompletionTokens = resp.Usage.OutputTokens
-	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	var content any = text.String()
+	if structured {
+		content = resp.Content
+	}
 	res := &dto.MediaResponse{
 		ID:     resp.ID,
 		Object: string(resp.Type),
 		Model:  string(resp.Model),
 		Choices: []dto.ChatChoice{{
 			Message: dto.Message{
-				Role:    firstNonEmptyString(string(resp.Role), "assistant"),
-				Content: text.String(),
+				Role:      firstNonEmptyString(string(resp.Role), "assistant"),
+				Content:   content,
+				ToolCalls: calls,
 			},
 			FinishReason: string(resp.StopReason),
 		}},
 		Text:  text.String(),
-		Usage: usage,
+		Usage: anthropicUsage(resp.Usage),
 	}
-	return res, nil
+	return res
 }
 
-func (a *AnthropicAdaptor) Stream(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
-	return nil, fmt.Errorf("stream not implemented for Anthropic SDK yet")
+func anthropicUsage(source anthropic.MessagesUsage) dto.Usage {
+	usage := usageFromValue(source)
+	usage.PromptTokens = source.InputTokens + source.CacheReadInputTokens + source.CacheCreationInputTokens
+	usage.CompletionTokens = source.OutputTokens
+	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	return usage
 }
 
 func (a *AnthropicAdaptor) Media(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {

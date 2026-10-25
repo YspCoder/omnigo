@@ -208,7 +208,7 @@ func SetProxy(proxy string) ConfigOption {
 	}
 }
 
-// SetChatProtocol selects the OpenAI text protocol: chat or responses.
+// SetChatProtocol selects OpenAI chat/responses or Google interactions.
 func SetChatProtocol(protocol string) ConfigOption {
 	return func(c *Config) {
 		c.ChatProtocol = strings.ToLower(strings.TrimSpace(protocol))

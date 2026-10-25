@@ -101,7 +101,9 @@ func (l *llmImpl) GenerateWithResponse(ctx context.Context, prompt *llm.Prompt, 
 
 	config := &llm.GenerateConfig{}
 	for _, opt := range opts {
-		opt(config)
+		if opt != nil {
+			opt(config)
+		}
 	}
 
 	if config.UseJSONSchema {
@@ -112,7 +114,7 @@ func (l *llmImpl) GenerateWithResponse(ctx context.Context, prompt *llm.Prompt, 
 
 	resp, err := l.LLM.GenerateWithResponse(ctx, prompt, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("LLM.GenerateWithResponse error: %w", err)
+		return resp, fmt.Errorf("LLM.GenerateWithResponse error: %w", err)
 	}
 
 	return resp, nil
@@ -140,11 +142,11 @@ func (l *llmImpl) SetLogLevel(level utils.LogLevel) {
 // Implement the base Generate method (if not already provided by embedded llm.LLM)
 func (l *llmImpl) Generate(ctx context.Context, prompt *llm.Prompt, opts ...llm.GenerateOption) (string, error) {
 	response, err := l.GenerateWithResponse(ctx, prompt, opts...)
-	if err != nil {
+	if response == nil {
 		return "", err
 	}
 
-	return response.Text, nil
+	return response.Text, err
 }
 
 // NewLLM creates a new LLM instance with the specified configuration options.

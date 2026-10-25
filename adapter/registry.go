@@ -53,7 +53,7 @@ func NewRegistry(providerNames ...string) *Registry {
 			Name:         "openai",
 			Type:         TypeOpenAI,
 			Endpoint:     "https://api.openai.com/v1",
-			Capabilities: declaredCapabilities(true, true, true, false, true, false),
+			Capabilities: declaredCapabilities(true, true, true, true, true, false),
 			AdaptorFactory: func() Adaptor {
 				return &OpenAIAdaptor{}
 			},
@@ -80,7 +80,7 @@ func NewRegistry(providerNames ...string) *Registry {
 			Name:         "anthropic",
 			Type:         TypeCustom,
 			Endpoint:     "https://api.anthropic.com/v1",
-			Capabilities: declaredCapabilities(true, false, false, false, false, false),
+			Capabilities: declaredCapabilities(true, true, false, false, false, false),
 			AdaptorFactory: func() Adaptor {
 				return &AnthropicAdaptor{}
 			},
@@ -98,7 +98,7 @@ func NewRegistry(providerNames ...string) *Registry {
 			Name:         "google",
 			Type:         TypeCustom,
 			Endpoint:     "https://generativelanguage.googleapis.com",
-			Capabilities: declaredCapabilities(true, true, true, false, true, false),
+			Capabilities: declaredCapabilities(true, true, true, true, true, false),
 			AdaptorFactory: func() Adaptor {
 				return &GoogleAdaptor{}
 			},
