@@ -76,11 +76,13 @@ func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, r *dto.Me
 
 func (a *ArkAdaptor) Stream(ctx context.Context, config *ProviderConfig, r *dto.MediaRequest) (dto.TokenStream, error) {
 	chatReq := a.toChatReq(r)
-	s, err := a.getClient(config).CreateResponsesStream(ctx, chatReq)
+	streamCtx, cancel := context.WithCancel(ctx)
+	s, err := a.getClient(config).CreateResponsesStream(streamCtx, chatReq)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
-	return &arkStream{s}, nil
+	return newCancellableStream(&arkStream{r: s}, cancel), nil
 }
 
 type arkUploadedFile struct {
@@ -114,14 +116,19 @@ func (a *ArkAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.Medi
 func (a *ArkAdaptor) StreamMedia(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (dto.TokenStream, error) {
 	c := a.getClient(cfg)
 	if r.Type == dto.MediaTypeImage {
-		s, err := c.GenerateImagesStreaming(ctx, a.toImgReq(r))
-		return &arkMediaStream{s}, err
+		streamCtx, cancel := context.WithCancel(ctx)
+		s, err := c.GenerateImagesStreaming(streamCtx, a.toImgReq(r))
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		return newCancellableStream(&arkMediaStream{r: s}, cancel), nil
 	}
 	resp, err := c.CreateContentGenerationTask(ctx, a.toVidReq(r))
 	if err != nil {
 		return nil, err
 	}
-	return &arkVidStream{c, resp.ID, ""}, nil
+	return &arkVidStream{c: c, id: resp.ID}, nil
 }
 
 func (a *ArkAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, id string, _ ...map[string]string) (*dto.TaskStatusResponse, error) {
@@ -1009,7 +1016,7 @@ func (w *arkStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 		}
 		if text := resp.GetText(); text != nil {
 			delta := firstNonEmptyString(text.GetDelta(), text.GetText())
-			if strings.TrimSpace(delta) == "" {
+			if delta == "" {
 				continue
 			}
 			return &dto.StreamToken{
@@ -1048,15 +1055,20 @@ type arkVidStream struct {
 	c    *arkruntime.Client
 	id   string
 	last string
+	mediaStreamState
 }
 
 func (w *arkVidStream) Next(ctx context.Context) (*dto.StreamToken, error) {
+	if w.done.Load() {
+		return nil, io.EOF
+	}
 	for {
 		resp, err := w.c.GetContentGenerationTask(ctx, model.GetContentGenerationTaskRequest{ID: w.id})
 		if err != nil {
 			return nil, err
 		}
-		if resp.Status == w.last && resp.Status != model.StatusSucceeded && resp.Status != model.StatusFailed {
+		succeeded, failed := dto.IsSucceeded(resp.Status), dto.IsFailed(resp.Status)
+		if resp.Status == w.last && !succeeded && !failed {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -1066,13 +1078,15 @@ func (w *arkVidStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 		}
 		w.last = resp.Status
 		res := &dto.StreamToken{Type: "progress", Text: resp.Status}
-		if resp.Status == model.StatusSucceeded {
+		if succeeded {
+			w.done.Store(true)
 			res.Type, res.URL = "url", resp.Content.VideoURL
 			if res.URL == "" {
 				res.URL = resp.Content.FileURL
 			}
-			return res, io.EOF
-		} else if resp.Status == model.StatusFailed {
+			return res, nil
+		} else if failed {
+			w.done.Store(true)
 			if resp.Error != nil {
 				res.Text = resp.Error.Message
 			}
@@ -1081,4 +1095,3 @@ func (w *arkVidStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 		return res, nil
 	}
 }
-func (w *arkVidStream) Close() error { return nil }

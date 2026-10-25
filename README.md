@@ -442,7 +442,8 @@ for {
    - `"stream_options": { "include_usage": true }`
 3. OpenAI 流式事件保留 `ToolCalls`、`Usage` 和 `FinishReason`。工具调用的 `Function.Arguments` 是字符串分片，按 `token.Index`（候选回复）和 `call.Index`（工具调用）累积后再解析 JSON。
 4. `Type` 可为 `text`、`function_call`、`finish` 或 `usage`。继续读取至 `io.EOF` 才能接收到末尾的用量统计。
-5. `Next(ctx)` 的 context 取消会中断当前读取并关闭 OpenAI 流；调用结束仍应执行 `Close()`。
+5. OpenAI、Google 和 Ark 文本流，以及 Ark 图片流，支持通过 `Next(ctx)` 的 context 取消中断当前读取并关闭流；调用结束仍应执行 `Close()`。
+6. 媒体流的最终 URL 以正常 token 返回，下一次 `Next` 才返回 `io.EOF`；流到达终态后不再继续轮询，Ark 视频任务的 `cancelled` 也按失败终态结束。
 
 ### 流式对话示例（OpenAI）
 

@@ -113,6 +113,7 @@ type paiPollingStream struct {
 	cfg     *ProviderConfig
 	taskID  string
 	last    string
+	mediaStreamState
 }
 
 func (a *PaiAdaptor) Chat(context.Context, *ProviderConfig, *dto.MediaRequest) (*dto.MediaResponse, error) {
@@ -1193,6 +1194,9 @@ func paiUint64Slice(v interface{}) []uint64 {
 }
 
 func (w *paiPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
+	if w.done.Load() {
+		return nil, io.EOF
+	}
 	for {
 		status, err := w.adaptor.TaskStatus(ctx, w.cfg, w.taskID)
 		if err != nil {
@@ -1211,10 +1215,12 @@ func (w *paiPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 		token := &dto.StreamToken{Type: "progress", Text: state}
 		switch state {
 		case "success":
+			w.done.Store(true)
 			token.Type = "url"
 			token.URL = status.Output.VideoURL
-			return token, io.EOF
+			return token, nil
 		case "failed", "rejected":
+			w.done.Store(true)
 			if status.Output.Message != "" {
 				token.Text = status.Output.Message
 			}
@@ -1224,5 +1230,3 @@ func (w *paiPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 		}
 	}
 }
-
-func (w *paiPollingStream) Close() error { return nil }

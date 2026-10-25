@@ -78,9 +78,10 @@ func (a *GoogleAdaptor) Stream(ctx context.Context, cfg *ProviderConfig, r *dto.
 	if err != nil {
 		return nil, err
 	}
-	seq := c.Models.GenerateContentStream(ctx, r.Model, contents, a.toGenCfg(r))
+	streamCtx, cancel := context.WithCancel(ctx)
+	seq := c.Models.GenerateContentStream(streamCtx, r.Model, contents, a.toGenCfg(r))
 	next, stop := iter.Pull2(seq)
-	return &googleStream{next: next, stop: stop}, nil
+	return newCancellableStream(&googleStream{next: next, stop: stop}, cancel), nil
 }
 
 func (a *GoogleAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (*dto.MediaResponse, error) {

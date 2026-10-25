@@ -135,6 +135,7 @@ type aliPollingStream struct {
 	cfg     *ProviderConfig
 	taskID  string
 	last    string
+	mediaStreamState
 }
 
 func (a *AliAdaptor) Chat(ctx context.Context, config *ProviderConfig, request *dto.MediaRequest) (*dto.MediaResponse, error) {
@@ -559,6 +560,9 @@ func (a *AliAdaptor) doJSON(ctx context.Context, cfg *ProviderConfig, method, pa
 }
 
 func (w *aliPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
+	if w.done.Load() {
+		return nil, io.EOF
+	}
 	for {
 		status, err := w.adaptor.TaskStatus(ctx, w.cfg, w.taskID)
 		if err != nil {
@@ -578,10 +582,12 @@ func (w *aliPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 		token := &dto.StreamToken{Type: "progress", Text: state}
 		switch {
 		case aliTaskSucceeded(state):
+			w.done.Store(true)
 			token.Type = "url"
 			token.URL = firstNonEmptyString(status.Output.VideoURL, status.Output.URL)
-			return token, io.EOF
+			return token, nil
 		case aliTaskFailed(state):
+			w.done.Store(true)
 			if status.Output.Message != "" {
 				token.Text = status.Output.Message
 			}
@@ -591,8 +597,6 @@ func (w *aliPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 		}
 	}
 }
-
-func (w *aliPollingStream) Close() error { return nil }
 
 func aliCompatibleConfig(cfg *ProviderConfig) *ProviderConfig {
 	cloned := aliCloneConfig(cfg)

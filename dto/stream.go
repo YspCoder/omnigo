@@ -48,7 +48,9 @@ type ToolCallFunctionDelta struct {
 // It follows Go's io.ReadCloser pattern but with token-level granularity.
 type TokenStream interface {
 	// Next returns the next token in the stream.
-	// When the stream is finished, it returns io.EOF.
+	// The final token is returned with a nil error; the following call returns
+	// nil, io.EOF. Callers should check the error before consuming the token.
+	// Calls to Next must be sequential.
 	Next(context.Context) (*StreamToken, error)
 
 	// Close releases any resources associated with the stream.

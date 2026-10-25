@@ -153,7 +153,7 @@ type klingIdentifyFaceData struct {
 
 type klingSingleTokenStream struct {
 	token *dto.StreamToken
-	done  bool
+	mediaStreamState
 }
 
 type klingPollingStream struct {
@@ -161,6 +161,7 @@ type klingPollingStream struct {
 	cfg     *ProviderConfig
 	taskID  string
 	last    string
+	mediaStreamState
 }
 
 func (a *KlingAdaptor) Chat(context.Context, *ProviderConfig, *dto.MediaRequest) (*dto.MediaResponse, error) {
@@ -794,16 +795,17 @@ func (a *KlingAdaptor) doJSONWithStatus(ctx context.Context, cfg *ProviderConfig
 }
 
 func (w *klingSingleTokenStream) Next(context.Context) (*dto.StreamToken, error) {
-	if w.done {
+	if w.done.Load() {
 		return nil, io.EOF
 	}
-	w.done = true
-	return w.token, io.EOF
+	w.done.Store(true)
+	return w.token, nil
 }
 
-func (w *klingSingleTokenStream) Close() error { return nil }
-
 func (w *klingPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
+	if w.done.Load() {
+		return nil, io.EOF
+	}
 	for {
 		status, err := w.adaptor.TaskStatus(ctx, w.cfg, w.taskID)
 		if err != nil {
@@ -822,10 +824,12 @@ func (w *klingPollingStream) Next(ctx context.Context) (*dto.StreamToken, error)
 		token := &dto.StreamToken{Type: "progress", Text: state}
 		switch state {
 		case "succeed":
+			w.done.Store(true)
 			token.Type = "url"
 			token.URL = firstNonEmptyString(status.Output.URL, status.Output.VideoURL)
-			return token, io.EOF
+			return token, nil
 		case "failed":
+			w.done.Store(true)
 			if status.Output.Message != "" {
 				token.Text = status.Output.Message
 			}
@@ -835,8 +839,6 @@ func (w *klingPollingStream) Next(ctx context.Context) (*dto.StreamToken, error)
 		}
 	}
 }
-
-func (w *klingPollingStream) Close() error { return nil }
 
 func klingMediaResponseFromEnvelope(mode string, env *klingEnvelope) *dto.MediaResponse {
 	resp := &dto.MediaResponse{
