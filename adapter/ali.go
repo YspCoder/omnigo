@@ -134,11 +134,12 @@ type aliSyncImageResponse struct {
 }
 
 type aliPollingStream struct {
-	adaptor *AliAdaptor
-	cfg     *ProviderConfig
-	taskID  string
-	last    string
-	usage   *dto.Usage
+	adaptor             *AliAdaptor
+	cfg                 *ProviderConfig
+	taskID              string
+	last                string
+	usage               *dto.Usage
+	initialUsagePending bool
 	mediaStreamState
 }
 
@@ -323,7 +324,7 @@ func (a *AliAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, re
 			},
 		}, nil
 	}
-	return &aliPollingStream{adaptor: a, cfg: config, taskID: resp.TaskID, last: resp.Status, usage: usagePointer(resp.Usage)}, nil
+	return &aliPollingStream{adaptor: a, cfg: config, taskID: resp.TaskID, last: resp.Status, usage: usagePointer(resp.Usage), initialUsagePending: resp.Usage.HasUsage()}, nil
 }
 
 func (a *AliAdaptor) buildImageRequest(r *dto.MediaRequest) (string, map[string]interface{}, bool, error) {
@@ -572,10 +573,9 @@ func (w *aliPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 	if err := w.streamError(ctx); err != nil {
 		return nil, err
 	}
-	if w.usage != nil {
-		usage := w.usage
-		w.usage = nil
-		return &dto.StreamToken{Type: "usage", Usage: usage}, nil
+	if w.initialUsagePending {
+		w.initialUsagePending = false
+		return &dto.StreamToken{Type: "usage", Usage: w.usage}, nil
 	}
 	for {
 		status, err := w.adaptor.TaskStatus(ctx, w.cfg, w.taskID)
@@ -583,7 +583,8 @@ func (w *aliPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 			return nil, err
 		}
 		state := status.Output.TaskStatus
-		if state == w.last && !aliTerminalTaskState(state) {
+		usageChanged := updateStreamUsage(&w.usage, streamUsage(status.Usage))
+		if state == w.last && !aliTerminalTaskState(state) && !usageChanged {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -593,19 +594,17 @@ func (w *aliPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 		}
 		w.last = state
 
-		token := &dto.StreamToken{Type: "progress", Text: state}
+		token := &dto.StreamToken{Type: "progress", Text: state, Usage: w.usage}
 		switch {
 		case aliTaskSucceeded(state):
 			w.done.Store(true)
 			token.Type = "url"
 			token.URL = firstNonEmptyString(status.Output.VideoURL, status.Output.URL)
-			token.Usage = streamUsage(status.Usage)
 			return token, nil
 		case aliTaskFailed(state):
 			if status.Output.Message != "" {
 				token.Text = status.Output.Message
 			}
-			token.Usage = streamUsage(status.Usage)
 			return w.failWithUsage(token, fmt.Errorf("ali task failed: %s", token.Text))
 		default:
 			return token, nil

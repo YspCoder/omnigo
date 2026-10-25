@@ -280,9 +280,6 @@ func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *Provid
 	if err := json.Unmarshal(rawBody, &parsed); err != nil {
 		return nil, err
 	}
-	if parsed.Error != nil && parsed.Error.Message != "" {
-		return nil, fmt.Errorf("openai responses api error: %s", parsed.Error.Message)
-	}
 	text := strings.TrimSpace(parsed.OutputText)
 	if text == "" {
 		text = strings.TrimSpace(extractOpenAIResponsesText(parsed.Output))
@@ -302,7 +299,7 @@ func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *Provid
 	if finishReason == "completed" && len(message.ToolCalls) > 0 {
 		finishReason = "tool_calls"
 	}
-	return &dto.MediaResponse{
+	result := &dto.MediaResponse{
 		ID:     parsed.ID,
 		Model:  parsed.Model,
 		Status: parsed.Status,
@@ -313,7 +310,16 @@ func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *Provid
 			FinishReason: finishReason,
 		}},
 		Usage: usageFromJSON(parsed.Usage),
-	}, nil
+	}
+	if parsed.Error != nil {
+		result.ErrorCode = parsed.Error.Code
+		result.ErrorMessage = parsed.Error.Message
+	}
+	if parsed.Status == "failed" || result.ErrorMessage != "" {
+		result.ErrorMessage = firstNonEmptyString(result.ErrorMessage, "response failed")
+		return result, fmt.Errorf("openai responses api error: %s", result.ErrorMessage)
+	}
+	return result, nil
 }
 
 func openAIUsesResponsesAPI(config *ProviderConfig, messages []dto.Message) (bool, error) {

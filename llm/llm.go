@@ -263,10 +263,10 @@ func (l *LLMImpl) generationOptions() map[string]interface{} {
 // Generate produces text based on the given prompt and routes it through the unified request pipeline.
 func (l *LLMImpl) Generate(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (string, error) {
 	resp, err := l.GenerateWithResponse(ctx, prompt, opts...)
-	if err != nil {
+	if resp == nil {
 		return "", err
 	}
-	return resp.Text, nil
+	return resp.Text, err
 }
 
 // GenerateWithResponse produces text and preserves the raw unified provider response.
@@ -279,19 +279,25 @@ func (l *LLMImpl) GenerateWithResponse(ctx context.Context, prompt *Prompt, opts
 	request := l.textRequest(prompt, false, l.generationOptions())
 
 	resp, err := l.relay.Chat(ctx, l.adaptor, l.adaptorCfg, request)
-	if err != nil {
+	if resp == nil {
+		if err == nil {
+			err = fmt.Errorf("provider returned an empty response")
+		}
 		return nil, err
 	}
 
 	if resp.Text != "" {
-		return &dto.GenerateResponse{Text: resp.Text, Raw: resp}, nil
+		return &dto.GenerateResponse{Text: resp.Text, Raw: resp}, err
 	}
 	if len(resp.Choices) > 0 {
 		content := fmt.Sprint(resp.Choices[0].Message.Content)
 		resp.Text = content
-		return &dto.GenerateResponse{Text: content, Raw: resp}, nil
+		return &dto.GenerateResponse{Text: content, Raw: resp}, err
 	}
-	return nil, fmt.Errorf("no choices in response")
+	if err == nil {
+		err = fmt.Errorf("no choices in response")
+	}
+	return &dto.GenerateResponse{Raw: resp}, err
 }
 
 // Stream initiates a streaming text response through the unified request pipeline.
@@ -326,11 +332,7 @@ func (l *LLMImpl) Media(ctx context.Context, request *dto.MediaRequest) (*dto.Me
 			return nil, err
 		}
 		applyTextPrompt(request)
-		resp, err := l.relay.Chat(ctx, l.adaptor, l.adaptorCfg, request)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
+		return l.relay.Chat(ctx, l.adaptor, l.adaptorCfg, request)
 	}
 	if err := l.requireOperation(adapter.OperationMedia); err != nil {
 		return nil, err

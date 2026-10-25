@@ -67,6 +67,11 @@ type paiTaskCreateResponse struct {
 	Credits json.RawMessage `json:"credits"`
 }
 
+type paiUsageStep struct {
+	Operation string          `json:"operation"`
+	Usage     json.RawMessage `json:"usage"`
+}
+
 type paiUploadResponse struct {
 	ImgID  uint64 `json:"img_id"`
 	ImgURL string `json:"img_url"`
@@ -136,9 +141,9 @@ func (a *PaiAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.Medi
 		return nil, err
 	}
 
-	payload, err := a.buildPayload(ctx, cfg, mode, r)
+	payload, steps, err := a.buildPayload(ctx, cfg, mode, r)
 	if err != nil {
-		return nil, err
+		return paiUsageError(mode, steps, err)
 	}
 
 	var out paiTaskCreateResponse
@@ -162,7 +167,7 @@ func (a *PaiAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.Medi
 		return resp, nil
 	}
 	if err := a.doJSON(ctx, cfg, http.MethodPost, endpoint, payload, &out); err != nil {
-		return nil, err
+		return paiUsageError(mode, steps, err)
 	}
 
 	taskID := uint64ToString(out.VideoID)
@@ -171,19 +176,57 @@ func (a *PaiAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.Medi
 		Status: paiStatusText(5),
 		Model:  r.Model,
 		Text:   strings.TrimSpace(utils.MediaPromptWithSystem(r)),
-		Usage:  creditsUsage(out.Credits),
+		Usage:  paiOperationUsage(mode, out.Credits, steps),
 	}, nil
 }
 
 func (a *PaiAdaptor) StreamMedia(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (dto.TokenStream, error) {
 	resp, err := a.Media(ctx, cfg, r)
-	if err != nil {
+	if err != nil && (resp == nil || !resp.Usage.HasUsage()) {
 		return nil, err
 	}
-	if resp.TaskID == "" {
-		return nil, fmt.Errorf("pai did not return a task id")
+	if err != nil || resp.TaskID == "" {
+		token := &dto.StreamToken{
+			Type: "finish", Text: resp.Text, URL: resp.URL,
+			Usage: usagePointer(resp.Usage), Metadata: map[string]interface{}{"response": resp},
+		}
+		if resp.URL != "" {
+			token.Type = "url"
+		}
+		if err == nil && resp.Status != "success" {
+			err = fmt.Errorf("pai did not return a task id")
+		}
+		if err != nil && token.Usage == nil {
+			return nil, err
+		}
+		return &klingSingleTokenStream{token: token, err: err}, nil
 	}
 	return &paiPollingStream{adaptor: a, cfg: cfg, taskID: resp.TaskID, last: resp.Status, usage: usagePointer(resp.Usage)}, nil
+}
+
+func paiOperationUsage(operation string, credits json.RawMessage, steps []paiUsageStep) dto.Usage {
+	usage := creditsUsage(credits)
+	if len(steps) == 0 {
+		return usage
+	}
+	if usage.Billing == nil {
+		usage.Billing = make(map[string]json.RawMessage)
+	}
+	usage.Billing["steps"], _ = json.Marshal(steps)
+	usage.RawUsage, _ = json.Marshal(struct {
+		Operation string          `json:"operation"`
+		Usage     json.RawMessage `json:"usage,omitempty"`
+		Steps     []paiUsageStep  `json:"steps"`
+	}{operation, usage.RawUsage, steps})
+	return usage
+}
+
+func paiUsageError(operation string, steps []paiUsageStep, err error) (*dto.MediaResponse, error) {
+	usage := paiOperationUsage(operation, nil, steps)
+	if !usage.HasUsage() {
+		return nil, err
+	}
+	return &dto.MediaResponse{Usage: usage}, err
 }
 
 func (a *PaiAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, taskID string, _ ...map[string]string) (*dto.TaskStatusResponse, error) {
@@ -338,8 +381,9 @@ func normalizePaiMode(mode string) string {
 	}
 }
 
-func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode string, r *dto.MediaRequest) (map[string]interface{}, error) {
+func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode string, r *dto.MediaRequest) (map[string]interface{}, []paiUsageStep, error) {
 	payload := make(map[string]interface{})
+	var steps []paiUsageStep
 	consumed := map[string]struct{}{
 		"mode":                    {},
 		"task_type":               {},
@@ -364,6 +408,7 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 		"audio_media_id":          {},
 		"source_media_id":         {},
 		"mask_id":                 {},
+		"auto_mask_selection":     {},
 		"keyframe_id":             {},
 		"multi_transition":        {},
 		"img_id":                  {},
@@ -429,42 +474,45 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 	switch mode {
 	case paiModeText:
 		mergeExtraPayload(payload, r.Extra, consumed)
-		return payload, nil
+		return payload, steps, nil
 	case paiModeImage:
 		imgID, err := a.resolveImageID(ctx, cfg, r.Extra, paiImageInputs(r))
 		if err != nil {
-			return nil, err
+			return nil, steps, err
 		}
 		payload["img_id"] = imgID
 		mergeExtraPayload(payload, r.Extra, consumed)
-		return payload, nil
+		return payload, steps, nil
 	case paiModeTransition:
 		firstID, lastID, err := a.resolveTransitionImageIDs(ctx, cfg, r)
 		if err != nil {
-			return nil, err
+			return nil, steps, err
 		}
 		payload["first_frame_img"] = firstID
 		payload["last_frame_img"] = lastID
 		mergeExtraPayload(payload, r.Extra, consumed)
-		return payload, nil
+		return payload, steps, nil
 	case paiModeExtend:
 		videoID, sourceKey, err := paiResolveVideoReference(r.Extra)
 		if err != nil {
-			return nil, err
+			return nil, steps, err
 		}
 		payload[sourceKey] = videoID
 		mergeExtraPayload(payload, r.Extra, consumed)
-		return payload, nil
+		return payload, steps, nil
 	case paiModeSwap:
 		videoID, sourceKey, err := paiResolveVideoReference(r.Extra)
 		if err != nil {
-			return nil, err
+			return nil, steps, err
 		}
 		payload[sourceKey] = videoID
-		if _, ok := r.Extra["auto_mask_selection"]; ok && !hasAnyExtraKey(r.Extra, "mask_id") {
+		if auto, _ := utils.GetBoolExtra(r.Extra, "auto_mask_selection"); auto && !hasAnyExtraKey(r.Extra, "mask_id") {
 			maskResp, err := a.maskSelection(ctx, cfg, r.Extra)
 			if err != nil {
-				return nil, err
+				return nil, steps, err
+			}
+			if usage := creditsUsage(maskResp.Credits); usage.HasUsage() {
+				steps = append(steps, paiUsageStep{Operation: paiModeMaskSelection, Usage: usage.RawUsage})
 			}
 			if payload["keyframe_id"] == nil && maskResp.KeyframeID > 0 {
 				payload["keyframe_id"] = maskResp.KeyframeID
@@ -475,7 +523,7 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 		}
 		imgID, err := a.resolveImageID(ctx, cfg, r.Extra, paiImageInputs(r))
 		if err != nil {
-			return nil, err
+			return nil, steps, err
 		}
 		payload["img_id"] = imgID
 		if maskID := utils.GetStringExtra(r.Extra, "mask_id"); maskID != "" {
@@ -485,32 +533,32 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 			payload["keyframe_id"] = keyframeID
 		}
 		mergeExtraPayload(payload, r.Extra, consumed)
-		return payload, nil
+		return payload, steps, nil
 	case paiModeMultiTransition:
 		segments, err := a.resolveMultiTransition(ctx, cfg, r)
 		if err != nil {
-			return nil, err
+			return nil, steps, err
 		}
 		payload["multi_transition"] = segments
 		mergeExtraPayload(payload, r.Extra, consumed)
-		return payload, nil
+		return payload, steps, nil
 	case paiModeMimic:
 		videoID, sourceKey, err := paiResolveVideoReference(r.Extra)
 		if err != nil {
-			return nil, err
+			return nil, steps, err
 		}
 		payload[sourceKey] = videoID
 		imgID, err := a.resolveImageID(ctx, cfg, r.Extra, paiImageInputs(r))
 		if err != nil {
-			return nil, err
+			return nil, steps, err
 		}
 		payload["img_id"] = imgID
 		mergeExtraPayload(payload, r.Extra, consumed)
-		return payload, nil
+		return payload, steps, nil
 	case paiModeLipSync:
 		videoID, sourceKey, err := paiResolveVideoReference(r.Extra)
 		if err != nil {
-			return nil, err
+			return nil, steps, err
 		}
 		payload[sourceKey] = videoID
 		if audioID, ok := uint64FromAny(r.Extra["audio_media_id"]); ok {
@@ -529,21 +577,21 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 			payload["lip_sync_tts_content"] = ttsContent
 		}
 		mergeExtraPayload(payload, r.Extra, consumed)
-		return payload, nil
+		return payload, steps, nil
 	case paiModeMaskSelection:
 		videoID, sourceKey, err := paiResolveVideoReference(r.Extra)
 		if err != nil {
-			return nil, err
+			return nil, steps, err
 		}
 		payload[sourceKey] = videoID
 		if keyframeID, ok := intValue(r.Extra["keyframe_id"]); ok {
 			payload["keyframe_id"] = keyframeID
 		}
-		return payload, nil
+		return payload, steps, nil
 	case paiModeSoundEffect:
 		videoID, sourceKey, err := paiResolveVideoReference(r.Extra)
 		if err != nil {
-			return nil, err
+			return nil, steps, err
 		}
 		payload[sourceKey] = videoID
 		if original, ok := utils.GetBoolExtra(r.Extra, "original_sound_switch"); ok {
@@ -553,11 +601,11 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 			payload["sound_effect_content"] = content
 		}
 		mergeExtraPayload(payload, r.Extra, consumed)
-		return payload, nil
+		return payload, steps, nil
 	case paiModeRestyle:
 		videoID, sourceKey, err := paiResolveVideoReference(r.Extra)
 		if err != nil {
-			return nil, err
+			return nil, steps, err
 		}
 		payload[sourceKey] = videoID
 		if restyleID, ok := intValue(r.Extra["restyle_id"]); ok {
@@ -567,11 +615,11 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 			payload["restyle_prompt"] = restylePrompt
 		}
 		mergeExtraPayload(payload, r.Extra, consumed)
-		return payload, nil
+		return payload, steps, nil
 	case paiModeModify:
 		videoID, sourceKey, err := paiResolveVideoReference(r.Extra)
 		if err != nil {
-			return nil, err
+			return nil, steps, err
 		}
 		payload[sourceKey] = videoID
 		if prompt != "" {
@@ -594,7 +642,7 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 				}
 			}
 			if single == nil {
-				return nil, fmt.Errorf("pai modify keyframe_ids must contain exactly one keyframe; use keyframe_id")
+				return nil, steps, fmt.Errorf("pai modify keyframe_ids must contain exactly one keyframe; use keyframe_id")
 			}
 			if keyframe == nil {
 				keyframe = single
@@ -603,7 +651,7 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 		if keyframe != nil {
 			keyframeID, ok := uint64FromAny(keyframe)
 			if !ok {
-				return nil, fmt.Errorf("pai modify keyframe_id must be a non-negative integer")
+				return nil, steps, fmt.Errorf("pai modify keyframe_id must be a non-negative integer")
 			}
 			payload["keyframe_id"] = keyframeID
 		}
@@ -612,15 +660,15 @@ func (a *PaiAdaptor) buildPayload(ctx context.Context, cfg *ProviderConfig, mode
 		}
 		imgIDs, err := a.resolveImageIDs(ctx, cfg, r)
 		if err != nil {
-			return nil, err
+			return nil, steps, err
 		}
 		if len(imgIDs) > 0 {
 			payload["img_ids"] = imgIDs
 		}
 		mergeExtraPayload(payload, r.Extra, consumed)
-		return payload, nil
+		return payload, steps, nil
 	default:
-		return nil, fmt.Errorf("unsupported pai mode: %s", mode)
+		return nil, steps, fmt.Errorf("unsupported pai mode: %s", mode)
 	}
 }
 

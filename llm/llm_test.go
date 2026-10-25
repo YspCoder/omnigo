@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -221,6 +222,7 @@ func TestGenerateWithResponseReturnsPrimaryChoiceContent(t *testing.T) {
 
 type stubAdaptor struct {
 	response     *dto.MediaResponse
+	err          error
 	stream       dto.TokenStream
 	media        *dto.MediaResponse
 	useMedia     bool
@@ -233,7 +235,7 @@ func (s stubAdaptor) Chat(_ context.Context, _ *adapter.ProviderConfig, request 
 	if s.checkRequest != nil {
 		s.checkRequest(request)
 	}
-	return s.response, nil
+	return s.response, s.err
 }
 
 func (s stubAdaptor) Stream(_ context.Context, _ *adapter.ProviderConfig, request *dto.MediaRequest) (dto.TokenStream, error) {
@@ -244,7 +246,39 @@ func (s stubAdaptor) Stream(_ context.Context, _ *adapter.ProviderConfig, reques
 }
 
 func (s stubAdaptor) Media(_ context.Context, _ *adapter.ProviderConfig, _ *dto.MediaRequest) (*dto.MediaResponse, error) {
-	return s.media, nil
+	return s.media, s.err
+}
+
+func TestTextResponsesPreserveUsageOnError(t *testing.T) {
+	providerErr := errors.New("generation failed")
+	for _, tc := range []struct {
+		name, text string
+		err        error
+	}{
+		{"partial response", "partial", providerErr},
+		{"failed without content", "", providerErr},
+		{"no choices", "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := &dto.MediaResponse{Text: tc.text, Usage: dto.Usage{TotalTokens: 7}}
+			client := &LLMImpl{config: &config.Config{Model: "test"}, relay: relay.NewRelay(), adaptor: stubAdaptor{response: original, err: tc.err}, adaptorCfg: &adapter.ProviderConfig{}}
+			response, err := client.GenerateWithResponse(context.Background(), NewPrompt("test"))
+			if err == nil || response == nil || response.Raw != original || response.Raw.Usage.TotalTokens != 7 || response.Text != tc.text {
+				t.Fatalf("generation response=%+v, error=%v", response, err)
+			}
+			if tc.err != nil && !errors.Is(err, tc.err) {
+				t.Fatalf("provider error replaced: %v", err)
+			}
+			media, err := client.Media(context.Background(), &dto.MediaRequest{Type: dto.MediaTypeText, Prompt: "test"})
+			if media != original || !errors.Is(err, tc.err) {
+				t.Fatalf("media response=%+v, error=%v", media, err)
+			}
+			text, err := client.Generate(context.Background(), NewPrompt("test"))
+			if err == nil || text != tc.text {
+				t.Fatalf("partial text=%q, error=%v", text, err)
+			}
+		})
+	}
 }
 
 func (s stubAdaptor) TaskStatus(_ context.Context, _ *adapter.ProviderConfig, _ string, _ ...map[string]string) (*dto.TaskStatusResponse, error) {

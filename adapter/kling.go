@@ -155,15 +155,17 @@ type klingIdentifyFaceData struct {
 
 type klingSingleTokenStream struct {
 	token *dto.StreamToken
+	err   error
 	mediaStreamState
 }
 
 type klingPollingStream struct {
-	adaptor *KlingAdaptor
-	cfg     *ProviderConfig
-	taskID  string
-	last    string
-	usage   *dto.Usage
+	adaptor   *KlingAdaptor
+	cfg       *ProviderConfig
+	taskID    string
+	last      string
+	usage     *dto.Usage
+	usageSent bool
 	mediaStreamState
 }
 
@@ -802,9 +804,14 @@ func (a *KlingAdaptor) doJSONWithStatus(ctx context.Context, cfg *ProviderConfig
 	return resp.StatusCode, nil
 }
 
-func (w *klingSingleTokenStream) Next(context.Context) (*dto.StreamToken, error) {
-	if w.done.Load() {
-		return nil, io.EOF
+func (w *klingSingleTokenStream) Next(ctx context.Context) (*dto.StreamToken, error) {
+	if err := w.streamError(ctx); err != nil {
+		return nil, err
+	}
+	if w.err != nil {
+		err := w.err
+		w.err = nil
+		return w.failWithUsage(w.token, err)
 	}
 	w.done.Store(true)
 	return w.token, nil
@@ -814,13 +821,23 @@ func (w *klingPollingStream) Next(ctx context.Context) (*dto.StreamToken, error)
 	if err := w.streamError(ctx); err != nil {
 		return nil, err
 	}
+	if !w.usageSent {
+		w.usageSent = true
+		if w.usage != nil {
+			return &dto.StreamToken{Type: "usage", Usage: w.usage}, nil
+		}
+	}
 	for {
 		status, err := w.adaptor.TaskStatus(ctx, w.cfg, w.taskID)
 		if err != nil {
 			return nil, err
 		}
 		state := status.Output.TaskStatus
+		usageChanged := updateStreamUsage(&w.usage, streamUsage(status.Usage))
 		if state == w.last && state != "succeed" && state != "failed" {
+			if usageChanged {
+				return &dto.StreamToken{Type: "usage", Usage: w.usage}, nil
+			}
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -829,9 +846,6 @@ func (w *klingPollingStream) Next(ctx context.Context) (*dto.StreamToken, error)
 			}
 		}
 		w.last = state
-		if usage := streamUsage(status.Usage); usage != nil {
-			w.usage = usage
-		}
 		token := &dto.StreamToken{Type: "progress", Text: state, Usage: w.usage}
 		switch state {
 		case "succeed":

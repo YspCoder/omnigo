@@ -1,7 +1,10 @@
 // Package dto defines standardized request and response payloads.
 package dto
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+)
 
 // Message represents a single message in a multimodal conversation.
 type Message struct {
@@ -109,10 +112,30 @@ type UsageDetails struct {
 	RawUsage json.RawMessage `json:"raw_usage,omitempty"`
 }
 
+// CaptureRawUsage preserves an existing source payload when decoding normalized
+// usage, or captures a native payload. Null-only objects do not report usage.
+func (d *UsageDetails) CaptureRawUsage(raw json.RawMessage) {
+	if len(d.RawUsage) > 0 && !bytes.Equal(bytes.TrimSpace(d.RawUsage), []byte("null")) {
+		return
+	}
+	d.RawUsage = nil
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return
+	}
+	for key, value := range fields {
+		if key != "raw_usage" && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			d.RawUsage = append(json.RawMessage(nil), raw...)
+			return
+		}
+	}
+}
+
 // HasUsage distinguishes reported usage (including zero) from an absent payload.
 func (u Usage) HasUsage() bool {
+	raw := bytes.TrimSpace(u.RawUsage)
 	return u.PromptTokens != 0 || u.CompletionTokens != 0 || u.TotalTokens != 0 ||
-		len(u.RawUsage) > 0 || len(u.PromptTokensDetails) > 0 ||
+		(len(raw) > 0 && !bytes.Equal(raw, []byte("null"))) || len(u.PromptTokensDetails) > 0 ||
 		len(u.CompletionTokensDetails) > 0 || len(u.Billing) > 0
 }
 
@@ -123,13 +146,7 @@ func (u *Usage) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	*u = Usage(decoded)
-	if len(u.RawUsage) == 0 {
-		var fields map[string]json.RawMessage
-		_ = json.Unmarshal(raw, &fields)
-		if len(fields) > 0 {
-			u.RawUsage = append(json.RawMessage(nil), raw...)
-		}
-	}
+	u.CaptureRawUsage(raw)
 	return nil
 }
 

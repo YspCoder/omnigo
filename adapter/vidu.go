@@ -139,6 +139,7 @@ type viduPollingStream struct {
 	cfg     *ProviderConfig
 	taskID  string
 	last    string
+	usage   *dto.Usage
 	mediaStreamState
 }
 
@@ -718,7 +719,11 @@ func (w *viduPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) 
 			return nil, err
 		}
 		state := status.Output.TaskStatus
+		usageChanged := updateStreamUsage(&w.usage, streamUsage(status.Usage))
 		if state == w.last && state != "success" && state != "failed" {
+			if usageChanged {
+				return &dto.StreamToken{Type: "usage", Usage: w.usage}, nil
+			}
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -727,7 +732,7 @@ func (w *viduPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) 
 			}
 		}
 		w.last = state
-		token := &dto.StreamToken{Type: "progress", Text: state, Usage: streamUsage(status.Usage)}
+		token := &dto.StreamToken{Type: "progress", Text: state, Usage: w.usage}
 		switch state {
 		case "success":
 			w.done.Store(true)

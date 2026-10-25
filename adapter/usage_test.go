@@ -15,6 +15,8 @@ func TestUsagePreservesPresenceAliasesAndBilling(t *testing.T) {
 	}{
 		{"absent", "null", false, 0, 0, 0},
 		{"empty wrapper", "{}", false, 0, 0, 0},
+		{"null source", `{"raw_usage":null}`, false, 0, 0, 0},
+		{"null counters", `{"prompt_tokens":null,"completion_tokens":null,"total_tokens":null}`, false, 0, 0, 0},
 		{"explicit zero", `{"input_tokens":0,"output_tokens":0,"total_tokens":0}`, true, 0, 0, 0},
 		{"aliases", `{"input_tokens":29,"output_tokens":477,"total_tokens":506}`, true, 29, 477, 506},
 		{"canonical zero wins", `{"prompt_tokens":0,"input_tokens":29,"completion_tokens":3}`, true, 0, 3, 3},
@@ -47,5 +49,16 @@ func TestUsagePreservesPresenceAliasesAndBilling(t *testing.T) {
 	}
 	if !usageFromValue(struct{}{}).HasUsage() {
 		t.Fatal("SDK usage object lost")
+	}
+	var roundTrip = usageFromJSON(json.RawMessage(`{"prompt_tokens":5,"billing":{"credits":4},"raw_usage":{"input_tokens":5,"credits":4}}`))
+	for range 3 {
+		encoded, err := json.Marshal(roundTrip)
+		if err != nil {
+			t.Fatal(err)
+		}
+		roundTrip = usageFromJSON(encoded)
+		if roundTrip.PromptTokens != 5 || string(roundTrip.Billing["credits"]) != "4" || string(roundTrip.RawUsage) != `{"input_tokens":5,"credits":4}` {
+			t.Fatalf("forwarded usage changed: %+v", roundTrip)
+		}
 	}
 }

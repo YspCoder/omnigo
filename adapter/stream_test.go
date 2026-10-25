@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/YspCoder/omnigo/dto"
 )
@@ -128,5 +129,87 @@ func TestArkStreamPreservesWhitespace(t *testing.T) {
 	}
 	if usageEvents != 1 {
 		t.Fatalf("usage events = %d, want 1", usageEvents)
+	}
+}
+
+func TestArkImageStreamPreservesPartialFailures(t *testing.T) {
+	events := strings.Join([]string{
+		`data: {"type":"image_generation.partial_failed","image_index":0,"error":{"code":"ContentBlocked","message":"first image blocked"}}`,
+		`data: {"type":"image_generation.partial_succeeded","image_index":1,"url":"https://example.com/one.png"}`,
+		`data: {"type":"image_generation.completed","usage":{"output_tokens":17,"total_tokens":17,"generated_images":1}}`,
+	}, "\n\n") + "\n\n"
+	calls := 0
+	stream, err := (&ArkAdaptor{}).StreamMedia(context.Background(), streamTestConfig(events, "text/event-stream", &calls), &dto.MediaRequest{Type: dto.MediaTypeImage, Model: "test-model", Prompt: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	token, err := stream.Next(context.Background())
+	if err != nil || token == nil || token.Type != "error" || token.Metadata["code"] != "ContentBlocked" {
+		t.Fatalf("partial failure = %+v, error = %v", token, err)
+	}
+	token, err = stream.Next(context.Background())
+	if err != nil || token == nil || token.URL != "https://example.com/one.png" || token.Index != 1 {
+		t.Fatalf("remaining image = %+v, error = %v", token, err)
+	}
+	token, err = stream.Next(context.Background())
+	if err != nil || token == nil || token.Usage == nil || token.Usage.TotalTokens != 17 {
+		t.Fatalf("completion usage = %+v, error = %v", token, err)
+	}
+	if token, err = stream.Next(context.Background()); token != nil || !errors.Is(err, io.EOF) {
+		t.Fatalf("finished stream = %+v, error = %v", token, err)
+	}
+}
+
+func TestMediaStreamsPreserveProgressUsage(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		bodies  []string
+		adaptor Adaptor
+		want    []int
+	}{
+		{"ali", []string{
+			`{"output":{"task_id":"task-1","task_status":"RUNNING"},"usage":{"input_tokens":1,"total_tokens":1}}`,
+			`{"output":{"task_id":"task-1","task_status":"RUNNING"},"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}`,
+			`{"output":{"task_id":"task-1","task_status":"RUNNING"},"usage":{"input_tokens":2,"output_tokens":2,"total_tokens":4}}`,
+			`{"output":{"task_id":"task-1","task_status":"SUCCEEDED","video_url":"https://example.com/video.mp4"}}`,
+		}, &AliAdaptor{}, []int{1, 3, 4, 4}},
+		{"ark", []string{
+			`{"id":"task-1"}`,
+			`{"id":"task-1","status":"running","usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`,
+			`{"id":"task-1","status":"running","usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}`,
+			`{"id":"task-1","status":"succeeded","duration":5,"content":{"video_url":"https://example.com/video.mp4"}}`,
+		}, &ArkAdaptor{}, []int{3, 4, 4}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			cfg := &ProviderConfig{APIKey: "test-key", BaseURL: "https://example.invalid", HTTPClient: &http.Client{Transport: testTransport(func(request *http.Request) (*http.Response, error) {
+				if calls >= len(tc.bodies) {
+					return nil, fmt.Errorf("unexpected request after final result")
+				}
+				body := tc.bodies[calls]
+				calls++
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+			})}}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			stream, err := tc.adaptor.StreamMedia(ctx, cfg, &dto.MediaRequest{Type: dto.MediaTypeVideo, Model: "wan2.6-t2v", Prompt: "test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stream.Close()
+			for i, total := range tc.want {
+				token, err := stream.Next(ctx)
+				if err != nil || token == nil || token.Usage == nil || token.Usage.TotalTokens != total {
+					t.Fatalf("event %d = %+v, error = %v, want total %d", i, token, err, total)
+				}
+				if i == len(tc.want)-1 && (token.Type != "url" || token.URL != "https://example.com/video.mp4") {
+					t.Fatalf("final result = %+v", token)
+				}
+			}
+			if token, err := stream.Next(ctx); token != nil || !errors.Is(err, io.EOF) || calls != len(tc.bodies) {
+				t.Fatalf("finished stream = %+v, error = %v, HTTP calls = %d", token, err, calls)
+			}
+		})
 	}
 }

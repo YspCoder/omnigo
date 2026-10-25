@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"maps"
+	"reflect"
 
 	"github.com/YspCoder/omnigo/dto"
 )
@@ -16,7 +17,10 @@ func usageFromJSON(raw json.RawMessage) dto.Usage {
 	if json.Unmarshal(raw, &fields) != nil || len(fields) == 0 {
 		return dto.Usage{}
 	}
-	u := dto.Usage{UsageDetails: dto.UsageDetails{RawUsage: append(json.RawMessage(nil), raw...)}}
+	var details dto.UsageDetails
+	_ = json.Unmarshal(raw, &details)
+	details.CaptureRawUsage(raw)
+	u := dto.Usage{UsageDetails: details}
 	u.PromptTokens, _ = usageInt(fields, "prompt_tokens", "input_tokens", "promptTokenCount")
 	u.CompletionTokens, _ = usageInt(fields, "completion_tokens", "output_tokens", "candidatesTokenCount")
 	var totalReported bool
@@ -139,4 +143,14 @@ func streamUsage(usage *dto.TaskStatusUsage) *dto.Usage {
 		}
 	}
 	return usagePointer(converted)
+}
+
+// updateStreamUsage retains the last reported snapshot when a later poll omits it.
+func updateStreamUsage(latest **dto.Usage, current *dto.Usage) bool {
+	if current == nil || !current.HasUsage() {
+		return false
+	}
+	changed := !reflect.DeepEqual(*latest, current)
+	*latest = current
+	return changed
 }

@@ -146,7 +146,7 @@ func (a *ArkAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, id str
 		return nil, err
 	}
 	res := &dto.TaskStatusResponse{
-		Usage: arkTaskUsage(resp),
+		Usage: arkTaskUsage(resp, nil),
 		Output: dto.TaskStatusOutput{
 			TaskID:       resp.ID,
 			TaskStatus:   resp.Status,
@@ -172,11 +172,20 @@ func (a *ArkAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, id str
 	return res, nil
 }
 
-func arkTaskUsage(resp model.GetContentGenerationTaskResponse) *dto.TaskStatusUsage {
-	if !dto.IsSucceeded(resp.Status) && resp.Usage == (model.Usage{}) {
-		return nil
+func arkTaskUsage(resp model.GetContentGenerationTaskResponse, fallback *dto.Usage) *dto.TaskStatusUsage {
+	var usage *dto.TaskStatusUsage
+	// The SDK uses a value type, so an all-zero usage cannot prove it was reported.
+	if resp.Usage != (model.Usage{}) {
+		usage = taskUsage(usageFromValue(resp.Usage))
+	} else if fallback != nil {
+		usage = taskUsage(*fallback)
 	}
-	usage := taskUsage(usageFromValue(resp.Usage))
+	if usage == nil && dto.IsSucceeded(resp.Status) && resp.Duration != nil {
+		duration, _ := json.Marshal(*resp.Duration)
+		usage = &dto.TaskStatusUsage{UsageDetails: dto.UsageDetails{Billing: map[string]json.RawMessage{
+			"video_duration": duration, "video_count": json.RawMessage("1"),
+		}}}
+	}
 	if dto.IsSucceeded(resp.Status) && usage != nil {
 		usage.VideoDuration = int64ToInt(resp.Duration)
 		usage.VideoCount = 1
@@ -1084,6 +1093,11 @@ func (w *arkMediaStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 	}
 	token := &dto.StreamToken{Type: resp.Type, Index: int(resp.ImageIndex), URL: volcengine.StringValue(resp.Url), Text: volcengine.StringValue(resp.B64Json), Usage: usagePointer(usageFromValue(resp.Usage))}
 	if resp.Error != nil {
+		if resp.Type == model.ImageGenerationStreamEventPartialFailed {
+			token.Type, token.Text = "error", resp.Error.Message
+			token.Metadata = map[string]interface{}{"event_type": resp.Type, "code": resp.Error.Code, "message": resp.Error.Message}
+			return token, nil
+		}
 		err := arkImageError(resp.Error)
 		if token.Usage != nil {
 			token.Type = "usage"
@@ -1097,9 +1111,10 @@ func (w *arkMediaStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 func (w *arkMediaStream) Close() error { return w.r.Close() }
 
 type arkVidStream struct {
-	c    *arkruntime.Client
-	id   string
-	last string
+	c     *arkruntime.Client
+	id    string
+	last  string
+	usage *dto.Usage
 	mediaStreamState
 }
 
@@ -1113,7 +1128,8 @@ func (w *arkVidStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 			return nil, err
 		}
 		succeeded, failed := dto.IsSucceeded(resp.Status), dto.IsFailed(resp.Status)
-		if resp.Status == w.last && !succeeded && !failed {
+		usageChanged := updateStreamUsage(&w.usage, streamUsage(arkTaskUsage(resp, w.usage)))
+		if resp.Status == w.last && !succeeded && !failed && !usageChanged {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -1122,11 +1138,10 @@ func (w *arkVidStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 			}
 		}
 		w.last = resp.Status
-		res := &dto.StreamToken{Type: "progress", Text: resp.Status}
+		res := &dto.StreamToken{Type: "progress", Text: resp.Status, Usage: w.usage}
 		if succeeded {
 			w.done.Store(true)
 			res.Type, res.URL = "url", resp.Content.VideoURL
-			res.Usage = streamUsage(arkTaskUsage(resp))
 			if res.URL == "" {
 				res.URL = resp.Content.FileURL
 			}
@@ -1135,7 +1150,6 @@ func (w *arkVidStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 			if resp.Error != nil {
 				res.Text = resp.Error.Message
 			}
-			res.Usage = streamUsage(arkTaskUsage(resp))
 			return w.failWithUsage(res, fmt.Errorf("vid failed: %s", res.Text))
 		}
 		return res, nil

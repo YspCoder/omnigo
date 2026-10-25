@@ -45,3 +45,32 @@ func TestOpenAIResponsesReportsTokenLimit(t *testing.T) {
 		t.Fatalf("incomplete response = %+v", response)
 	}
 }
+
+func TestOpenAIResponsesFailurePreservesUsage(t *testing.T) {
+	for _, tc := range []struct {
+		name, errorJSON, code, message string
+	}{
+		{"reported error", `{"code":"server_error","message":"generation failed"}`, "server_error", "generation failed"},
+		{"missing message", `{"code":"server_error"}`, "server_error", "response failed"},
+		{"missing error", `null`, "", "response failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"id":"resp_failed","model":"test-model","status":"failed","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30},"error":` + tc.errorJSON + `}`
+			calls := 0
+			config := streamTestConfig(body, "application/json", &calls)
+			config.ChatProtocol = "responses"
+			response, err := (&OpenAIAdaptor{}).Chat(context.Background(), config, &dto.MediaRequest{
+				Model: "test-model", Messages: []dto.Message{{Role: "user", Content: "hello"}},
+			})
+			if err == nil || response == nil {
+				t.Fatalf("failed response = %+v, error = %v", response, err)
+			}
+			if response.ID != "resp_failed" || response.Status != "failed" || response.ErrorCode != tc.code || response.ErrorMessage != tc.message {
+				t.Fatalf("failure details = %+v", response)
+			}
+			if response.Usage.PromptTokens != 10 || response.Usage.CompletionTokens != 20 || response.Usage.TotalTokens != 30 || len(response.Usage.RawUsage) == 0 {
+				t.Fatalf("failure usage = %+v", response.Usage)
+			}
+		})
+	}
+}

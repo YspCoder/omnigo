@@ -2,6 +2,8 @@
 
 日期：2026-10-25。审计基线：`main` / `92012de`；本文描述本轮修复后的行为。
 
+同日以 `6f0dd9d` 为基线追加复查，修复结果见下方“追加复查”。
+
 范围覆盖全部 11 个内置调用服务商，以及 NewAPI、NewAPI Ark 两个素材库适配器。已修复已确认的用量映射、流式终态、默认参数及错误传播问题。没有新增依赖或升级 SDK，也没有调用真实收费 API。
 
 ## 各服务商修复结果
@@ -56,6 +58,17 @@ MediaResponse、TaskStatusResponse、StreamToken 和可用的 TaskListItem 均�
 - Google Interactions；Ali Wan 2.7 驱动音频与任意原生 media 输入；Kling 新版模型路径和 /tasks 协议。
 - 任意运行时 RegisterProvider 扩展、Custom/NewAPI 私有协议及真实账号的权限、模型差异与计费结果。
 - 上游没有提供的 token、Imagen/Veo SDK 未暴露的用量、SDK 未识别的未来字段，均不能靠本地映射补全。
+
+## 追加复查
+
+- Ark 多图流中的 `image_generation.partial_failed` 是单张失败，现返回带错误码的 `Type=error` 事件并继续读取其他图片及最终用量；整条流失败仍以 Go error 报告。
+- Ali、Ark、Vidu、Kling 在状态不变但用量变化时也会发出快照；最终响应省略用量时保留最近一次报告。Kling 创建阶段的用量会在首次 Next 发出，避免首个查询失败时丢失。
+- OpenAI Responses 失败响应保留用量和错误字段，返回非 nil 响应与 error；LLM 的 GenerateWithResponse、文本 Media 同样保留响应，Generate 保留可用的部分文本。无候选但有用量的响应也不再被丢弃。调用方处理错误时仍可检查非 nil 响应中的用量。
+- Pai 的 `auto_mask_selection=false` 不再触发辅助 mask 请求；自动选区产生的扣费通过 `billing.steps` 逐步骤保存，即使后续主请求失败也可读取。顶层 `billing.credits` 仍表示主请求消耗，辅助步骤是额外消耗，不能仅按顶层 credits 结算。RawUsage 保留操作名称及各步骤的来源。
+- Pai 同步 mask 的 StreamMedia 直接返回结果与用量；辅助步骤已扣费、后续创建失败时，先返回用量事件，再返回错误。
+- 已归一化用量通过 Custom 转发时保留 billing 与原始 raw_usage，避免每次转发重复嵌套；`raw_usage:null` 和只有 null 计数的对象不再误判为已报告用量，明确的零仍保留。
+
+追加回归覆盖单张失败后的剩余图片、同状态下的新用量与终态回退、失败响应的公开入口透传、Pai 辅助调用次数和失败计费，以及用量重复转发后的稳定性。以上使用模拟 HTTP 响应验证。
 
 ## 验证
 
