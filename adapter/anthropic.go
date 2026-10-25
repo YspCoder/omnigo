@@ -69,12 +69,16 @@ func (a *AnthropicAdaptor) Chat(ctx context.Context, config *ProviderConfig, req
 		})
 	}
 
-	resp, err := client.CreateMessages(ctx, anthropic.MessagesRequest{
+	params := anthropic.MessagesRequest{
 		Model:     anthropic.Model(request.Model),
 		Messages:  messages,
 		System:    utils.FirstSystemMessage(request.Messages),
 		MaxTokens: request.MaxTokens,
-	})
+	}
+	if temperature, ok := requestTemperature(request); ok {
+		params.SetTemperature(float32(temperature))
+	}
+	resp, err := client.CreateMessages(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -83,6 +87,10 @@ func (a *AnthropicAdaptor) Chat(ctx context.Context, config *ProviderConfig, req
 	for _, content := range resp.Content {
 		text.WriteString(content.GetText())
 	}
+	usage := usageFromValue(resp.Usage)
+	usage.PromptTokens = resp.Usage.InputTokens + resp.Usage.CacheReadInputTokens + resp.Usage.CacheCreationInputTokens
+	usage.CompletionTokens = resp.Usage.OutputTokens
+	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	res := &dto.MediaResponse{
 		ID:     resp.ID,
 		Object: string(resp.Type),
@@ -94,12 +102,8 @@ func (a *AnthropicAdaptor) Chat(ctx context.Context, config *ProviderConfig, req
 			},
 			FinishReason: string(resp.StopReason),
 		}},
-		Text: text.String(),
-		Usage: dto.Usage{
-			PromptTokens:     resp.Usage.InputTokens,
-			CompletionTokens: resp.Usage.OutputTokens,
-			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
-		},
+		Text:  text.String(),
+		Usage: usage,
 	}
 	return res, nil
 }

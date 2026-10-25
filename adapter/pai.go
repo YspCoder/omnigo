@@ -63,8 +63,8 @@ type paiEnvelope struct {
 }
 
 type paiTaskCreateResponse struct {
-	VideoID uint64 `json:"video_id"`
-	Credits int    `json:"credits"`
+	VideoID uint64          `json:"video_id"`
+	Credits json.RawMessage `json:"credits"`
 }
 
 type paiUploadResponse struct {
@@ -91,7 +91,7 @@ type paiTaskResult struct {
 type paiMaskSelectionResponse struct {
 	KeyframeID  int                    `json:"keyframe_id"`
 	KeyframeURL string                 `json:"keyframe_url"`
-	Credits     int                    `json:"credits"`
+	Credits     json.RawMessage        `json:"credits"`
 	MaskInfo    []paiMaskSelectionItem `json:"mask_info"`
 }
 
@@ -109,10 +109,12 @@ type paiRestyleListItem struct {
 }
 
 type paiPollingStream struct {
-	adaptor *PaiAdaptor
-	cfg     *ProviderConfig
-	taskID  string
-	last    string
+	adaptor   *PaiAdaptor
+	cfg       *ProviderConfig
+	taskID    string
+	last      string
+	usage     *dto.Usage
+	usageSent bool
 	mediaStreamState
 }
 
@@ -148,6 +150,7 @@ func (a *PaiAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.Medi
 		resp := &dto.MediaResponse{
 			Status: "success",
 			Text:   uint64ToString(uint64(maskOut.KeyframeID)),
+			Usage:  creditsUsage(maskOut.Credits),
 		}
 		if len(maskOut.MaskInfo) > 0 {
 			raw, _ := json.Marshal(maskOut)
@@ -168,6 +171,7 @@ func (a *PaiAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.Medi
 		Status: paiStatusText(5),
 		Model:  r.Model,
 		Text:   strings.TrimSpace(utils.MediaPromptWithSystem(r)),
+		Usage:  creditsUsage(out.Credits),
 	}, nil
 }
 
@@ -179,7 +183,7 @@ func (a *PaiAdaptor) StreamMedia(ctx context.Context, cfg *ProviderConfig, r *dt
 	if resp.TaskID == "" {
 		return nil, fmt.Errorf("pai did not return a task id")
 	}
-	return &paiPollingStream{adaptor: a, cfg: cfg, taskID: resp.TaskID, last: resp.Status}, nil
+	return &paiPollingStream{adaptor: a, cfg: cfg, taskID: resp.TaskID, last: resp.Status, usage: usagePointer(resp.Usage)}, nil
 }
 
 func (a *PaiAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, taskID string, _ ...map[string]string) (*dto.TaskStatusResponse, error) {
@@ -1194,8 +1198,12 @@ func paiUint64Slice(v interface{}) []uint64 {
 }
 
 func (w *paiPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
-	if w.done.Load() {
-		return nil, io.EOF
+	if err := w.streamError(ctx); err != nil {
+		return nil, err
+	}
+	if !w.usageSent && w.usage != nil {
+		w.usageSent = true
+		return &dto.StreamToken{Type: "usage", Usage: w.usage}, nil
 	}
 	for {
 		status, err := w.adaptor.TaskStatus(ctx, w.cfg, w.taskID)
@@ -1212,7 +1220,7 @@ func (w *paiPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 			}
 		}
 		w.last = state
-		token := &dto.StreamToken{Type: "progress", Text: state}
+		token := &dto.StreamToken{Type: "progress", Text: state, Usage: w.usage}
 		switch state {
 		case "success":
 			w.done.Store(true)
@@ -1220,11 +1228,10 @@ func (w *paiPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 			token.URL = status.Output.VideoURL
 			return token, nil
 		case "failed", "rejected":
-			w.done.Store(true)
 			if status.Output.Message != "" {
 				token.Text = status.Output.Message
 			}
-			return token, fmt.Errorf("pai task %s: %s", state, token.Text)
+			return w.failWithUsage(token, fmt.Errorf("pai task %s: %s", state, token.Text))
 		default:
 			return token, nil
 		}

@@ -72,3 +72,21 @@ func TestAnthropicClientUsesConfiguredBaseURL(t *testing.T) {
 		}
 	}
 }
+
+func TestAnthropicUsageIncludesCacheTokens(t *testing.T) {
+	const body = `{"id":"msg_test","type":"message","role":"assistant","model":"test-model","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":50,"cache_read_input_tokens":100000,"cache_creation_input_tokens":200,"cache_creation":{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":0},"output_tokens":5}}`
+	calls := 0
+	response, err := (&AnthropicAdaptor{}).Chat(context.Background(), streamTestConfig(body, "application/json", &calls), &dto.MediaRequest{
+		Model: "test-model", MaxTokens: 8, Messages: []dto.Message{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage := response.Usage
+	if usage.PromptTokens != 100250 || usage.CompletionTokens != 5 || usage.TotalTokens != 100255 {
+		t.Fatalf("cached usage = %+v", usage)
+	}
+	if string(usage.PromptTokensDetails["cached_tokens"]) != "100000" || string(usage.PromptTokensDetails["cache_creation_tokens"]) != "200" {
+		t.Fatalf("cache token details = %+v", usage.UsageDetails)
+	}
+}

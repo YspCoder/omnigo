@@ -55,9 +55,6 @@ func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, r *dto.Me
 	if err != nil {
 		return nil, err
 	}
-	if resp.GetError() != nil && strings.TrimSpace(resp.GetError().GetMessage()) != "" {
-		return nil, fmt.Errorf("ark responses api error: %s", resp.GetError().GetMessage())
-	}
 	text := arkResponsesText(resp)
 	msg := dto.Message{
 		Role:    arkResponsesRole(resp),
@@ -74,6 +71,10 @@ func (a *ArkAdaptor) Chat(ctx context.Context, config *ProviderConfig, r *dto.Me
 			FinishReason: arkResponsesFinishReason(resp),
 		}},
 		Usage: arkResponsesUsage(resp.GetUsage()),
+	}
+	if resp.GetError() != nil {
+		res.ErrorMessage = resp.GetError().GetMessage()
+		return res, fmt.Errorf("ark responses api error: %s", res.ErrorMessage)
 	}
 	return res, nil
 }
@@ -101,12 +102,16 @@ func (a *ArkAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.Medi
 		if err != nil {
 			return nil, err
 		}
-		res := &dto.MediaResponse{Created: resp.Created}
+		res := &dto.MediaResponse{Created: resp.Created, Usage: usageFromValue(resp.Usage)}
 		for _, d := range resp.Data {
 			res.Data = append(res.Data, dto.ImageData{URL: volcengine.StringValue(d.Url), B64JSON: volcengine.StringValue(d.B64Json)})
 		}
 		if len(res.Data) > 0 {
 			res.URL = res.Data[0].URL
+		}
+		if resp.Error != nil {
+			res.ErrorCode, res.ErrorMessage = resp.Error.Code, resp.Error.Message
+			return res, arkImageError(resp.Error)
 		}
 		return res, nil
 	}
@@ -141,11 +146,7 @@ func (a *ArkAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, id str
 		return nil, err
 	}
 	res := &dto.TaskStatusResponse{
-		Usage: &dto.TaskStatusUsage{
-			PromptTokens:     resp.Usage.PromptTokens,
-			CompletionTokens: resp.Usage.CompletionTokens,
-			TotalTokens:      resp.Usage.TotalTokens,
-		},
+		Usage: arkTaskUsage(resp),
 		Output: dto.TaskStatusOutput{
 			TaskID:       resp.ID,
 			TaskStatus:   resp.Status,
@@ -168,12 +169,23 @@ func (a *ArkAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, id str
 	if resp.Error != nil {
 		res.Output.Code, res.Output.Message = resp.Error.Code, resp.Error.Message
 	}
-	res.Usage.VideoDuration = int64ToInt(resp.Duration)
-	res.Usage.VideoCount = 1
-	if resp.Status == model.StatusFailed {
-		res.Usage = nil
-	}
 	return res, nil
+}
+
+func arkTaskUsage(resp model.GetContentGenerationTaskResponse) *dto.TaskStatusUsage {
+	if !dto.IsSucceeded(resp.Status) && resp.Usage == (model.Usage{}) {
+		return nil
+	}
+	usage := taskUsage(usageFromValue(resp.Usage))
+	if dto.IsSucceeded(resp.Status) && usage != nil {
+		usage.VideoDuration = int64ToInt(resp.Duration)
+		usage.VideoCount = 1
+	}
+	return usage
+}
+
+func arkImageError(err *model.GenerateImagesError) error {
+	return fmt.Errorf("ark image generation failed (%s): %s", err.Code, err.Message)
 }
 
 func (a *ArkAdaptor) ListTasks(ctx context.Context, cfg *ProviderConfig, query map[string]string) (*dto.TaskListResponse, error) {
@@ -337,11 +349,7 @@ func arkResponsesUsage(usage *responses.Usage) dto.Usage {
 	if usage == nil {
 		return dto.Usage{}
 	}
-	return dto.Usage{
-		PromptTokens:     int(usage.GetInputTokens()),
-		CompletionTokens: int(usage.GetOutputTokens()),
-		TotalTokens:      int(usage.GetTotalTokens()),
-	}
+	return usageFromValue(usage)
 }
 
 func arkResponsesFinishReason(resp *responses.ResponseObject) string {
@@ -1006,10 +1014,16 @@ func formatUnixMillis(ts int64) string {
 }
 
 type arkStream struct {
-	r *arkutils.ResponsesStreamReader
+	r   *arkutils.ResponsesStreamReader
+	err error
 }
 
 func (w *arkStream) Next(ctx context.Context) (*dto.StreamToken, error) {
+	if w.err != nil {
+		err := w.err
+		w.err = io.EOF
+		return nil, err
+	}
 	for {
 		resp, err := w.r.Recv()
 		if err != nil {
@@ -1032,29 +1046,53 @@ func (w *arkStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 				Index: int(text.GetOutputIndex()),
 			}, nil
 		}
+		var terminal *responses.ResponseObject
+		terminalErr := io.EOF
 		if failed := resp.GetResponseFailed(); failed != nil {
-			if failed.GetResponse() != nil && failed.GetResponse().GetError() != nil && strings.TrimSpace(failed.GetResponse().GetError().GetMessage()) != "" {
-				return nil, fmt.Errorf("ark responses stream failed: %s", failed.GetResponse().GetError().GetMessage())
-			}
-			return nil, fmt.Errorf("ark responses stream failed")
+			terminal = failed.GetResponse()
+			terminalErr = fmt.Errorf("ark responses stream failed: %s", firstNonEmptyString(terminal.GetError().GetMessage(), "unknown error"))
+		} else if completed := resp.GetResponseCompleted(); completed != nil {
+			terminal = completed.GetResponse()
+		} else if incomplete := resp.GetResponseIncomplete(); incomplete != nil {
+			terminal = incomplete.GetResponse()
+		} else {
+			continue
 		}
-		if resp.GetResponseCompleted() != nil {
-			return nil, io.EOF
+		w.err = terminalErr
+		if usage := usagePointer(arkResponsesUsage(terminal.GetUsage())); usage != nil {
+			return &dto.StreamToken{Type: "usage", Usage: usage, FinishReason: arkResponsesFinishReason(terminal)}, nil
 		}
+		return nil, terminalErr
 	}
 }
 func (w *arkStream) Close() error { return w.r.Close() }
 
 type arkMediaStream struct {
-	r *arkutils.ImageGenerationStreamReader
+	r   *arkutils.ImageGenerationStreamReader
+	err error
 }
 
 func (w *arkMediaStream) Next(ctx context.Context) (*dto.StreamToken, error) {
+	if w.err != nil {
+		err := w.err
+		w.err = io.EOF
+		return nil, err
+	}
 	resp, err := w.r.Recv()
 	if err != nil {
 		return nil, err
 	}
-	return &dto.StreamToken{Type: resp.Type, Index: int(resp.ImageIndex), URL: volcengine.StringValue(resp.Url), Text: volcengine.StringValue(resp.B64Json)}, nil
+	token := &dto.StreamToken{Type: resp.Type, Index: int(resp.ImageIndex), URL: volcengine.StringValue(resp.Url), Text: volcengine.StringValue(resp.B64Json), Usage: usagePointer(usageFromValue(resp.Usage))}
+	if resp.Error != nil {
+		err := arkImageError(resp.Error)
+		if token.Usage != nil {
+			token.Type = "usage"
+			w.err = err
+			return token, nil
+		}
+		return token, err
+	}
+	return token, nil
 }
 func (w *arkMediaStream) Close() error { return w.r.Close() }
 
@@ -1066,8 +1104,8 @@ type arkVidStream struct {
 }
 
 func (w *arkVidStream) Next(ctx context.Context) (*dto.StreamToken, error) {
-	if w.done.Load() {
-		return nil, io.EOF
+	if err := w.streamError(ctx); err != nil {
+		return nil, err
 	}
 	for {
 		resp, err := w.c.GetContentGenerationTask(ctx, model.GetContentGenerationTaskRequest{ID: w.id})
@@ -1088,16 +1126,17 @@ func (w *arkVidStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 		if succeeded {
 			w.done.Store(true)
 			res.Type, res.URL = "url", resp.Content.VideoURL
+			res.Usage = streamUsage(arkTaskUsage(resp))
 			if res.URL == "" {
 				res.URL = resp.Content.FileURL
 			}
 			return res, nil
 		} else if failed {
-			w.done.Store(true)
 			if resp.Error != nil {
 				res.Text = resp.Error.Message
 			}
-			return res, fmt.Errorf("vid failed: %s", res.Text)
+			res.Usage = streamUsage(arkTaskUsage(resp))
+			return w.failWithUsage(res, fmt.Errorf("vid failed: %s", res.Text))
 		}
 		return res, nil
 	}

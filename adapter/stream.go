@@ -11,7 +11,33 @@ import (
 
 // mediaStreamState keeps terminal results single-use, including after Close.
 type mediaStreamState struct {
-	done atomic.Bool
+	done       atomic.Bool
+	pendingErr error
+}
+
+func (s *mediaStreamState) streamError(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.pendingErr != nil {
+		err := s.pendingErr
+		s.pendingErr = nil
+		return err
+	}
+	if s.done.Load() {
+		return io.EOF
+	}
+	return nil
+}
+
+func (s *mediaStreamState) failWithUsage(token *dto.StreamToken, err error) (*dto.StreamToken, error) {
+	s.done.Store(true)
+	if token != nil && token.Usage != nil {
+		token.Type = "usage"
+		s.pendingErr = err
+		return token, nil
+	}
+	return token, err
 }
 
 func (s *mediaStreamState) Close() error {

@@ -148,7 +148,7 @@ func TestEffectiveMediaRequestUsesConfiguredSystemPrompt(t *testing.T) {
 
 func TestEffectiveMediaRequestUsesConfiguredModelWithoutMutatingRequest(t *testing.T) {
 	client := &LLMImpl{
-		config: &config.Config{Model: "configured-media-model"},
+		config: &config.Config{Model: "configured-media-model", MaxTokens: 300},
 	}
 	request := &dto.MediaRequest{
 		Type:     dto.MediaTypeImage,
@@ -161,6 +161,9 @@ func TestEffectiveMediaRequestUsesConfiguredModelWithoutMutatingRequest(t *testi
 	}
 	if effective.Model != "configured-media-model" {
 		t.Fatalf("model = %q, want configured-media-model", effective.Model)
+	}
+	if effective.MaxTokens != 300 || request.MaxTokens != 0 {
+		t.Fatalf("max tokens = %d, original = %d", effective.MaxTokens, request.MaxTokens)
 	}
 	if request.Model != "" {
 		t.Fatalf("expected original request model to remain empty, got %q", request.Model)

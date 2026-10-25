@@ -18,10 +18,11 @@ type StreamOption func(*StreamConfig)
 
 // StreamConfig holds configuration options for streaming.
 type StreamConfig struct {
-	// BufferSize is the size of the token buffer
+	// BufferSize is reserved. Nonzero values are rejected; streams are pull-based.
 	BufferSize int
 
-	// RetryStrategy defines how to handle stream interruptions
+	// RetryStrategy is reserved. Non-nil values are rejected to avoid replaying
+	// a partially consumed generation and billing it again.
 	RetryStrategy RetryStrategy
 }
 

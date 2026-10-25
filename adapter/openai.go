@@ -86,11 +86,7 @@ func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, reques
 		Created: resp.Created,
 		Model:   resp.Model,
 		Choices: make([]dto.ChatChoice, len(resp.Choices)),
-		Usage: dto.Usage{
-			PromptTokens:     int(resp.Usage.PromptTokens),
-			CompletionTokens: int(resp.Usage.CompletionTokens),
-			TotalTokens:      int(resp.Usage.TotalTokens),
-		},
+		Usage:   openAIChatUsage(resp.RawJSON()),
 	}
 	for i, c := range resp.Choices {
 		message := dto.Message{
@@ -108,6 +104,43 @@ func (a *OpenAIAdaptor) Chat(ctx context.Context, config *ProviderConfig, reques
 		res.Text = fmt.Sprint(res.Choices[0].Message.Content)
 	}
 	return res, nil
+}
+
+func openAIChatUsage(raw string) dto.Usage {
+	var response struct {
+		Usage          json.RawMessage `json:"usage"`
+		UsageBreakdown json.RawMessage `json:"usage_breakdown"`
+		XGroq          struct {
+			Usage          json.RawMessage `json:"usage,omitempty"`
+			UsageBreakdown json.RawMessage `json:"usage_breakdown,omitempty"`
+		} `json:"x_groq"`
+	}
+	if json.Unmarshal([]byte(raw), &response) != nil {
+		return dto.Usage{}
+	}
+	usage := usageFromJSON(response.Usage)
+	if !usage.HasUsage() {
+		usage = usageFromJSON(response.XGroq.Usage)
+	}
+	extensions := make(map[string]json.RawMessage)
+	if len(response.UsageBreakdown) > 0 && string(response.UsageBreakdown) != "null" {
+		extensions["usage_breakdown"] = response.UsageBreakdown
+	}
+	if usageFromJSON(response.XGroq.Usage).HasUsage() || len(response.XGroq.UsageBreakdown) > 0 && string(response.XGroq.UsageBreakdown) != "null" {
+		extensions["x_groq"], _ = json.Marshal(response.XGroq)
+	}
+	if len(extensions) > 0 {
+		var rawUsage map[string]json.RawMessage
+		_ = json.Unmarshal(usage.RawUsage, &rawUsage)
+		if rawUsage == nil {
+			rawUsage = make(map[string]json.RawMessage)
+		}
+		for key, value := range extensions {
+			rawUsage[key] = value
+		}
+		usage.RawUsage, _ = json.Marshal(rawUsage)
+	}
+	return usage
 }
 
 type openAIResponsesRequest struct {
@@ -142,12 +175,16 @@ type openAIResponsesInputContentItem struct {
 }
 
 type openAIResponsesResponse struct {
-	ID         string                      `json:"id"`
-	Model      string                      `json:"model"`
-	OutputText string                      `json:"output_text"`
-	Output     []openAIResponsesOutputItem `json:"output"`
-	Usage      openAIResponsesUsage        `json:"usage"`
-	Error      *openAIResponsesError       `json:"error,omitempty"`
+	ID                string                      `json:"id"`
+	Model             string                      `json:"model"`
+	Status            string                      `json:"status"`
+	OutputText        string                      `json:"output_text"`
+	Output            []openAIResponsesOutputItem `json:"output"`
+	Usage             json.RawMessage             `json:"usage"`
+	Error             *openAIResponsesError       `json:"error,omitempty"`
+	IncompleteDetails *struct {
+		Reason string `json:"reason"`
+	} `json:"incomplete_details,omitempty"`
 }
 
 type openAIResponsesOutputItem struct {
@@ -162,12 +199,6 @@ type openAIResponsesOutputItem struct {
 type openAIResponsesOutputContent struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
-}
-
-type openAIResponsesUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
-	TotalTokens  int `json:"total_tokens"`
 }
 
 type openAIResponsesError struct {
@@ -261,24 +292,27 @@ func (a *OpenAIAdaptor) chatWithResponsesAPI(ctx context.Context, config *Provid
 		Role: "assistant", Content: text,
 		ToolCalls: fromOpenAIResponsesToolCalls(parsed.Output),
 	}
-	finishReason := "completed"
-	if len(message.ToolCalls) > 0 {
+	finishReason := firstNonEmptyString(parsed.Status, "completed")
+	if finishReason == "incomplete" && parsed.IncompleteDetails != nil {
+		finishReason = firstNonEmptyString(parsed.IncompleteDetails.Reason, finishReason)
+		if finishReason == "max_output_tokens" {
+			finishReason = "length"
+		}
+	}
+	if finishReason == "completed" && len(message.ToolCalls) > 0 {
 		finishReason = "tool_calls"
 	}
 	return &dto.MediaResponse{
-		ID:    parsed.ID,
-		Model: parsed.Model,
-		Text:  text,
+		ID:     parsed.ID,
+		Model:  parsed.Model,
+		Status: parsed.Status,
+		Text:   text,
 		Choices: []dto.ChatChoice{{
 			Index:        0,
 			Message:      message,
 			FinishReason: finishReason,
 		}},
-		Usage: dto.Usage{
-			PromptTokens:     parsed.Usage.InputTokens,
-			CompletionTokens: parsed.Usage.OutputTokens,
-			TotalTokens:      parsed.Usage.TotalTokens,
-		},
+		Usage: usageFromJSON(parsed.Usage),
 	}, nil
 }
 
@@ -654,10 +688,8 @@ func (w *openAIStreamWrapper) Next(ctx context.Context) (*dto.StreamToken, error
 			}
 			w.pending = append(w.pending, token)
 		}
-		if resp.JSON.Usage.Valid() {
-			w.pending = append(w.pending, &dto.StreamToken{Type: "usage", Usage: &dto.Usage{
-				PromptTokens: int(resp.Usage.PromptTokens), CompletionTokens: int(resp.Usage.CompletionTokens), TotalTokens: int(resp.Usage.TotalTokens),
-			}})
+		if usage := usagePointer(openAIChatUsage(resp.RawJSON())); usage != nil {
+			w.pending = append(w.pending, &dto.StreamToken{Type: "usage", Usage: usage})
 		}
 	}
 	token := w.pending[0]
@@ -780,6 +812,7 @@ type openAIAsyncTaskResponse struct {
 	URL       string          `json:"url"`
 	VideoURL  string          `json:"video_url"`
 	Data      []dto.ImageData `json:"data"`
+	Usage     json.RawMessage `json:"usage"`
 	Code      interface{}     `json:"code"`
 	Message   string          `json:"message"`
 	Error     *struct {
@@ -816,7 +849,7 @@ func openAIAsyncImageResponse(resp *openai.ImagesResponse) (*dto.MediaResponse, 
 }
 
 func openAIImageResponse(resp *openai.ImagesResponse) *dto.MediaResponse {
-	res := &dto.MediaResponse{}
+	res := &dto.MediaResponse{Usage: usageFromJSON(json.RawMessage(resp.Usage.RawJSON()))}
 	for _, img := range resp.Data {
 		res.Data = append(res.Data, dto.ImageData{
 			URL:     img.URL,
@@ -1043,6 +1076,7 @@ func openAITaskStatusResponse(task openAIAsyncTaskResponse, fallbackTaskID strin
 
 	return &dto.TaskStatusResponse{
 		RequestID: task.RequestID,
+		Usage:     taskUsage(usageFromJSON(task.Usage)),
 		Output: dto.TaskStatusOutput{
 			TaskID:     firstNonEmptyString(task.TaskID, task.ID, fallbackTaskID),
 			TaskStatus: status,

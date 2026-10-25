@@ -59,7 +59,7 @@ type customAPIResponse struct {
 	URL        string          `json:"url"`
 	VideoURL   string          `json:"video_url"`
 	ResultURL  string          `json:"result_url"`
-	Usage      *dto.Usage      `json:"usage"`
+	Usage      json.RawMessage `json:"usage"`
 	Data       customAPIData   `json:"data"`
 	Code       interface{}     `json:"code"`
 	ErrorCode  interface{}     `json:"error_code"`
@@ -711,9 +711,9 @@ func customResponseError(statusCode int, raw []byte) error {
 }
 
 func (r *customAPIResponse) result() *customAPIResponse {
-	if r.Data.Response != nil && customString(r.ID) == "" && r.TaskID == "" &&
+	for r.Data.Response != nil && customString(r.ID) == "" && r.TaskID == "" &&
 		r.Status == "" && r.State == "" && r.URL == "" && r.VideoURL == "" && r.ResultURL == "" {
-		return r.Data.Response
+		r = r.Data.Response
 	}
 	return r
 }
@@ -774,8 +774,8 @@ func customResponseUsage(r *customAPIResponse) (dto.Usage, bool) {
 			break
 		}
 		seen[current] = struct{}{}
-		if current.Usage != nil {
-			return *current.Usage, true
+		if usage := usageFromJSON(current.Usage); usage.HasUsage() {
+			return usage, true
 		}
 	}
 	return dto.Usage{}, false
@@ -786,11 +786,7 @@ func customTaskStatusUsage(r *customAPIResponse) *dto.TaskStatusUsage {
 	if !ok {
 		return nil
 	}
-	return &dto.TaskStatusUsage{
-		PromptTokens:     usage.PromptTokens,
-		CompletionTokens: usage.CompletionTokens,
-		TotalTokens:      usage.TotalTokens,
-	}
+	return taskUsage(usage)
 }
 
 func customString(value interface{}) string {

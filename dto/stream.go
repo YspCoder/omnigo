@@ -26,7 +26,9 @@ type StreamToken struct {
 	Metadata map[string]interface{}
 
 	// ToolCalls contains incremental function calls, grouped by tool index within a choice.
-	ToolCalls    []ToolCallDelta
+	ToolCalls []ToolCallDelta
+	// Usage is a provider snapshot. Replace the previous snapshot; do not add
+	// repeated progress or terminal usage values together.
 	Usage        *Usage
 	FinishReason string
 }

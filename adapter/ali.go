@@ -60,7 +60,8 @@ var aliVideoModeEndpoint = map[string]string{
 type AliAdaptor struct{}
 
 type aliTaskCreateResponse struct {
-	RequestID string `json:"request_id"`
+	RequestID string          `json:"request_id"`
+	Usage     json.RawMessage `json:"usage"`
 	Output    struct {
 		TaskID        string `json:"task_id"`
 		TaskStatus    string `json:"task_status"`
@@ -90,9 +91,9 @@ type aliTaskStatusEnvelope struct {
 		Code          string                   `json:"code"`
 		Message       string                   `json:"message"`
 	} `json:"output"`
-	Usage   *dto.TaskStatusUsage `json:"usage"`
-	Code    string               `json:"code"`
-	Message string               `json:"message"`
+	Usage   json.RawMessage `json:"usage"`
+	Code    string          `json:"code"`
+	Message string          `json:"message"`
 }
 
 type aliTaskListEnvelope struct {
@@ -112,10 +113,12 @@ type aliTaskListItem struct {
 	Model      string                 `json:"model"`
 	SubmitTime string                 `json:"submit_time"`
 	Payload    map[string]interface{} `json:"payload"`
+	Usage      json.RawMessage        `json:"usage"`
 }
 
 type aliSyncImageResponse struct {
-	RequestID string `json:"request_id"`
+	RequestID string          `json:"request_id"`
+	Usage     json.RawMessage `json:"usage"`
 	Output    struct {
 		Choices []struct {
 			Message struct {
@@ -135,6 +138,7 @@ type aliPollingStream struct {
 	cfg     *ProviderConfig
 	taskID  string
 	last    string
+	usage   *dto.Usage
 	mediaStreamState
 }
 
@@ -169,6 +173,7 @@ func (a *AliAdaptor) Media(ctx context.Context, config *ProviderConfig, request 
 			}
 			return &dto.MediaResponse{
 				RequestID: out.RequestID,
+				Usage:     usageFromJSON(out.Usage),
 				TaskID:    out.Output.TaskID,
 				Status:    out.Output.TaskStatus,
 				ErrorCode: firstNonEmptyString(out.Output.Code, out.Code),
@@ -185,6 +190,7 @@ func (a *AliAdaptor) Media(ctx context.Context, config *ProviderConfig, request 
 		}
 		resp := &dto.MediaResponse{
 			RequestID:    out.RequestID,
+			Usage:        usageFromJSON(out.Usage),
 			ErrorCode:    out.Code,
 			ErrorMessage: out.Message,
 		}
@@ -214,6 +220,7 @@ func (a *AliAdaptor) Media(ctx context.Context, config *ProviderConfig, request 
 		}
 		return &dto.MediaResponse{
 			RequestID: out.RequestID,
+			Usage:     usageFromJSON(out.Usage),
 			TaskID:    out.Output.TaskID,
 			Status:    out.Output.TaskStatus,
 			ErrorCode: firstNonEmptyString(out.Output.Code, out.Code),
@@ -239,7 +246,7 @@ func (a *AliAdaptor) TaskStatus(ctx context.Context, config *ProviderConfig, tas
 
 	resp := &dto.TaskStatusResponse{
 		RequestID: out.RequestID,
-		Usage:     out.Usage,
+		Usage:     taskUsage(usageFromJSON(out.Usage)),
 		Output: dto.TaskStatusOutput{
 			TaskID:        firstNonEmptyString(out.Output.TaskID, taskID),
 			TaskStatus:    out.Output.TaskStatus,
@@ -281,6 +288,7 @@ func (a *AliAdaptor) ListTasks(ctx context.Context, config *ProviderConfig, quer
 			Model:     item.Model,
 			CreatedAt: item.SubmitTime,
 			Payload:   item.Payload,
+			Usage:     taskUsage(usageFromJSON(item.Usage)),
 		})
 	}
 	total := out.Total
@@ -308,13 +316,14 @@ func (a *AliAdaptor) StreamMedia(ctx context.Context, config *ProviderConfig, re
 		}
 		return &klingSingleTokenStream{
 			token: &dto.StreamToken{
-				Type: "url",
-				URL:  resp.URL,
-				Text: resp.Status,
+				Type:  "url",
+				URL:   resp.URL,
+				Text:  resp.Status,
+				Usage: usagePointer(resp.Usage),
 			},
 		}, nil
 	}
-	return &aliPollingStream{adaptor: a, cfg: config, taskID: resp.TaskID, last: resp.Status}, nil
+	return &aliPollingStream{adaptor: a, cfg: config, taskID: resp.TaskID, last: resp.Status, usage: usagePointer(resp.Usage)}, nil
 }
 
 func (a *AliAdaptor) buildImageRequest(r *dto.MediaRequest) (string, map[string]interface{}, bool, error) {
@@ -560,8 +569,13 @@ func (a *AliAdaptor) doJSON(ctx context.Context, cfg *ProviderConfig, method, pa
 }
 
 func (w *aliPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
-	if w.done.Load() {
-		return nil, io.EOF
+	if err := w.streamError(ctx); err != nil {
+		return nil, err
+	}
+	if w.usage != nil {
+		usage := w.usage
+		w.usage = nil
+		return &dto.StreamToken{Type: "usage", Usage: usage}, nil
 	}
 	for {
 		status, err := w.adaptor.TaskStatus(ctx, w.cfg, w.taskID)
@@ -585,13 +599,14 @@ func (w *aliPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
 			w.done.Store(true)
 			token.Type = "url"
 			token.URL = firstNonEmptyString(status.Output.VideoURL, status.Output.URL)
+			token.Usage = streamUsage(status.Usage)
 			return token, nil
 		case aliTaskFailed(state):
-			w.done.Store(true)
 			if status.Output.Message != "" {
 				token.Text = status.Output.Message
 			}
-			return token, fmt.Errorf("ali task failed: %s", token.Text)
+			token.Usage = streamUsage(status.Usage)
+			return w.failWithUsage(token, fmt.Errorf("ali task failed: %s", token.Text))
 		default:
 			return token, nil
 		}

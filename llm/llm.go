@@ -152,9 +152,11 @@ func (l *LLMImpl) normalizeMediaRequest(request *dto.MediaRequest) (*dto.MediaRe
 
 	l.configMutex.RLock()
 	var defaultModel, defaultSystemPrompt string
+	var defaultMaxTokens int
 	if l.config != nil {
 		defaultModel = l.config.Model
 		defaultSystemPrompt = l.config.SystemPrompt
+		defaultMaxTokens = l.config.MaxTokens
 	}
 	l.configMutex.RUnlock()
 
@@ -166,6 +168,9 @@ func (l *LLMImpl) normalizeMediaRequest(request *dto.MediaRequest) (*dto.MediaRe
 	cloned.Model = strings.TrimSpace(cloned.Model)
 	if cloned.Model == "" {
 		cloned.Model = strings.TrimSpace(defaultModel)
+	}
+	if cloned.MaxTokens == 0 {
+		cloned.MaxTokens = defaultMaxTokens
 	}
 	cloned.Prompt = strings.TrimSpace(cloned.Prompt)
 	cloned.Size = strings.TrimSpace(cloned.Size)
@@ -293,6 +298,15 @@ func (l *LLMImpl) GenerateWithResponse(ctx context.Context, prompt *Prompt, opts
 func (l *LLMImpl) Stream(ctx context.Context, prompt *Prompt, opts ...StreamOption) (dto.TokenStream, error) {
 	if err := l.requireOperation(adapter.OperationStream); err != nil {
 		return nil, err
+	}
+	var streamConfig StreamConfig
+	for _, option := range opts {
+		if option != nil {
+			option(&streamConfig)
+		}
+	}
+	if streamConfig.BufferSize != 0 || streamConfig.RetryStrategy != nil {
+		return nil, fmt.Errorf("stream buffering and automatic retries are not supported")
 	}
 	prompt = l.effectivePrompt(prompt)
 

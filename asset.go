@@ -3,6 +3,7 @@ package omnigo
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math"
 	"strconv"
 	"strings"
@@ -72,6 +73,9 @@ func NewAssetClient(provider AssetProvider, config *AssetConfig) (AssetClient, e
 	if config == nil {
 		return nil, fmt.Errorf("asset config is required")
 	}
+	snapshot := *config
+	snapshot.Headers = maps.Clone(config.Headers)
+	config = &snapshot
 
 	var adaptor adapter.AssetAdaptor
 	var arkAdaptor *adapter.NewAPIArkAssetAdaptor
@@ -88,6 +92,9 @@ func NewAssetClient(provider AssetProvider, config *AssetConfig) (AssetClient, e
 		arkAdaptor = &adapter.NewAPIArkAssetAdaptor{}
 	default:
 		return nil, fmt.Errorf("unknown asset provider: %s", provider)
+	}
+	if err := adapter.PrepareProviderConfig(config); err != nil {
+		return nil, fmt.Errorf("prepare asset client: %w", err)
 	}
 
 	return &assetClient{adaptor: adaptor, arkAdaptor: arkAdaptor, config: config}, nil

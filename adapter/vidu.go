@@ -107,19 +107,24 @@ type viduTaskResponse struct {
 	State     string               `json:"state"`
 	ErrCode   interface{}          `json:"err_code"`
 	Message   string               `json:"message"`
-	Credits   int                  `json:"credits"`
+	Credits   json.RawMessage      `json:"credits"`
 	Payload   interface{}          `json:"payload"`
 	Creations []viduCreationResult `json:"creations"`
 	CreatedAt string               `json:"created_at"`
 }
 
 type viduTaskListResponse struct {
-	Items    []dto.TaskListItem `json:"items"`
-	Tasks    []dto.TaskListItem `json:"tasks"`
+	Items    []viduTaskListItem `json:"items"`
+	Tasks    []viduTaskListItem `json:"tasks"`
 	Total    int                `json:"total"`
 	PageNum  int                `json:"page_num"`
 	PageSize int                `json:"page_size"`
 	HasMore  bool               `json:"has_more"`
+}
+
+type viduTaskListItem struct {
+	dto.TaskListItem
+	Credits json.RawMessage `json:"credits"`
 }
 
 type viduCreationResult struct {
@@ -195,6 +200,7 @@ func (a *ViduAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, taskI
 	}
 
 	res := &dto.TaskStatusResponse{
+		Usage: taskUsage(creditsUsage(out.Credits)),
 		Output: dto.TaskStatusOutput{
 			TaskID:     out.ID,
 			TaskStatus: out.State,
@@ -221,13 +227,27 @@ func (a *ViduAdaptor) ListTasks(ctx context.Context, cfg *ProviderConfig, query 
 		return nil, err
 	}
 	return &dto.TaskListResponse{
-		Items:    out.Items,
-		Tasks:    out.Tasks,
+		Items:    viduListItems(out.Items),
+		Tasks:    viduListItems(out.Tasks),
 		Total:    out.Total,
 		PageNum:  out.PageNum,
 		PageSize: out.PageSize,
 		HasMore:  out.HasMore,
 	}, nil
+}
+
+func viduListItems(items []viduTaskListItem) []dto.TaskListItem {
+	if items == nil {
+		return nil
+	}
+	results := make([]dto.TaskListItem, 0, len(items))
+	for _, item := range items {
+		if usage := creditsUsage(item.Credits); usage.HasUsage() {
+			item.Usage = taskUsage(usage)
+		}
+		results = append(results, item.TaskListItem)
+	}
+	return results
 }
 
 func (a *ViduAdaptor) resolveMode(r *dto.MediaRequest) (string, string, error) {
@@ -689,8 +709,8 @@ func (a *ViduAdaptor) doJSON(ctx context.Context, cfg *ProviderConfig, method, p
 }
 
 func (w *viduPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
-	if w.done.Load() {
-		return nil, io.EOF
+	if err := w.streamError(ctx); err != nil {
+		return nil, err
 	}
 	for {
 		status, err := w.adaptor.TaskStatus(ctx, w.cfg, w.taskID)
@@ -707,7 +727,7 @@ func (w *viduPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) 
 			}
 		}
 		w.last = state
-		token := &dto.StreamToken{Type: "progress", Text: state}
+		token := &dto.StreamToken{Type: "progress", Text: state, Usage: streamUsage(status.Usage)}
 		switch state {
 		case "success":
 			w.done.Store(true)
@@ -715,11 +735,10 @@ func (w *viduPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) 
 			token.URL = status.Output.VideoURL
 			return token, nil
 		case "failed":
-			w.done.Store(true)
 			if status.Output.Message != "" {
 				token.Text = status.Output.Message
 			}
-			return token, fmt.Errorf("vidu task failed: %s", token.Text)
+			return w.failWithUsage(token, fmt.Errorf("vidu task failed: %s", token.Text))
 		default:
 			return token, nil
 		}

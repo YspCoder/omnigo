@@ -695,11 +695,11 @@ func googleContentResponse(resp *genai.GenerateContentResponse) *dto.MediaRespon
 
 	res.ID, res.Model = resp.ResponseID, resp.ModelVersion
 	if resp.UsageMetadata != nil {
-		res.Usage = dto.Usage{
-			PromptTokens:     int(resp.UsageMetadata.PromptTokenCount),
-			CompletionTokens: int(resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount),
-			TotalTokens:      int(resp.UsageMetadata.TotalTokenCount),
-		}
+		usage := resp.UsageMetadata
+		res.Usage = usageFromValue(usage)
+		res.Usage.PromptTokens = int(usage.PromptTokenCount + usage.ToolUsePromptTokenCount)
+		res.Usage.CompletionTokens = int(usage.CandidatesTokenCount + usage.ThoughtsTokenCount)
+		res.Usage.TotalTokens = int(usage.TotalTokenCount)
 	}
 	for _, cand := range resp.Candidates {
 		if cand == nil {

@@ -41,15 +41,14 @@ func TestArkTaskStatusPreservesUsageAndHeaders(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if status == "failed" {
-			if response.Usage != nil {
-				t.Fatalf("failed task usage = %+v, want nil", response.Usage)
-			}
-		} else {
-			want := dto.TaskStatusUsage{VideoDuration: 5, VideoCount: 1, PromptTokens: 12, CompletionTokens: 100858, TotalTokens: 100870}
-			if response.Usage == nil || *response.Usage != want {
-				t.Fatalf("usage = %+v, want %+v", response.Usage, want)
-			}
+		if response.Usage == nil || response.Usage.PromptTokens != 12 || response.Usage.CompletionTokens != 100858 || response.Usage.TotalTokens != 100870 || len(response.Usage.RawUsage) == 0 {
+			t.Fatalf("task %s lost reported usage: %+v", status, response.Usage)
+		}
+		if status == "succeeded" && (response.Usage.VideoDuration != 5 || response.Usage.VideoCount != 1) {
+			t.Fatalf("successful task lost media usage: %+v", response.Usage)
+		}
+		if status == "failed" && response.Usage.VideoCount != 0 {
+			t.Fatalf("failed task invented a generated video: %+v", response.Usage)
 		}
 		if cfg.HTTPClient != sharedClient || cfg.HTTPClient.Transport != sharedTransport {
 			t.Fatal("Ark header wrapping modified the shared HTTP client")

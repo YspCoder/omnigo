@@ -96,6 +96,41 @@ type Usage struct {
 	PromptTokens     int `json:"prompt_tokens,omitempty"`
 	CompletionTokens int `json:"completion_tokens,omitempty"`
 	TotalTokens      int `json:"total_tokens,omitempty"`
+	UsageDetails
+}
+
+// UsageDetails preserves token breakdowns and non-token billing in their native units.
+type UsageDetails struct {
+	PromptTokensDetails     map[string]json.RawMessage `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails map[string]json.RawMessage `json:"completion_tokens_details,omitempty"`
+	Billing                 map[string]json.RawMessage `json:"billing,omitempty"`
+	// RawUsage is the provider or SDK usage payload, including explicit zero values.
+	// SDKs may omit fields they do not recognize; this is not the full HTTP response.
+	RawUsage json.RawMessage `json:"raw_usage,omitempty"`
+}
+
+// HasUsage distinguishes reported usage (including zero) from an absent payload.
+func (u Usage) HasUsage() bool {
+	return u.PromptTokens != 0 || u.CompletionTokens != 0 || u.TotalTokens != 0 ||
+		len(u.RawUsage) > 0 || len(u.PromptTokensDetails) > 0 ||
+		len(u.CompletionTokensDetails) > 0 || len(u.Billing) > 0
+}
+
+func (u *Usage) UnmarshalJSON(raw []byte) error {
+	type usageJSON Usage
+	var decoded usageJSON
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return err
+	}
+	*u = Usage(decoded)
+	if len(u.RawUsage) == 0 {
+		var fields map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &fields)
+		if len(fields) > 0 {
+			u.RawUsage = append(json.RawMessage(nil), raw...)
+		}
+	}
+	return nil
 }
 
 // MediaResponse represents the unified response for text/image/video generation.
@@ -129,7 +164,7 @@ func (m MediaResponse) MarshalJSON() ([]byte, error) {
 		Created      int64        `json:"created,omitempty"`
 		Model        string       `json:"model,omitempty"`
 		Choices      []ChatChoice `json:"choices,omitempty"`
-		Usage        Usage        `json:"usage,omitempty"`
+		Usage        *Usage       `json:"usage,omitempty"`
 		Data         []ImageData  `json:"data,omitempty"`
 		RequestID    string       `json:"request_id,omitempty"`
 		TaskID       string       `json:"task_id,omitempty"`
@@ -151,7 +186,6 @@ func (m MediaResponse) MarshalJSON() ([]byte, error) {
 		Created:      m.Created,
 		Model:        m.Model,
 		Choices:      m.Choices,
-		Usage:        m.Usage,
 		Data:         m.Data,
 		RequestID:    m.RequestID,
 		TaskID:       m.TaskID,
@@ -160,6 +194,9 @@ func (m MediaResponse) MarshalJSON() ([]byte, error) {
 		Text:         m.Text,
 		ErrorCode:    m.ErrorCode,
 		ErrorMessage: m.ErrorMessage,
+	}
+	if m.Usage.HasUsage() {
+		out.Usage = &m.Usage
 	}
 	if len(m.Data) > 0 && out.URL == m.Data[0].URL {
 		out.URL = ""
@@ -224,6 +261,7 @@ type TaskStatusUsage struct {
 	PromptTokens     int `json:"prompt_tokens,omitempty"`
 	CompletionTokens int `json:"completion_tokens,omitempty"`
 	TotalTokens      int `json:"total_tokens,omitempty"`
+	UsageDetails
 }
 
 // TaskListResponse represents a provider task list response.
@@ -238,10 +276,11 @@ type TaskListResponse struct {
 
 // TaskListItem represents a single task in a task list response.
 type TaskListItem struct {
-	ID        string      `json:"id,omitempty"`
-	TaskID    string      `json:"task_id,omitempty"`
-	State     string      `json:"state,omitempty"`
-	Model     string      `json:"model,omitempty"`
-	CreatedAt string      `json:"created_at,omitempty"`
-	Payload   interface{} `json:"payload,omitempty"`
+	ID        string           `json:"id,omitempty"`
+	TaskID    string           `json:"task_id,omitempty"`
+	State     string           `json:"state,omitempty"`
+	Model     string           `json:"model,omitempty"`
+	CreatedAt string           `json:"created_at,omitempty"`
+	Payload   interface{}      `json:"payload,omitempty"`
+	Usage     *TaskStatusUsage `json:"usage,omitempty"`
 }

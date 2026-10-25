@@ -37,3 +37,24 @@ func TestCustomAdaptorMapsNestedUsage(t *testing.T) {
 		t.Fatalf("TaskStatus usage = %#v, want total/completion 100858", status.Usage)
 	}
 }
+
+func TestCustomUsageFallbackAndNestedResult(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       int
+	}{
+		{"empty outer", `{"usage":{},"data":{"data":{"id":"inner","status":"succeeded","url":"https://example.com/video.mp4","usage":{"input_tokens":12,"output_tokens":3,"total_tokens":15}}}}`, 15},
+		{"explicit outer zero", `{"usage":{"total_tokens":0},"data":{"id":"inner","status":"succeeded","url":"https://example.com/video.mp4","usage":{"total_tokens":15}}}`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			response, err := (&CustomAdaptor{}).TaskStatus(context.Background(), streamTestConfig(tc.body, "application/json", &calls), "inner")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response.Output.TaskID != "inner" || response.Output.URL != "https://example.com/video.mp4" || response.Usage == nil || response.Usage.TotalTokens != tc.want {
+				t.Fatalf("response lost nested result or usage: %+v", response)
+			}
+		})
+	}
+}

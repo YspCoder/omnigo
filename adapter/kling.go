@@ -100,13 +100,15 @@ type klingEnvelope struct {
 }
 
 type klingTaskData struct {
-	TaskID        string                 `json:"task_id"`
-	TaskStatus    string                 `json:"task_status"`
-	TaskStatusMsg string                 `json:"task_status_msg"`
-	TaskInfo      map[string]interface{} `json:"task_info"`
-	TaskResult    klingTaskResult        `json:"task_result"`
-	CreatedAt     int64                  `json:"created_at"`
-	UpdatedAt     int64                  `json:"updated_at"`
+	TaskID                string                 `json:"task_id"`
+	TaskStatus            string                 `json:"task_status"`
+	TaskStatusMsg         string                 `json:"task_status_msg"`
+	TaskInfo              map[string]interface{} `json:"task_info"`
+	TaskResult            klingTaskResult        `json:"task_result"`
+	CreatedAt             int64                  `json:"created_at"`
+	UpdatedAt             int64                  `json:"updated_at"`
+	FinalUnitDeduction    json.RawMessage        `json:"final_unit_deduction"`
+	FinalBalanceDeduction json.RawMessage        `json:"final_balance_deduction"`
 }
 
 type klingTaskResult struct {
@@ -161,6 +163,7 @@ type klingPollingStream struct {
 	cfg     *ProviderConfig
 	taskID  string
 	last    string
+	usage   *dto.Usage
 	mediaStreamState
 }
 
@@ -191,7 +194,7 @@ func (a *KlingAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.Me
 	if err := a.doJSON(ctx, cfg, http.MethodPost, endpoint, payload, &env); err != nil {
 		return nil, err
 	}
-	return klingMediaResponseFromEnvelope(mode, &env), nil
+	return klingMediaResponseFromEnvelope(mode, &env)
 }
 
 func (a *KlingAdaptor) StreamMedia(ctx context.Context, cfg *ProviderConfig, r *dto.MediaRequest) (dto.TokenStream, error) {
@@ -205,13 +208,14 @@ func (a *KlingAdaptor) StreamMedia(ctx context.Context, cfg *ProviderConfig, r *
 		}
 		return &klingSingleTokenStream{
 			token: &dto.StreamToken{
-				Type: "url",
-				URL:  firstNonEmptyString(resp.Video.URL, resp.URL),
-				Text: resp.Status,
+				Type:  "url",
+				URL:   firstNonEmptyString(resp.Video.URL, resp.URL),
+				Text:  resp.Status,
+				Usage: usagePointer(resp.Usage),
 			},
 		}, nil
 	}
-	return &klingPollingStream{adaptor: a, cfg: cfg, taskID: resp.TaskID, last: resp.Status}, nil
+	return &klingPollingStream{adaptor: a, cfg: cfg, taskID: resp.TaskID, last: resp.Status, usage: usagePointer(resp.Usage)}, nil
 }
 
 func (a *KlingAdaptor) TaskStatus(ctx context.Context, cfg *ProviderConfig, taskID string, query ...map[string]string) (*dto.TaskStatusResponse, error) {
@@ -254,7 +258,10 @@ func (a *KlingAdaptor) taskStatusForModeWithStatus(ctx context.Context, cfg *Pro
 		return nil, status, err
 	}
 
-	resp := klingTaskStatusFromEnvelope(taskID, &env)
+	resp, err := klingTaskStatusFromEnvelope(taskID, &env)
+	if err != nil {
+		return nil, status, err
+	}
 	if resp.Output.TaskID == "" {
 		resp.Output.TaskID = taskID
 	}
@@ -322,6 +329,7 @@ func (a *KlingAdaptor) listTasksForMode(ctx context.Context, cfg *ProviderConfig
 			State:     task.TaskStatus,
 			CreatedAt: strconvMillis(task.CreatedAt),
 			Payload:   task.TaskInfo,
+			Usage:     taskUsage(task.usage()),
 		})
 	}
 	return &dto.TaskListResponse{
@@ -803,8 +811,8 @@ func (w *klingSingleTokenStream) Next(context.Context) (*dto.StreamToken, error)
 }
 
 func (w *klingPollingStream) Next(ctx context.Context) (*dto.StreamToken, error) {
-	if w.done.Load() {
-		return nil, io.EOF
+	if err := w.streamError(ctx); err != nil {
+		return nil, err
 	}
 	for {
 		status, err := w.adaptor.TaskStatus(ctx, w.cfg, w.taskID)
@@ -821,7 +829,10 @@ func (w *klingPollingStream) Next(ctx context.Context) (*dto.StreamToken, error)
 			}
 		}
 		w.last = state
-		token := &dto.StreamToken{Type: "progress", Text: state}
+		if usage := streamUsage(status.Usage); usage != nil {
+			w.usage = usage
+		}
+		token := &dto.StreamToken{Type: "progress", Text: state, Usage: w.usage}
 		switch state {
 		case "succeed":
 			w.done.Store(true)
@@ -829,57 +840,53 @@ func (w *klingPollingStream) Next(ctx context.Context) (*dto.StreamToken, error)
 			token.URL = firstNonEmptyString(status.Output.URL, status.Output.VideoURL)
 			return token, nil
 		case "failed":
-			w.done.Store(true)
 			if status.Output.Message != "" {
 				token.Text = status.Output.Message
 			}
-			return token, fmt.Errorf("kling task failed: %s", token.Text)
+			return w.failWithUsage(token, fmt.Errorf("kling task failed: %s", token.Text))
 		default:
 			return token, nil
 		}
 	}
 }
 
-func klingMediaResponseFromEnvelope(mode string, env *klingEnvelope) *dto.MediaResponse {
+func klingMediaResponseFromEnvelope(mode string, env *klingEnvelope) (*dto.MediaResponse, error) {
 	resp := &dto.MediaResponse{
 		RequestID:    env.RequestID,
 		ErrorCode:    strings.TrimSpace(fmt.Sprint(env.Code)),
 		ErrorMessage: env.Message,
 	}
-	if len(env.Data) == 0 {
-		return resp
-	}
-
 	if mode == klingModeIdentifyFace {
 		var data klingIdentifyFaceData
-		if err := json.Unmarshal(env.Data, &data); err == nil {
-			resp.TaskID = data.SessionID
-			resp.Status = "succeed"
-			if len(data.FaceData) > 0 {
-				resp.Text = "identify-face"
-			}
-			return resp
+		if err := decodeKlingData(env.Data, &data); err != nil {
+			return nil, err
 		}
+		resp.TaskID = data.SessionID
+		resp.Status = "succeed"
+		if len(data.FaceData) > 0 {
+			resp.Text = "identify-face"
+		}
+		return resp, nil
 	}
 
 	var data klingTaskData
-	if err := json.Unmarshal(env.Data, &data); err == nil {
-		resp.TaskID = data.TaskID
-		resp.Status = data.TaskStatus
-		resp.URL = firstKlingResultURL(data.TaskResult)
-		if len(data.TaskResult.Videos) > 0 {
-			resp.Video.URL = firstNonEmptyString(data.TaskResult.Videos[0].URL, data.TaskResult.Videos[0].WatermarkURL)
-		}
-		if mode == klingModeCustomVoices && len(data.TaskResult.Voices) > 0 {
-			resp.Text = data.TaskResult.Voices[0].VoiceID
-		}
-		return resp
+	if err := decodeKlingData(env.Data, &data); err != nil {
+		return nil, err
 	}
-
-	return resp
+	resp.TaskID = data.TaskID
+	resp.Status = data.TaskStatus
+	resp.Usage = data.usage()
+	resp.URL = firstKlingResultURL(data.TaskResult)
+	if len(data.TaskResult.Videos) > 0 {
+		resp.Video.URL = firstNonEmptyString(data.TaskResult.Videos[0].URL, data.TaskResult.Videos[0].WatermarkURL)
+	}
+	if mode == klingModeCustomVoices && len(data.TaskResult.Voices) > 0 {
+		resp.Text = data.TaskResult.Voices[0].VoiceID
+	}
+	return resp, nil
 }
 
-func klingTaskStatusFromEnvelope(taskID string, env *klingEnvelope) *dto.TaskStatusResponse {
+func klingTaskStatusFromEnvelope(taskID string, env *klingEnvelope) (*dto.TaskStatusResponse, error) {
 	resp := &dto.TaskStatusResponse{
 		RequestID: env.RequestID,
 		Output: dto.TaskStatusOutput{
@@ -890,11 +897,12 @@ func klingTaskStatusFromEnvelope(taskID string, env *klingEnvelope) *dto.TaskSta
 	}
 
 	var data klingTaskData
-	if err := json.Unmarshal(env.Data, &data); err != nil {
-		return resp
+	if err := decodeKlingData(env.Data, &data); err != nil {
+		return nil, err
 	}
 
 	resp.Output.TaskID = firstNonEmptyString(data.TaskID, taskID)
+	resp.Usage = taskUsage(data.usage())
 	resp.Output.TaskStatus = data.TaskStatus
 	resp.Output.Message = firstNonEmptyString(data.TaskStatusMsg, env.Message)
 	resp.Output.URL = firstKlingResultURL(data.TaskResult)
@@ -906,7 +914,31 @@ func klingTaskStatusFromEnvelope(taskID string, env *klingEnvelope) *dto.TaskSta
 	if externalID, ok := data.TaskInfo["external_task_id"].(string); ok {
 		resp.Output.OrigPrompt = externalID
 	}
-	return resp
+	return resp, nil
+}
+
+func decodeKlingData(raw json.RawMessage, out interface{}) error {
+	if data := bytes.TrimSpace(raw); len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		return fmt.Errorf("kling response is missing task data")
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("decode kling task data: %w", err)
+	}
+	return nil
+}
+
+func (d klingTaskData) usage() dto.Usage {
+	fields := make(map[string]json.RawMessage)
+	if len(d.FinalUnitDeduction) > 0 && string(d.FinalUnitDeduction) != "null" {
+		fields["final_unit_deduction"] = d.FinalUnitDeduction
+	}
+	if len(d.FinalBalanceDeduction) > 0 && string(d.FinalBalanceDeduction) != "null" {
+		fields["final_balance_deduction"] = d.FinalBalanceDeduction
+	}
+	if len(fields) == 0 {
+		return dto.Usage{}
+	}
+	return usageFromValue(fields)
 }
 
 func firstKlingResultURL(result klingTaskResult) string {
