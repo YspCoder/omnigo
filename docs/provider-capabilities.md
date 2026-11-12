@@ -8,6 +8,7 @@
 | Anthropic | 工具调用与结果回传、图片／文档输入、文本与工具流 | 文本 `Media` / `StreamMedia`，或 `GenerateWithResponse` / `Stream` |
 | Google | 工具调用与签名回传、Gemini 原生图片流、Imagen 结果事件、Veo 轮询流 | 统一 `Tools`、`ToolChoice`、`ToolCalls`；`StreamMedia` |
 | Google | 现行 Interactions 的文本／图像、流式与后台任务查询 | `SetChatProtocol("interactions")`，或请求 `Options["api"]="interactions"` |
+| Google | Veo 首帧、首尾帧、参考图片 | 视频请求 `Extra["first_frame"]`、`Extra["last_frame"]`、`Extra["reference_images"]` |
 | Ark | Responses 工具声明、选择、历史调用／结果、工具流 | 统一 `Tools`、`ToolChoice`、`ToolCalls` |
 | Ali | Wan 原生 `media`、驱动音频 | 视频请求 `Extra["media"]` / `Extra["driving_audio"]` |
 | Kling | 新版模型路径、`/tasks` 查询与游标列表、原生计费及多结果 | `Extra["protocol"]="tasks"`；查询使用 `query["protocol"]="tasks"` |
@@ -31,6 +32,16 @@ Google 返回的 `ToolCall.Metadata["thought_signature"]` 必须随原调用回�
 Claude 支持 `Message.ImageURL`（HTTP(S) 或 base64 data URL）、`Message.FileURL`（文档），以及原生 content block 数组。响应中含 thinking／签名等原生内容时，完整保留在 `Message.Content`，便于下一轮原样回传；公开 `Generate` 只返回可见文本。Claude 不生成图片／视频，理解多模态输入仍使用文本请求类型。
 
 原生结构化内容的往返请使用 `Media(Type:text)` 与 `dto.Message.Content`。`PromptMessage.Content` 保持原有 string 类型，不能承载 thinking／多模态块。
+
+## Google Veo 图片输入
+
+视频请求通过 `Extra` 传入图片，可以是 HTTP(S) URL 或 data URL；只有 Vertex（Gemini Enterprise Agent Platform）模式支持 `gs://`：
+
+- `first_frame`：首帧，图生视频。
+- `last_frame`：尾帧，必须同时传 `first_frame`。
+- `reference_images`：资产参考图，最多 3 张，不能与首尾帧同时使用。
+
+适配器先下载图片并内联，再调用 `GenerateVideos`。不合法的组合会在请求上游前报错。宽高比仍然从 `Size` 读取。
 
 ## Google Interactions
 

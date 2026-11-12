@@ -149,7 +149,16 @@ func (a *GoogleAdaptor) Media(ctx context.Context, cfg *ProviderConfig, r *dto.M
 		}
 		return res, nil
 	case dto.MediaTypeVideo:
-		op, err := c.Models.GenerateVideos(ctx, r.Model, utils.MediaPromptWithSystem(r), nil, a.toVidCfg(r))
+		frames, err := googleVideoFramesFromRequest(r)
+		if err != nil {
+			return nil, err
+		}
+		config := a.toVidCfg(r)
+		image, err := frames.apply(ctx, googleHTTPClient(c), config)
+		if err != nil {
+			return nil, err
+		}
+		op, err := c.Models.GenerateVideos(ctx, r.Model, utils.MediaPromptWithSystem(r), image, config)
 		if err != nil {
 			return nil, err
 		}
